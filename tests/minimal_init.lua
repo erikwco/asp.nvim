@@ -1,0 +1,5 @@
+local root = vim.fn.getcwd()
+vim.opt.runtimepath:prepend(root .. '/build/plenary.nvim')
+vim.opt.runtimepath:prepend(root)
+vim.cmd('runtime! plugin/plenary.vim')
+vim.cmd('runtime! plugin/asp.lua')

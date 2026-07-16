@@ -1,0 +1,11 @@
+describe('filetype', function()
+  it('detecta .asp como filetype asp', function()
+    vim.cmd.edit('tests/fixtures/basic.asp')
+    assert.are.equal('asp', vim.bo.filetype)
+  end)
+
+  it('detecta .inc como filetype asp', function()
+    vim.cmd.edit('tests/fixtures/dummy.inc')
+    assert.are.equal('asp', vim.bo.filetype)
+  end)
+end)
