@@ -1,0 +1,16 @@
+{
+  "grammars": [
+    {
+      "name": "aspclassic",
+      "camelcase": "AspClassic",
+      "scope": "source.aspclassic",
+      "file-types": ["asp", "inc"],
+      "injection-regex": "^asp"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "MIT",
+    "description": "Tree-sitter grammar for Classic ASP templates"
+  }
+}

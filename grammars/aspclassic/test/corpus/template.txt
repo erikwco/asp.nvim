@@ -1,0 +1,43 @@
+==================
+bloque de codigo
+==================
+<% Response.Write "hola" %>
+---
+
+(template
+  (code_directive
+    (code)))
+
+==================
+bloque de salida
+==================
+<%= total %>
+---
+
+(template
+  (output_directive
+    (code)))
+
+==================
+directiva de pagina
+==================
+<%@ Language="VBScript" %>
+---
+
+(template
+  (page_directive
+    (directive_attributes)))
+
+==================
+codigo entre html
+==================
+<p><% x = 1 %></p>
+---
+
+(template
+  (content)
+  (content)
+  (code_directive
+    (code))
+  (content)
+  (content))
