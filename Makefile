@@ -2,11 +2,13 @@ NVIM ?= nvim
 CC ?= cc
 CFLAGS ?= -Os -fPIC -shared
 
-PARSERS := parser/aspclassic.so parser/vba.so parser/html.so
+PARSERS := parser/aspclassic.so parser/vba.so
 
-.PHONY: parsers test clean
+.PHONY: parsers parsers-test test clean
 
 parsers: $(PARSERS) queries/vba
+
+parsers-test: parsers parser/html.so
 
 build:
 	mkdir -p build
@@ -42,7 +44,7 @@ queries/vba: | build/tree-sitter-vba
 	mkdir -p queries/vba
 	cp build/tree-sitter-vba/queries/*.scm queries/vba/ 2>/dev/null || true
 
-test: parsers build/plenary.nvim
+test: parsers-test build/plenary.nvim
 	$(NVIM) --headless -u tests/minimal_init.lua \
 		-c "PlenaryBustedDirectory tests/spec { minimal_init = 'tests/minimal_init.lua' }"
 

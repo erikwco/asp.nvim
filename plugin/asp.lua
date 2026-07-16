@@ -3,13 +3,6 @@ if vim.g.loaded_asp_nvim then
 end
 vim.g.loaded_asp_nvim = true
 
-vim.filetype.add({
-  extension = {
-    asp = 'asp',
-    inc = 'asp',
-  },
-})
-
 vim.treesitter.language.register('aspclassic', 'asp')
 
 vim.api.nvim_create_autocmd('FileType', {

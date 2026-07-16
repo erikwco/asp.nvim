@@ -7,4 +7,5 @@ vim.opt.runtimepath:prepend(root)
 -- headless de PlenaryBustedDirectory.
 vim.opt.swapfile = false
 vim.cmd('runtime! plugin/plenary.vim')
+vim.cmd('runtime! ftdetect/asp.lua')
 vim.cmd('runtime! plugin/asp.lua')

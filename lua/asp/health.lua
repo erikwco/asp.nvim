@@ -17,7 +17,7 @@ function M.check()
   -- (`ok`) sería siempre `true` aquí y este chequeo jamás reportaría un
   -- parser faltante. Por eso miramos también el valor que `language.add`
   -- realmente retorna.
-  for _, lang in ipairs({ 'aspclassic', 'vba', 'html' }) do
+  for _, lang in ipairs({ 'aspclassic', 'vba' }) do
     local ok, added = pcall(vim.treesitter.language.add, lang)
     if ok and added then
       health.ok(('parser %s encontrado'):format(lang))
@@ -25,6 +25,21 @@ function M.check()
       health.error(
         ('parser %s no encontrado'):format(lang),
         { 'Ejecuta `make parsers` en el directorio del plugin.' }
+      )
+    end
+  end
+
+  do
+    -- html no se compila con `make parsers` (ese target solo produce los
+    -- parsers propios del plugin); el usuario debe instalarlo con
+    -- nvim-treesitter, igual que javascript/css.
+    local ok, added = pcall(vim.treesitter.language.add, 'html')
+    if ok and added then
+      health.ok('parser html encontrado')
+    else
+      health.error(
+        'parser html no encontrado',
+        { 'Instálalo con nvim-treesitter (`:TSInstall html`).' }
       )
     end
   end
