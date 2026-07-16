@@ -1,0 +1,8 @@
+{
+  "name": "tree-sitter-aspclassic",
+  "version": "0.1.0",
+  "description": "Tree-sitter grammar for Classic ASP templates",
+  "license": "MIT",
+  "main": "bindings/node",
+  "dependencies": {}
+}

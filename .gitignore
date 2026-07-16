@@ -1,0 +1,5 @@
+parser/
+build/
+grammars/aspclassic/src/
+grammars/aspclassic/node_modules/
+.superpowers/

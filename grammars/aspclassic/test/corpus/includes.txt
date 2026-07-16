@@ -1,0 +1,31 @@
+==================
+include file
+==================
+<!--#include file="lib/db.asp" -->
+---
+
+(template
+  (include_directive
+    kind: (include_kind)
+    path: (quoted_path)))
+
+==================
+include virtual con comillas simples
+==================
+<!--#include virtual='/comun/header.inc'-->
+---
+
+(template
+  (include_directive
+    kind: (include_kind)
+    path: (quoted_path)))
+
+==================
+comentario html normal no es include
+==================
+<!-- hola -->
+---
+
+(template
+  (content)
+  (content))
