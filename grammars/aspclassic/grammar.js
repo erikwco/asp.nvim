@@ -5,6 +5,7 @@ module.exports = grammar({
 
   rules: {
     template: $ => repeat(choice(
+      $.include_directive,
       $.page_directive,
       $.output_directive,
       $.code_directive,
@@ -20,6 +21,20 @@ module.exports = grammar({
       optional(alias($.code, $.directive_attributes)),
       '%>',
     ),
+
+    include_directive: $ => seq(
+      '<!--#include',
+      /\s+/,
+      field('kind', alias(choice('file', 'virtual'), $.include_kind)),
+      optional(/\s+/),
+      '=',
+      optional(/\s+/),
+      field('path', $.quoted_path),
+      optional(/\s+/),
+      '-->',
+    ),
+
+    quoted_path: () => token(choice(/"[^"]*"/, /'[^']*'/)),
 
     // Todo lo que hay dentro de <% ... %>: cualquier char salvo un
     // '%' seguido de '>'.
