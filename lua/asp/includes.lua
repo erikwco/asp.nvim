@@ -36,7 +36,8 @@ local function extract(root_node, source)
         local raw = vim.treesitter.get_node_text(node, source)
         item.path_text = raw:sub(2, -2):gsub('\\', '/')
       elseif cap == 'inc' then
-        item.lnum, item.col, _, item.end_col = node:range()
+        local lnum, col, _end_row, end_col = node:range()
+        item.lnum, item.col, item.end_col = lnum, col, end_col
       end
     end
     table.insert(out, item)
@@ -99,7 +100,17 @@ local process_items
 -- nivel (disco vs. buffer); todo lo que sigue —clasificar, cortar ciclos,
 -- bajar por los includes resueltos— es idéntico, así que vive aquí una
 -- única vez en lugar de duplicarse en cada wrapper.
-process_items = function(items, from_abs, visited, g)
+--
+-- `visited` acumula TODO archivo ya procesado alguna vez (para nunca leerlo
+-- ni recorrerlo dos veces); `on_stack` marca solo los archivos en la rama
+-- DFS activa ahora mismo (se limpia al volver de walk_from_disk). Un
+-- include a un nodo `on_stack` es un ciclo real (hay un camino de vuelta
+-- desde el destino hasta el origen). Un include a un nodo `visited` pero
+-- NO `on_stack` es un diamante — dos ramas independientes que comparten un
+-- include común (p. ej. A incluye B y C, y C también incluye B) — y se
+-- debe deduplicar en silencio: no es un ciclo, no vuelve a aparecer en
+-- `order`, y no se re-recorre.
+process_items = function(items, from_abs, visited, on_stack, g)
   for _, item in ipairs(items) do
     if not item.resolved then
       table.insert(g.unresolved, {
@@ -110,11 +121,14 @@ process_items = function(items, from_abs, visited, g)
         col = item.col,
         end_col = item.end_col,
       })
-    elseif visited[item.resolved] then
+    elseif on_stack[item.resolved] then
       table.insert(g.cycles, { from = from_abs, to = item.resolved })
+    elseif visited[item.resolved] then
+      -- diamante: ya se recorrió por otra rama y no está en la pila actual;
+      -- se omite en silencio (sin duplicar order, sin cycles, sin recursión).
     else
       table.insert(g.order, item.resolved)
-      walk_from_disk(item.resolved, visited, g)
+      walk_from_disk(item.resolved, visited, on_stack, g)
     end
   end
 end
@@ -124,10 +138,12 @@ end
 -- de recursión posterior al primero, tanto desde graph() como desde
 -- buffer_graph() — los archivos incluidos siempre se leen de disco, nunca
 -- de un buffer abierto.
-walk_from_disk = function(abs, visited, g)
+walk_from_disk = function(abs, visited, on_stack, g)
   visited[abs] = true
+  on_stack[abs] = true
   local items = M.includes_of(abs, nil)
-  process_items(items, abs, visited, g)
+  process_items(items, abs, visited, on_stack, g)
+  on_stack[abs] = nil
 end
 
 ---@param abs_path string
@@ -136,8 +152,10 @@ function M.graph(abs_path)
   abs_path = norm(abs_path)
   local g = { order = {}, unresolved = {}, cycles = {} }
   local visited = { [abs_path] = true }
+  local on_stack = { [abs_path] = true }
   local items = M.includes_of(abs_path, nil)
-  process_items(items, abs_path, visited, g)
+  process_items(items, abs_path, visited, on_stack, g)
+  on_stack[abs_path] = nil
   return g
 end
 
@@ -148,8 +166,10 @@ function M.buffer_graph(bufnr)
   local abs = norm(vim.api.nvim_buf_get_name(bufnr))
   local g = { order = {}, unresolved = {}, cycles = {} }
   local visited = { [abs] = true }
+  local on_stack = { [abs] = true }
   local items = M.includes_of(nil, bufnr)
-  process_items(items, abs, visited, g)
+  process_items(items, abs, visited, on_stack, g)
+  on_stack[abs] = nil
   return g
 end
 

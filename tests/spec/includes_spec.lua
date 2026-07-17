@@ -43,4 +43,14 @@ describe('asp.includes', function()
     assert.are.equal(3, #g.order)
     vim.cmd('bwipeout!')
   end)
+
+  it('dedupea en silencio un diamante (include compartido por dos ramas)', function()
+    local g = includes.graph(FIX .. '/diamante.asp')
+    assert.are.same({
+      FIX .. '/includes/helpers.asp',
+      FIX .. '/includes/constantes.inc',
+    }, g.order)
+    assert.are.same({}, g.unresolved)
+    assert.are.same({}, g.cycles)
+  end)
 end)
