@@ -55,22 +55,20 @@ local function first_identifier_child(node)
   return nil
 end
 
----@param bufnr integer
+-- Recorrido de matches compartido entre fuente-buffer (M.collect) y
+-- fuente-string (M.collect_file): `source` acepta bufnr|string — tanto
+-- vim.treesitter.get_node_text() como query:iter_matches() aceptan ambas
+-- formas indistintamente.
+---@param roots TSNode[]
+---@param source integer|string
 ---@return table[] entries
-function M.collect(bufnr)
-  bufnr = bufnr == 0 and vim.api.nvim_get_current_buf() or bufnr
-  local ok, parser = pcall(vim.treesitter.get_parser, bufnr)
-  if not ok or not parser then return {} end
-  parser:parse(true)
-  local child = parser:children().vbscript
-  if not child then return {} end
-
+local function collect_from_roots(roots, source)
   local query = vim.treesitter.query.parse('vbscript', QUERY)
   local entries = {}
   local seen = {}
 
-  for _, tree in ipairs(child:trees()) do
-    for pattern, match in query:iter_matches(tree:root(), bufnr) do
+  for _, root in ipairs(roots) do
+    for pattern, match in query:iter_matches(root, source) do
       local name_nodes, decl_node
       for id, nodes in pairs(match) do
         if type(nodes) ~= 'table' then nodes = { nodes } end
@@ -104,7 +102,7 @@ function M.collect(bufnr)
           local r0, c0, r1, c1 = decl_node:range()
           local sr0, sc0, sr1, sc1 = name_node:range()
           table.insert(entries, {
-            name = vim.treesitter.get_node_text(name_node, bufnr),
+            name = vim.treesitter.get_node_text(name_node, source),
             kind = PATTERN_KINDS[pattern],
             range = { r0, c0, r1, c1 },
             selection = { sr0, sc0, sr1, sc1 },
@@ -119,6 +117,89 @@ function M.collect(bufnr)
   return entries
 end
 
+---@param bufnr integer
+---@return table[] entries
+function M.collect(bufnr)
+  bufnr = bufnr == 0 and vim.api.nvim_get_current_buf() or bufnr
+  local ok, parser = pcall(vim.treesitter.get_parser, bufnr)
+  if not ok or not parser then return {} end
+  parser:parse(true)
+  local child = parser:children().vbscript
+  if not child then return {} end
+
+  local roots = {}
+  for _, tree in ipairs(child:trees()) do
+    table.insert(roots, tree:root())
+  end
+  return collect_from_roots(roots, bufnr)
+end
+
+local CODE_QUERY = [[ (code) @code ]]
+
+local file_cache = {}
+
+local function mtime_of(path)
+  local st = vim.uv.fs_stat(path)
+  return st and (st.mtime.sec .. ':' .. st.mtime.nsec) or nil
+end
+
+---@param abs_path string
+function M.invalidate(abs_path)
+  file_cache[vim.fs.normalize(abs_path)] = nil
+end
+
+---Extrae símbolos de un archivo en disco sin necesidad de un buffer abierto.
+---Técnica clave (también el fix del backlog de parseo en frío de ~33s en la
+---indexación): parsear el contenido con un parser STRING de aspclassic (solo
+---capa top — barato), recolectar los nodos `(code)`, y crear un parser
+---STRING de vbscript con set_included_regions({code_nodes}) (una única
+---región combinada, igual que el injection "combined" normal) — así solo se
+---parsea VBScript, sin injections de html/js/css/regex.
+---@param abs_path string
+---@return table[] entries (con campo file)
+function M.collect_file(abs_path)
+  abs_path = vim.fs.normalize(abs_path)
+  local mt = mtime_of(abs_path)
+  if not mt then return {} end
+  local hit = file_cache[abs_path]
+  if hit and hit.mtime == mt then return hit.entries end
+
+  local ok, entries = pcall(function()
+    local f = assert(io.open(abs_path, 'r'))
+    local content = f:read('*a')
+    f:close()
+
+    -- Capa plantilla: solo top layer, sin injections (barato).
+    local tpl = vim.treesitter.get_string_parser(content, 'aspclassic')
+    local troot = tpl:parse()[1]:root()
+    local cq = vim.treesitter.query.parse('aspclassic', CODE_QUERY)
+    local code_nodes = {}
+    for _, node in cq:iter_captures(troot, content) do
+      table.insert(code_nodes, node)
+    end
+    if #code_nodes == 0 then return {} end
+
+    -- Capa vbscript SOLO en los rangos de código: nada de html/js/regex.
+    -- set_included_regions espera una lista de REGIONES (cada región es una
+    -- lista de nodos/rangos parseados en un mismo contexto); envolvemos
+    -- code_nodes en una región única para que, igual que el injection
+    -- "combined" normal, todos los bloques <% %> del archivo formen un solo
+    -- árbol vbscript.
+    local vp = vim.treesitter.get_string_parser(content, 'vbscript')
+    vp:set_included_regions({ code_nodes })
+    local vroot = vp:parse(true)[1]:root()
+
+    local out = collect_from_roots({ vroot }, content)
+    for _, e in ipairs(out) do
+      e.file = abs_path
+    end
+    return out
+  end)
+  entries = ok and entries or {}
+  file_cache[abs_path] = { mtime = mt, entries = entries }
+  return entries
+end
+
 -- ¿(row,col) cae dentro del rango [start,end] de `node`? Misma semántica que
 -- vim.treesitter._range.Range.contains (límites inclusivos): usada para
 -- confinar la búsqueda de definition al árbol vbscript correcto en vez de
@@ -128,6 +209,70 @@ local function range_contains(node, row, col)
   if row < sr or (row == sr and col < sc) then return false end
   if row > er or (row == er and col > ec) then return false end
   return true
+end
+
+---Localiza el TSNode `identifier` bajo `position`, confinado a la capa
+---vbscript (`children().vbscript` + `named_descendant_for_range`). Compartido
+---por M.definition y M.references — ver el comentario extenso en
+---M.definition sobre por qué esto NUNCA debe volver a un `vim.treesitter.
+---get_node()` genérico (race con el árbol de inyecciones bajo highlighter
+---incremental async).
+---@param bufnr integer
+---@param position table {line, character} (utf-8, 0-indexed como LSP)
+---@return TSNode|nil
+local function identifier_at(bufnr, position)
+  local pok, parser = pcall(vim.treesitter.get_parser, bufnr)
+  if not pok or not parser then return nil end
+  parser:parse(true)
+
+  local vbscript = parser:children().vbscript
+  if not vbscript then return nil end
+
+  local node
+  for _, tree in ipairs(vbscript:trees()) do
+    local root = tree:root()
+    if range_contains(root, position.line, position.character) then
+      node = root:named_descendant_for_range(
+        position.line, position.character, position.line, position.character
+      )
+      break
+    end
+  end
+  if not node or node:type() ~= 'identifier' then return nil end
+  return node
+end
+
+---Resuelve, entre las declaraciones del buffer actual, cuál referencia
+---`node` (identificador bajo el cursor) según los mismos tiers que
+---M.definition: local del scope del cursor → página (sin scope ni clase) →
+---miembro de clase homónimo → cualquier otra coincidencia. Devuelve la
+---entry completa (con su scope_id/class_id) o nil si `wanted` no tiene
+---ninguna declaración en este buffer. Compartida por M.definition y
+---M.references — ver el comentario extenso en M.definition sobre los
+---tiers y el refinamiento class_id.
+---@param bufnr integer
+---@param node TSNode identificador bajo el cursor
+---@param wanted string ya en minúsculas
+---@return table|nil entry
+local function resolve_binding(bufnr, node, wanted)
+  local cursor_scope = nearest_ancestor(node, SCOPE_TYPES)
+  local cursor_scope_id = cursor_scope and cursor_scope:id() or nil
+
+  local entries = M.collect(bufnr)
+  local local_hit, page_hit, class_hit, any_hit
+  for _, e in ipairs(entries) do
+    if e.name:lower() == wanted and e.decl_id ~= node:id() then
+      any_hit = any_hit or e
+      if cursor_scope_id and e.scope_id == cursor_scope_id then
+        local_hit = local_hit or e
+      elseif not e.scope_id and not e.class_id then
+        page_hit = page_hit or e
+      elseif not e.scope_id and e.class_id then
+        class_hit = class_hit or e
+      end
+    end
+  end
+  return local_hit or page_hit or class_hit or any_hit
 end
 
 ---Resuelve la definición del identificador bajo `position` (case-insensitive),
@@ -149,13 +294,11 @@ end
 function M.definition(bufnr, position)
   bufnr = bufnr == 0 and vim.api.nvim_get_current_buf() or bufnr
   -- vim.treesitter.get_node() sólo ve los árboles inyectados (vbscript) si
-  -- el parser ya corrió con injections resueltas; sin este parse(true)
-  -- previo devuelve nil para posiciones dentro del bloque <% %> aunque el
-  -- parser exista. M.collect() hace lo mismo por la misma razón.
-  local pok, parser = pcall(vim.treesitter.get_parser, bufnr)
-  if not pok or not parser then return nil end
-  parser:parse(true)
-
+  -- el parser ya corrió con injections resueltas; sin un parse(true) previo
+  -- devuelve nil para posiciones dentro del bloque <% %> aunque el parser
+  -- exista. M.collect() hace lo mismo por la misma razón. identifier_at()
+  -- se encarga de ese parse(true).
+  --
   -- Deliberadamente NO usamos vim.treesitter.get_node({ignore_injections=
   -- false}). Esa API global resuelve root_lang_tree:named_node_for_range(),
   -- que —cuando ignore_injections es false— recorre TODOS los `_children`
@@ -174,7 +317,7 @@ function M.definition(bufnr, position)
   -- definition no encuentra `identifier` y devuelve nil de forma errática.
   --
   -- La resolución de definición sólo tiene sentido dentro de la capa
-  -- vbscript, así que confinamos la búsqueda a ese único árbol
+  -- vbscript, así que identifier_at() confina la búsqueda a ese único árbol
   -- (`parser:children().vbscript`) sin tocar los demás lenguajes inyectados.
   -- Esto es determinista: no depende del orden de _children ni de en qué
   -- punto esté el highlighter async. Si la posición no cae dentro de ningún
@@ -183,41 +326,35 @@ function M.definition(bufnr, position)
   --
   -- NO "simplificar" esto de vuelta a vim.treesitter.get_node: reintroduce
   -- la carrera de arriba.
-  local vbscript = parser:children().vbscript
-  if not vbscript then return nil end
-
-  local node
-  for _, tree in ipairs(vbscript:trees()) do
-    local root = tree:root()
-    if range_contains(root, position.line, position.character) then
-      node = root:named_descendant_for_range(
-        position.line, position.character, position.line, position.character
-      )
-      break
-    end
-  end
-  if not node or node:type() ~= 'identifier' then return nil end
+  local node = identifier_at(bufnr, position)
+  if not node then return nil end
   local wanted = vim.treesitter.get_node_text(node, bufnr):lower()
 
-  local cursor_scope = nearest_ancestor(node, SCOPE_TYPES)
-  local cursor_scope_id = cursor_scope and cursor_scope:id() or nil
+  local best = resolve_binding(bufnr, node, wanted)
 
-  local entries = M.collect(bufnr)
-  local local_hit, page_hit, class_hit, any_hit
-  for _, e in ipairs(entries) do
-    if e.name:lower() == wanted and e.decl_id ~= node:id() then
-      any_hit = any_hit or e
-      if cursor_scope_id and e.scope_id == cursor_scope_id then
-        local_hit = local_hit or e
-      elseif not e.scope_id and not e.class_id then
-        page_hit = page_hit or e
-      elseif not e.scope_id and e.class_id then
-        class_hit = class_hit or e
+  if not best then
+    -- Fase 4: nada in-file — recorrer el grafo de includes en orden DFS
+    -- (esa orden ES la prioridad: "includes en orden") y devolver el primer
+    -- símbolo de PÁGINA (scope_id == nil y class_id == nil: los locales y
+    -- miembros de clase de otros archivos no son visibles como identificador
+    -- suelto) cuyo nombre matchee. Primer match gana → return inmediato.
+    local graph = require('asp.includes').buffer_graph(bufnr)
+    for _, file in ipairs(graph.order) do
+      for _, e in ipairs(M.collect_file(file)) do
+        if e.name:lower() == wanted and not e.scope_id and not e.class_id then
+          return {
+            uri = vim.uri_from_fname(e.file),
+            range = {
+              start = { line = e.selection[1], character = e.selection[2] },
+              ['end'] = { line = e.selection[3], character = e.selection[4] },
+            },
+          }
+        end
       end
     end
+    return nil
   end
-  local best = local_hit or page_hit or class_hit or any_hit
-  if not best then return nil end
+
   return {
     uri = vim.uri_from_bufnr(bufnr),
     range = {
@@ -225,6 +362,153 @@ function M.definition(bufnr, position)
       ['end'] = { line = best.selection[3], character = best.selection[4] },
     },
   }
+end
+
+local IDENT_QUERY = [[ (identifier) @id ]]
+
+---Ocurrencias case-insensitive de `wanted` en un archivo de disco (misma
+---técnica que M.collect_file: sólo capa vbscript, confinada a los rangos
+---`(code)` de la plantilla).
+---
+---Ajuste sobre el brief (dos hechos de API confirmados en Task 2, aquí
+---aplicados): LanguageTree no tiene `set_included_ranges` — el método real
+---es `set_included_regions({code_nodes})` (una lista de REGIONES, cada una
+---una lista de nodos) — y `parse()` sin argumentos NO reparsea regiones
+---incluidas no vacías; hace falta `parse(true)`.
+---@param abs_path string
+---@param wanted string ya en minúsculas
+---@return table[] Location[]
+local function occurrences_in_file(abs_path, wanted)
+  local out = {}
+  local ok = pcall(function()
+    local f = assert(io.open(abs_path, 'r'))
+    local content = f:read('*a')
+    f:close()
+    local tpl = vim.treesitter.get_string_parser(content, 'aspclassic')
+    local troot = tpl:parse()[1]:root()
+    local cq = vim.treesitter.query.parse('aspclassic', CODE_QUERY)
+    local code_nodes = {}
+    for _, node in cq:iter_captures(troot, content) do
+      table.insert(code_nodes, node)
+    end
+    if #code_nodes == 0 then return end
+    local vp = vim.treesitter.get_string_parser(content, 'vbscript')
+    vp:set_included_regions({ code_nodes })
+    local vroot = vp:parse(true)[1]:root()
+    local iq = vim.treesitter.query.parse('vbscript', IDENT_QUERY)
+    for _, node in iq:iter_captures(vroot, content) do
+      if vim.treesitter.get_node_text(node, content):lower() == wanted then
+        local r0, c0, r1, c1 = node:range()
+        table.insert(out, {
+          uri = vim.uri_from_fname(abs_path),
+          range = {
+            start = { line = r0, character = c0 },
+            ['end'] = { line = r1, character = c1 },
+          },
+        })
+      end
+    end
+  end)
+  return ok and out or {}
+end
+
+---Todas las ocurrencias del identificador bajo `position`.
+---
+---Si el identificador se resuelve a una declaración LOCAL (scope_id ~= nil:
+---vive dentro de un sub/function/property), los locales no son visibles
+---fuera de ese scope ni fuera del buffer — un `contador` de una Function
+---no debe conflating con el `contador` homónimo de otra. En ese caso las
+---referencias se confinan a las ocurrencias del buffer actual cuyo
+---sub/function/property ancestro más cercano coincide con ese scope_id, y
+---el grafo de includes NI SIQUIERA se consulta (un local no puede
+---aparecer en otro archivo).
+---
+---Si se resuelve a página/clase (scope_id nil) — o no se resuelve a nada
+---in-file pero existe cross-file — se mantiene el comportamiento previo:
+---todas las ocurrencias del buffer actual más un recorrido por texto sobre
+---cada archivo del grafo de includes.
+---@param bufnr integer
+---@param position table {line, character}
+---@return table[] Location[]
+function M.references(bufnr, position)
+  bufnr = bufnr == 0 and vim.api.nvim_get_current_buf() or bufnr
+  local node = identifier_at(bufnr, position)
+  if not node then return {} end
+  local wanted = vim.treesitter.get_node_text(node, bufnr):lower()
+
+  local binding = resolve_binding(bufnr, node, wanted)
+  local scope_id = binding and binding.scope_id or nil
+
+  local out = {}
+  -- buffer actual: ocurrencias sobre sus árboles vbscript ya parseados
+  local parser = vim.treesitter.get_parser(bufnr)
+  parser:parse(true)
+  local child = parser:children().vbscript
+  if child then
+    local iq = vim.treesitter.query.parse('vbscript', IDENT_QUERY)
+    for _, tree in ipairs(child:trees()) do
+      for _, n in iq:iter_captures(tree:root(), bufnr) do
+        if vim.treesitter.get_node_text(n, bufnr):lower() == wanted then
+          local n_scope = nearest_ancestor(n, SCOPE_TYPES)
+          local n_scope_id = n_scope and n_scope:id() or nil
+          if not scope_id or n_scope_id == scope_id then
+            local r0, c0, r1, c1 = n:range()
+            table.insert(out, {
+              uri = vim.uri_from_bufnr(bufnr),
+              range = {
+                start = { line = r0, character = c0 },
+                ['end'] = { line = r1, character = c1 },
+              },
+            })
+          end
+        end
+      end
+    end
+  end
+  if not scope_id then
+    for _, file in ipairs(require('asp.includes').buffer_graph(bufnr).order) do
+      vim.list_extend(out, occurrences_in_file(file, wanted))
+    end
+  end
+  return out
+end
+
+---Busca símbolos en todo el árbol de `root_dir` cuyo nombre contenga
+---`query_str` (case-insensitive; string vacío matchea todo). Excluye
+---build/, parser/ y grammars/ — directorios del propio plugin (clones de
+---dependencias, artefactos compilados, fuentes de gramática) que no
+---aportan símbolos ASP y sólo suman tiempo de escaneo.
+---@param query_str string
+---@param root_dir string
+---@return table[] SymbolInformation[]
+function M.workspace_symbols(query_str, root_dir)
+  local q = (query_str or ''):lower()
+  local files = vim.fs.find(function(name, path)
+    if path:find('/build/') or path:find('/parser/') or path:find('/grammars/') then
+      return false
+    end
+    return name:match('%.asp$') ~= nil or name:match('%.inc$') ~= nil
+  end, { path = root_dir, type = 'file', limit = math.huge })
+
+  local out = {}
+  for _, file in ipairs(files) do
+    for _, e in ipairs(M.collect_file(file)) do
+      if q == '' or e.name:lower():find(q, 1, true) then
+        table.insert(out, {
+          name = e.name,
+          kind = e.kind,
+          location = {
+            uri = vim.uri_from_fname(e.file),
+            range = {
+              start = { line = e.selection[1], character = e.selection[2] },
+              ['end'] = { line = e.selection[3], character = e.selection[4] },
+            },
+          },
+        })
+      end
+    end
+  end
+  return out
 end
 
 local function to_lsp_range(r)

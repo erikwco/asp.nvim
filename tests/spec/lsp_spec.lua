@@ -122,3 +122,122 @@ describe('asp-ls', function()
     end
   end)
 end)
+
+describe('asp-ls cross-file', function()
+  local FIX = vim.fn.fnamemodify('tests/fixtures/proyecto', ':p'):gsub('/$', '')
+
+  before_each(function()
+    vim.cmd.edit(FIX .. '/default.asp')
+    vim.wait(2000, function()
+      return #vim.lsp.get_clients({ bufnr = 0, name = 'asp-ls' }) > 0
+    end)
+  end)
+
+  after_each(function()
+    vim.cmd('bwipeout!')
+  end)
+
+  local function request(method, params)
+    local resp = vim.lsp.buf_request_sync(0, method, params, 5000)
+    for _, r in pairs(resp or {}) do return r.result end
+  end
+
+  local function pos_of(text)
+    local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+    for i, line in ipairs(lines) do
+      local col = line:find(text, 1, true)
+      if col then return { line = i - 1, character = col - 1 } end
+    end
+    error('texto no encontrado: ' .. text)
+  end
+
+  local function definition_at(pos)
+    return request('textDocument/definition', {
+      textDocument = vim.lsp.util.make_text_document_params(),
+      position = pos,
+    })
+  end
+
+  it('salta a una Function definida en un include file', function()
+    local loc = definition_at(pos_of('FormatearMoneda'))
+    assert.is_not_nil(loc)
+    assert.is_truthy(loc.uri:find('includes/helpers%.asp$'))
+  end)
+
+  it('salta a una Const definida en un include anidado', function()
+    local loc = definition_at(pos_of('IVA'))
+    assert.is_truthy(loc.uri:find('includes/constantes%.inc$'))
+  end)
+
+  it('salta a una Function de un include virtual', function()
+    local loc = definition_at(pos_of('AbrirConexion'))
+    assert.is_truthy(loc.uri:find('lib/db%.inc$'))
+  end)
+
+  it('cross-file es case-insensitive', function()
+    local loc = definition_at(pos_of('respuestarapida'))
+    assert.is_truthy(loc.uri:find('includes/helpers%.asp$'))
+  end)
+
+  it('sobrevive a un grafo con ciclo', function()
+    vim.cmd('bwipeout!')
+    vim.cmd.edit(FIX .. '/ciclo_a.asp')
+    vim.wait(2000, function()
+      return #vim.lsp.get_clients({ bufnr = 0, name = 'asp-ls' }) > 0
+    end)
+    local loc = definition_at(pos_of('FuncionB()'))
+    assert.is_truthy(loc.uri:find('ciclo_b%.asp$'))
+  end)
+
+  it('references encuentra usos y definición en todo el grafo', function()
+    local refs = request('textDocument/references', {
+      textDocument = vim.lsp.util.make_text_document_params(),
+      position = pos_of('FormatearMoneda'),
+      context = { includeDeclaration = true },
+    })
+    -- default.asp: 1 uso; helpers.asp: nombre en Function + asignación de retorno
+    assert.are.equal(3, #refs)
+    local files = {}
+    for _, r in ipairs(refs) do
+      files[r.uri:match('([^/]+)$')] = (files[r.uri:match('([^/]+)$')] or 0) + 1
+    end
+    assert.are.equal(1, files['default.asp'])
+    assert.are.equal(2, files['helpers.asp'])
+  end)
+
+  it('workspace/symbol busca case-insensitive en todo el proyecto', function()
+    local syms = request('workspace/symbol', { query = 'funcion' })
+    local names = {}
+    for _, s in ipairs(syms) do names[s.name] = s end
+    assert.is_not_nil(names['FuncionA'])
+    assert.is_not_nil(names['FuncionB'])
+    assert.is_truthy(names['FuncionA'].location.uri:find('ciclo_a%.asp$'))
+  end)
+
+  it('root_dir del cliente es el web.config más cercano, no el .git del repo', function()
+    -- proyecto/web.config está más cerca de default.asp que el .git del
+    -- repo; root_dir debe ser proyecto/, no la raíz del plugin.
+    local client = vim.lsp.get_clients({ bufnr = 0, name = 'asp-ls' })[1]
+    assert.is_not_nil(client)
+    assert.is_truthy(client.config.root_dir:match('tests/fixtures/proyecto$'))
+  end)
+
+  it('references con conciencia de scope: locales homónimos en dos Functions no se conflacionan', function()
+    vim.cmd('bwipeout!')
+    vim.cmd.edit(FIX .. '/locales.asp')
+    vim.wait(2000, function()
+      return #vim.lsp.get_clients({ bufnr = 0, name = 'asp-ls' }) > 0
+    end)
+    local segunda_line = pos_of('Function Segunda').line
+    local refs = request('textDocument/references', {
+      textDocument = vim.lsp.util.make_text_document_params(),
+      position = pos_of('contador = 1'),
+      context = { includeDeclaration = true },
+    })
+    assert.is_not_nil(refs)
+    assert.are.equal(3, #refs)
+    for _, r in ipairs(refs) do
+      assert.is_true(r.range.start.line < segunda_line)
+    end
+  end)
+end)

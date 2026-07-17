@@ -67,4 +67,36 @@ describe('asp.symbols', function()
     assert.are.equal(13, nuevo_total.kind) -- Variable, no Property
     assert.are.equal(property.decl_id, nuevo_total.scope_id)
   end)
+
+  local FIX = vim.fn.fnamemodify('tests/fixtures/proyecto', ':p'):gsub('/$', '')
+
+  it('collect_file extrae símbolos de un archivo en disco', function()
+    local entries = require('asp.symbols').collect_file(FIX .. '/includes/helpers.asp')
+    local names = {}
+    for _, e in ipairs(entries) do names[e.name] = e end
+    assert.are.equal(12, names['FormatearMoneda'].kind)
+    assert.are.equal(12, names['RespuestaRapida'].kind)
+    assert.are.equal(FIX .. '/includes/helpers.asp', names['FormatearMoneda'].file)
+    assert.is_nil(names['FormatearMoneda'].scope_id)
+  end)
+
+  it('collect_file extrae consts y dims de un .inc', function()
+    local entries = require('asp.symbols').collect_file(FIX .. '/includes/constantes.inc')
+    local names = {}
+    for _, e in ipairs(entries) do names[e.name] = e end
+    assert.are.equal(14, names['IVA'].kind)
+    assert.are.equal(13, names['gConexion'].kind)
+  end)
+
+  it('collect_file cachea por mtime', function()
+    local symbols = require('asp.symbols')
+    local path = FIX .. '/lib/db.inc'
+    local a = symbols.collect_file(path)
+    local b = symbols.collect_file(path)
+    assert.are.equal(a, b) -- misma tabla = cache hit
+    symbols.invalidate(path)
+    local c = symbols.collect_file(path)
+    assert.are_not.equal(a, c)
+    assert.are.equal(#a, #c)
+  end)
 end)
