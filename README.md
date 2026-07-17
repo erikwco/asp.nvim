@@ -1,8 +1,9 @@
 # asp.nvim
 
 Soporte de Classic ASP (VBScript + HTML + JavaScript) para Neovim:
-resaltado por regiones vía tree-sitter. Fases futuras: go-to-definition
-con resolución de `<!--#include -->` (ver `docs/superpowers/specs/`).
+resaltado por regiones vía tree-sitter y navegación LSP (ir a definición,
+referencias, símbolos, hover y completion) incluyendo la resolución de
+`<!--#include -->` cross-file. Ver |asp.nvim| (`:help asp`) para el detalle.
 
 El VBScript de `<% %>`/`<%= %>` se parsea con gramática propia
 (`grammars/vbscript/`, fork de tree-sitter-vba), con resaltado de
