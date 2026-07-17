@@ -298,7 +298,30 @@ function M.definition(bufnr, position)
     end
   end
   local best = local_hit or page_hit or class_hit or any_hit
-  if not best then return nil end
+
+  if not best then
+    -- Fase 4: nada in-file — recorrer el grafo de includes en orden DFS
+    -- (esa orden ES la prioridad: "includes en orden") y devolver el primer
+    -- símbolo de PÁGINA (scope_id == nil y class_id == nil: los locales y
+    -- miembros de clase de otros archivos no son visibles como identificador
+    -- suelto) cuyo nombre matchee. Primer match gana → return inmediato.
+    local graph = require('asp.includes').buffer_graph(bufnr)
+    for _, file in ipairs(graph.order) do
+      for _, e in ipairs(M.collect_file(file)) do
+        if e.name:lower() == wanted and not e.scope_id and not e.class_id then
+          return {
+            uri = vim.uri_from_fname(e.file),
+            range = {
+              start = { line = e.selection[1], character = e.selection[2] },
+              ['end'] = { line = e.selection[3], character = e.selection[4] },
+            },
+          }
+        end
+      end
+    end
+    return nil
+  end
+
   return {
     uri = vim.uri_from_bufnr(bufnr),
     range = {

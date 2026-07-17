@@ -122,3 +122,70 @@ describe('asp-ls', function()
     end
   end)
 end)
+
+describe('asp-ls cross-file', function()
+  local FIX = vim.fn.fnamemodify('tests/fixtures/proyecto', ':p'):gsub('/$', '')
+
+  before_each(function()
+    vim.cmd.edit(FIX .. '/default.asp')
+    vim.wait(2000, function()
+      return #vim.lsp.get_clients({ bufnr = 0, name = 'asp-ls' }) > 0
+    end)
+  end)
+
+  after_each(function()
+    vim.cmd('bwipeout!')
+  end)
+
+  local function request(method, params)
+    local resp = vim.lsp.buf_request_sync(0, method, params, 5000)
+    for _, r in pairs(resp or {}) do return r.result end
+  end
+
+  local function pos_of(text)
+    local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+    for i, line in ipairs(lines) do
+      local col = line:find(text, 1, true)
+      if col then return { line = i - 1, character = col - 1 } end
+    end
+    error('texto no encontrado: ' .. text)
+  end
+
+  local function definition_at(pos)
+    return request('textDocument/definition', {
+      textDocument = vim.lsp.util.make_text_document_params(),
+      position = pos,
+    })
+  end
+
+  it('salta a una Function definida en un include file', function()
+    local loc = definition_at(pos_of('FormatearMoneda'))
+    assert.is_not_nil(loc)
+    assert.is_truthy(loc.uri:find('includes/helpers%.asp$'))
+  end)
+
+  it('salta a una Const definida en un include anidado', function()
+    local loc = definition_at(pos_of('IVA'))
+    assert.is_truthy(loc.uri:find('includes/constantes%.inc$'))
+  end)
+
+  it('salta a una Function de un include virtual', function()
+    local loc = definition_at(pos_of('AbrirConexion'))
+    assert.is_truthy(loc.uri:find('lib/db%.inc$'))
+  end)
+
+  it('cross-file es case-insensitive', function()
+    local loc = definition_at(pos_of('respuestarapida'))
+    assert.is_truthy(loc.uri:find('includes/helpers%.asp$'))
+  end)
+
+  it('sobrevive a un grafo con ciclo', function()
+    vim.cmd('bwipeout!')
+    vim.cmd.edit(FIX .. '/ciclo_a.asp')
+    vim.wait(2000, function()
+      return #vim.lsp.get_clients({ bufnr = 0, name = 'asp-ls' }) > 0
+    end)
+    local loc = definition_at(pos_of('FuncionB()'))
+    assert.is_truthy(loc.uri:find('ciclo_b%.asp$'))
+  end)
+end)
