@@ -4,9 +4,9 @@
   (#set! injection.combined)
   (#set! injection.language "html"))
 
-; Todo el código de <% %> y <%= %> es VBScript (Fase 1: gramática vba).
+; Todo el código de <% %> y <%= %> es VBScript (gramática propia vbscript).
 ; También combinado: patrones como <% If x Then %>...<% End If %>
 ; forman un solo programa.
 ((code) @injection.content
   (#set! injection.combined)
-  (#set! injection.language "vba"))
+  (#set! injection.language "vbscript"))

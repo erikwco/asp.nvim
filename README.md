@@ -4,9 +4,9 @@ Soporte de Classic ASP (VBScript + HTML + JavaScript) para Neovim:
 resaltado por regiones vía tree-sitter. Fases futuras: go-to-definition
 con resolución de `<!--#include -->` (ver `docs/superpowers/specs/`).
 
-En esta fase el resaltado a nivel de token de VBScript es mínimo: lo que
-funciona hoy es la separación de regiones y el resaltado de HTML/JavaScript;
-la gramática de VBScript completa (Fase 2) traerá el resaltado detallado.
+El VBScript de `<% %>`/`<%= %>` se parsea con gramática propia
+(`grammars/vbscript/`, fork de tree-sitter-vba), con resaltado de
+keywords, tipos, funciones/variables y llamadas.
 
 ## Requisitos
 
@@ -31,3 +31,10 @@ la gramática de VBScript completa (Fase 2) traerá el resaltado detallado.
 ## Verificación
 
 `:checkhealth asp`
+
+## Licencias
+
+- El plugin (código Lua, gramática aspclassic, queries): **MIT**.
+- `grammars/vbscript/`: **GPL-3.0** — fork de
+  [arrmee-wt/tree-sitter-vba](https://github.com/arrmee-wt/tree-sitter-vba);
+  cambios documentados en `grammars/vbscript/NOTICE.md`.

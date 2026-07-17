@@ -17,7 +17,7 @@ function M.check()
   -- (`ok`) sería siempre `true` aquí y este chequeo jamás reportaría un
   -- parser faltante. Por eso miramos también el valor que `language.add`
   -- realmente retorna.
-  for _, lang in ipairs({ 'aspclassic', 'vba' }) do
+  for _, lang in ipairs({ 'aspclassic', 'vbscript' }) do
     local ok, added = pcall(vim.treesitter.language.add, lang)
     if ok and added then
       health.ok(('parser %s encontrado'):format(lang))
