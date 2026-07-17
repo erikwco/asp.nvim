@@ -1,0 +1,43 @@
+==================
+dim con as debe ser error en vbscript
+:error
+==================
+Dim x As Integer
+---
+
+==================
+literal de fecha
+==================
+fecha = #2026-07-16#
+---
+
+(source_file
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (date_literal)))))
+
+==================
+dos statements en una linea con dos puntos
+==================
+a = 1 : b = 2
+---
+
+(source_file
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal))))
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal)))))
