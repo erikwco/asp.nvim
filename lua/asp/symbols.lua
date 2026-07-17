@@ -55,22 +55,20 @@ local function first_identifier_child(node)
   return nil
 end
 
----@param bufnr integer
+-- Recorrido de matches compartido entre fuente-buffer (M.collect) y
+-- fuente-string (M.collect_file): `source` acepta bufnr|string — tanto
+-- vim.treesitter.get_node_text() como query:iter_matches() aceptan ambas
+-- formas indistintamente.
+---@param roots TSNode[]
+---@param source integer|string
 ---@return table[] entries
-function M.collect(bufnr)
-  bufnr = bufnr == 0 and vim.api.nvim_get_current_buf() or bufnr
-  local ok, parser = pcall(vim.treesitter.get_parser, bufnr)
-  if not ok or not parser then return {} end
-  parser:parse(true)
-  local child = parser:children().vbscript
-  if not child then return {} end
-
+local function collect_from_roots(roots, source)
   local query = vim.treesitter.query.parse('vbscript', QUERY)
   local entries = {}
   local seen = {}
 
-  for _, tree in ipairs(child:trees()) do
-    for pattern, match in query:iter_matches(tree:root(), bufnr) do
+  for _, root in ipairs(roots) do
+    for pattern, match in query:iter_matches(root, source) do
       local name_nodes, decl_node
       for id, nodes in pairs(match) do
         if type(nodes) ~= 'table' then nodes = { nodes } end
@@ -104,7 +102,7 @@ function M.collect(bufnr)
           local r0, c0, r1, c1 = decl_node:range()
           local sr0, sc0, sr1, sc1 = name_node:range()
           table.insert(entries, {
-            name = vim.treesitter.get_node_text(name_node, bufnr),
+            name = vim.treesitter.get_node_text(name_node, source),
             kind = PATTERN_KINDS[pattern],
             range = { r0, c0, r1, c1 },
             selection = { sr0, sc0, sr1, sc1 },
@@ -116,6 +114,89 @@ function M.collect(bufnr)
       end
     end
   end
+  return entries
+end
+
+---@param bufnr integer
+---@return table[] entries
+function M.collect(bufnr)
+  bufnr = bufnr == 0 and vim.api.nvim_get_current_buf() or bufnr
+  local ok, parser = pcall(vim.treesitter.get_parser, bufnr)
+  if not ok or not parser then return {} end
+  parser:parse(true)
+  local child = parser:children().vbscript
+  if not child then return {} end
+
+  local roots = {}
+  for _, tree in ipairs(child:trees()) do
+    table.insert(roots, tree:root())
+  end
+  return collect_from_roots(roots, bufnr)
+end
+
+local CODE_QUERY = [[ (code) @code ]]
+
+local file_cache = {}
+
+local function mtime_of(path)
+  local st = vim.uv.fs_stat(path)
+  return st and (st.mtime.sec .. ':' .. st.mtime.nsec) or nil
+end
+
+---@param abs_path string
+function M.invalidate(abs_path)
+  file_cache[vim.fs.normalize(abs_path)] = nil
+end
+
+---Extrae símbolos de un archivo en disco sin necesidad de un buffer abierto.
+---Técnica clave (también el fix del backlog de parseo en frío de ~33s en la
+---indexación): parsear el contenido con un parser STRING de aspclassic (solo
+---capa top — barato), recolectar los nodos `(code)`, y crear un parser
+---STRING de vbscript con set_included_regions({code_nodes}) (una única
+---región combinada, igual que el injection "combined" normal) — así solo se
+---parsea VBScript, sin injections de html/js/css/regex.
+---@param abs_path string
+---@return table[] entries (con campo file)
+function M.collect_file(abs_path)
+  abs_path = vim.fs.normalize(abs_path)
+  local mt = mtime_of(abs_path)
+  if not mt then return {} end
+  local hit = file_cache[abs_path]
+  if hit and hit.mtime == mt then return hit.entries end
+
+  local ok, entries = pcall(function()
+    local f = assert(io.open(abs_path, 'r'))
+    local content = f:read('*a')
+    f:close()
+
+    -- Capa plantilla: solo top layer, sin injections (barato).
+    local tpl = vim.treesitter.get_string_parser(content, 'aspclassic')
+    local troot = tpl:parse()[1]:root()
+    local cq = vim.treesitter.query.parse('aspclassic', CODE_QUERY)
+    local code_nodes = {}
+    for _, node in cq:iter_captures(troot, content) do
+      table.insert(code_nodes, node)
+    end
+    if #code_nodes == 0 then return {} end
+
+    -- Capa vbscript SOLO en los rangos de código: nada de html/js/regex.
+    -- set_included_regions espera una lista de REGIONES (cada región es una
+    -- lista de nodos/rangos parseados en un mismo contexto); envolvemos
+    -- code_nodes en una región única para que, igual que el injection
+    -- "combined" normal, todos los bloques <% %> del archivo formen un solo
+    -- árbol vbscript.
+    local vp = vim.treesitter.get_string_parser(content, 'vbscript')
+    vp:set_included_regions({ code_nodes })
+    local vroot = vp:parse(true)[1]:root()
+
+    local out = collect_from_roots({ vroot }, content)
+    for _, e in ipairs(out) do
+      e.file = abs_path
+    end
+    return out
+  end)
+  entries = ok and entries or {}
+  file_cache[abs_path] = { mtime = mt, entries = entries }
   return entries
 end
 
