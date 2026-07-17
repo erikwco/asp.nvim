@@ -225,7 +225,10 @@ module.exports = grammar({
     unary_expression: $ => prec.left(5, seq(choice(ci('Not'), '-'), $.expression)),
 
     function_call: $ => seq($.identifier, '(', optional($._arg_expression_list), ')'),
-    _arg_expression_list: $ => seq($.expression, repeat(seq(',', $.expression))),
+    _arg_expression_list: $ => choice(
+      seq($.expression, repeat(seq(',', optional($.expression)))),
+      repeat1(seq(',', optional($.expression))),
+    ),
 
     primary_expression: $ => choice(
       $.identifier, $.number_literal, $.string_literal,
