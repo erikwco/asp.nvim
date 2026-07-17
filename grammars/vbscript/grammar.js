@@ -23,6 +23,7 @@ module.exports = grammar({
   conflicts: $ => [
     [$.function_call, $.primary_expression],
     [$.dim_statement],
+    [$.block, $._statement],
   ],
 
   rules: {
@@ -112,13 +113,22 @@ module.exports = grammar({
       ci('Mid'), '(', $.identifier, ',', $.expression, ',', $.expression, ')', '=', $.expression,
     ),
 
-    if_statement: $ => seq(
+    if_statement: $ => choice($._block_if, $._inline_if),
+
+    _block_if: $ => seq(
       ci('If'), $.expression, ci('Then'),
       $.block,
       repeat($.elseif_clause),
       optional($.else_clause),
       ci('End'), ci('If'),
     ),
+
+    _inline_if: $ => prec.right(seq(
+      ci('If'), $.expression, ci('Then'),
+      $._statement,
+      optional(seq(ci('Else'), $._statement)),
+    )),
+
     elseif_clause: $ => seq(ci('ElseIf'), $.expression, ci('Then'), $.block),
     else_clause: $ => seq(ci('Else'), $.block),
 

@@ -1,0 +1,84 @@
+==================
+if de una linea
+==================
+if len(vParcialesActivos)=0 then vParcialesActivos = "N"
+---
+
+(source_file
+  (if_statement
+    (expression
+      (binary_expression
+        (expression
+          (function_call
+            (identifier)
+            (expression
+              (primary_expression
+                (identifier)))))
+        (expression
+          (primary_expression
+            (number_literal)))))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (string_literal))))))
+
+==================
+if de una linea con else
+==================
+If x > 0 Then y = 1 Else y = 2
+---
+
+(source_file
+  (if_statement
+    (expression
+      (binary_expression
+        (expression
+          (primary_expression
+            (identifier)))
+        (expression
+          (primary_expression
+            (number_literal)))))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal))))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal))))))
+
+==================
+if en bloque sigue funcionando
+==================
+If x > 0 Then
+  y = 1
+End If
+---
+
+(source_file
+  (if_statement
+    (expression
+      (binary_expression
+        (expression
+          (primary_expression
+            (identifier)))
+        (expression
+          (primary_expression
+            (number_literal)))))
+    (block
+      (let_statement
+        (expression
+          (primary_expression
+            (identifier)))
+        (expression
+          (primary_expression
+            (number_literal)))))))
