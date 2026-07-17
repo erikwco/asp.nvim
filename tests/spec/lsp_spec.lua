@@ -213,4 +213,31 @@ describe('asp-ls cross-file', function()
     assert.is_not_nil(names['FuncionB'])
     assert.is_truthy(names['FuncionA'].location.uri:find('ciclo_a%.asp$'))
   end)
+
+  it('root_dir del cliente es el web.config más cercano, no el .git del repo', function()
+    -- proyecto/web.config está más cerca de default.asp que el .git del
+    -- repo; root_dir debe ser proyecto/, no la raíz del plugin.
+    local client = vim.lsp.get_clients({ bufnr = 0, name = 'asp-ls' })[1]
+    assert.is_not_nil(client)
+    assert.is_truthy(client.config.root_dir:match('tests/fixtures/proyecto$'))
+  end)
+
+  it('references con conciencia de scope: locales homónimos en dos Functions no se conflacionan', function()
+    vim.cmd('bwipeout!')
+    vim.cmd.edit(FIX .. '/locales.asp')
+    vim.wait(2000, function()
+      return #vim.lsp.get_clients({ bufnr = 0, name = 'asp-ls' }) > 0
+    end)
+    local segunda_line = pos_of('Function Segunda').line
+    local refs = request('textDocument/references', {
+      textDocument = vim.lsp.util.make_text_document_params(),
+      position = pos_of('contador = 1'),
+      context = { includeDeclaration = true },
+    })
+    assert.is_not_nil(refs)
+    assert.are.equal(3, #refs)
+    for _, r in ipairs(refs) do
+      assert.is_true(r.range.start.line < segunda_line)
+    end
+  end)
 end)

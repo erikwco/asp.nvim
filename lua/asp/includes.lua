@@ -10,7 +10,17 @@ local function norm(path)
   return (vim.fs.normalize(path):gsub('//+', '/'))
 end
 
-local function virtual_root_for(abs_path)
+---Raíz virtual del sitio para resolver includes `virtual="/..."`: honra
+---`setup({virtual_root})` si se fijó, si no busca el `web.config` más
+---cercano hacia arriba desde `abs_path`, y si no existe cae al `.git` más
+---cercano. Pública (además de M.includes_of/M.graph/M.buffer_graph) porque
+---lsp.lua M.start la reutiliza para calcular `root_dir`: la raíz de
+---includes y la raíz del workspace LSP deben coincidir — si difirieran, un
+---archivo bajo `proyecto/web.config` attachearía con root_dir del repo
+---mientras sus includes virtual= resuelven contra `proyecto/`.
+---@param abs_path string
+---@return string|nil
+function M.virtual_root_for(abs_path)
   local opts = require('asp').options
   if opts.virtual_root and opts.virtual_root ~= '' then
     return norm(opts.virtual_root)
@@ -49,7 +59,7 @@ end
 local function resolve_one(item, from_abs)
   local candidate
   if item.kind == 'virtual' then
-    local root = virtual_root_for(from_abs)
+    local root = M.virtual_root_for(from_abs)
     if not root then return nil end
     candidate = norm(root .. '/' .. item.path_text)
   else

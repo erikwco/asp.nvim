@@ -71,10 +71,17 @@ end
 
 ---@param bufnr integer
 function M.start(bufnr)
+  -- root_dir unificado con la raíz de includes: virtual_root_for ya honra
+  -- setup({virtual_root}) y prefiere el web.config más cercano sobre el
+  -- .git más cercano (ver comentario en asp.includes.M.virtual_root_for).
+  -- El fallback extra a `.git` a secas cubre proyectos sin web.config.
+  local root_dir = require('asp.includes').virtual_root_for(vim.api.nvim_buf_get_name(bufnr))
+    or vim.fs.root(bufnr, { '.git' })
+    or vim.fn.getcwd()
   return vim.lsp.start({
     name = 'asp-ls',
     cmd = server,
-    root_dir = vim.fs.root(bufnr, { '.git', 'web.config' }) or vim.fn.getcwd(),
+    root_dir = root_dir,
   }, { bufnr = bufnr })
 end
 

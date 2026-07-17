@@ -242,6 +242,39 @@ local function identifier_at(bufnr, position)
   return node
 end
 
+---Resuelve, entre las declaraciones del buffer actual, cuál referencia
+---`node` (identificador bajo el cursor) según los mismos tiers que
+---M.definition: local del scope del cursor → página (sin scope ni clase) →
+---miembro de clase homónimo → cualquier otra coincidencia. Devuelve la
+---entry completa (con su scope_id/class_id) o nil si `wanted` no tiene
+---ninguna declaración en este buffer. Compartida por M.definition y
+---M.references — ver el comentario extenso en M.definition sobre los
+---tiers y el refinamiento class_id.
+---@param bufnr integer
+---@param node TSNode identificador bajo el cursor
+---@param wanted string ya en minúsculas
+---@return table|nil entry
+local function resolve_binding(bufnr, node, wanted)
+  local cursor_scope = nearest_ancestor(node, SCOPE_TYPES)
+  local cursor_scope_id = cursor_scope and cursor_scope:id() or nil
+
+  local entries = M.collect(bufnr)
+  local local_hit, page_hit, class_hit, any_hit
+  for _, e in ipairs(entries) do
+    if e.name:lower() == wanted and e.decl_id ~= node:id() then
+      any_hit = any_hit or e
+      if cursor_scope_id and e.scope_id == cursor_scope_id then
+        local_hit = local_hit or e
+      elseif not e.scope_id and not e.class_id then
+        page_hit = page_hit or e
+      elseif not e.scope_id and e.class_id then
+        class_hit = class_hit or e
+      end
+    end
+  end
+  return local_hit or page_hit or class_hit or any_hit
+end
+
 ---Resuelve la definición del identificador bajo `position` (case-insensitive),
 ---con precedencia: scope local del cursor → página (Dim/Const de página,
 ---excluyendo miembros de clase) → miembro de clase homónimo → cualquier
@@ -297,24 +330,7 @@ function M.definition(bufnr, position)
   if not node then return nil end
   local wanted = vim.treesitter.get_node_text(node, bufnr):lower()
 
-  local cursor_scope = nearest_ancestor(node, SCOPE_TYPES)
-  local cursor_scope_id = cursor_scope and cursor_scope:id() or nil
-
-  local entries = M.collect(bufnr)
-  local local_hit, page_hit, class_hit, any_hit
-  for _, e in ipairs(entries) do
-    if e.name:lower() == wanted and e.decl_id ~= node:id() then
-      any_hit = any_hit or e
-      if cursor_scope_id and e.scope_id == cursor_scope_id then
-        local_hit = local_hit or e
-      elseif not e.scope_id and not e.class_id then
-        page_hit = page_hit or e
-      elseif not e.scope_id and e.class_id then
-        class_hit = class_hit or e
-      end
-    end
-  end
-  local best = local_hit or page_hit or class_hit or any_hit
+  local best = resolve_binding(bufnr, node, wanted)
 
   if not best then
     -- Fase 4: nada in-file — recorrer el grafo de includes en orden DFS
@@ -396,9 +412,21 @@ local function occurrences_in_file(abs_path, wanted)
   return ok and out or {}
 end
 
----Todas las ocurrencias del identificador bajo `position`: en el buffer
----actual (sobre sus árboles vbscript ya parseados) y en cada archivo del
----grafo de includes.
+---Todas las ocurrencias del identificador bajo `position`.
+---
+---Si el identificador se resuelve a una declaración LOCAL (scope_id ~= nil:
+---vive dentro de un sub/function/property), los locales no son visibles
+---fuera de ese scope ni fuera del buffer — un `contador` de una Function
+---no debe conflating con el `contador` homónimo de otra. En ese caso las
+---referencias se confinan a las ocurrencias del buffer actual cuyo
+---sub/function/property ancestro más cercano coincide con ese scope_id, y
+---el grafo de includes NI SIQUIERA se consulta (un local no puede
+---aparecer en otro archivo).
+---
+---Si se resuelve a página/clase (scope_id nil) — o no se resuelve a nada
+---in-file pero existe cross-file — se mantiene el comportamiento previo:
+---todas las ocurrencias del buffer actual más un recorrido por texto sobre
+---cada archivo del grafo de includes.
 ---@param bufnr integer
 ---@param position table {line, character}
 ---@return table[] Location[]
@@ -407,6 +435,9 @@ function M.references(bufnr, position)
   local node = identifier_at(bufnr, position)
   if not node then return {} end
   local wanted = vim.treesitter.get_node_text(node, bufnr):lower()
+
+  local binding = resolve_binding(bufnr, node, wanted)
+  local scope_id = binding and binding.scope_id or nil
 
   local out = {}
   -- buffer actual: ocurrencias sobre sus árboles vbscript ya parseados
@@ -418,20 +449,26 @@ function M.references(bufnr, position)
     for _, tree in ipairs(child:trees()) do
       for _, n in iq:iter_captures(tree:root(), bufnr) do
         if vim.treesitter.get_node_text(n, bufnr):lower() == wanted then
-          local r0, c0, r1, c1 = n:range()
-          table.insert(out, {
-            uri = vim.uri_from_bufnr(bufnr),
-            range = {
-              start = { line = r0, character = c0 },
-              ['end'] = { line = r1, character = c1 },
-            },
-          })
+          local n_scope = nearest_ancestor(n, SCOPE_TYPES)
+          local n_scope_id = n_scope and n_scope:id() or nil
+          if not scope_id or n_scope_id == scope_id then
+            local r0, c0, r1, c1 = n:range()
+            table.insert(out, {
+              uri = vim.uri_from_bufnr(bufnr),
+              range = {
+                start = { line = r0, character = c0 },
+                ['end'] = { line = r1, character = c1 },
+              },
+            })
+          end
         end
       end
     end
   end
-  for _, file in ipairs(require('asp.includes').buffer_graph(bufnr).order) do
-    vim.list_extend(out, occurrences_in_file(file, wanted))
+  if not scope_id then
+    for _, file in ipairs(require('asp.includes').buffer_graph(bufnr).order) do
+      vim.list_extend(out, occurrences_in_file(file, wanted))
+    end
   end
   return out
 end

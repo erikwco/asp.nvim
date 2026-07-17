@@ -60,7 +60,10 @@ function M.check()
   if #asp_clients > 0 then
     health.ok(('asp-ls activo (%d cliente(s))'):format(#asp_clients))
   else
-    health.info('asp-ls se adjunta al abrir un archivo .asp (documentSymbol y definition)')
+    health.info(
+      'asp-ls se adjunta al abrir un archivo .asp (documentSymbol, definition, '
+        .. 'references, workspace/symbol, diagnósticos de includes)'
+    )
   end
 
   health.ok('diagnósticos de includes activos (namespace asp_includes)')

@@ -46,11 +46,14 @@ Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`:
   (`web.config` o `.git`) y puede fijarse con
   `require('asp').setup({ virtual_root = '/ruta/al/sitio' })`.
 
-> **Nota de rendimiento:** en páginas muy grandes con muchos bloques
+> **Nota de rendimiento:** para los archivos INCLUDED/indexados (grafo de
+> includes, `workspace/symbol`), la Fase 4 ya optimizó esto: solo se
+> parsea la capa VBScript desde disco (milisegundos, incluso en archivos
+> enormes), sin tocar html/js/css/regex. Esa optimización no cubre el
+> buffer que tienes ABIERTO: en páginas muy grandes con muchos bloques
 > `<script>` (miles de líneas), la *primera* consulta LSP tras abrir el
 > archivo puede tardar varios segundos mientras tree-sitter parsea todas
-> las capas; las consultas siguientes son instantáneas. La Fase 4
-> optimizará esto parseando solo la capa VBScript.
+> sus capas; las consultas siguientes sobre ese buffer son instantáneas.
 
 ## Verificación
 
