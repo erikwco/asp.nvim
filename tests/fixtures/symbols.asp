@@ -28,4 +28,5 @@ End Sub
 nombre = "cliente"
 mostrar
 %>
+<script>var re = /[a-z]+/; function foo() { return re; }</script>
 </body></html>

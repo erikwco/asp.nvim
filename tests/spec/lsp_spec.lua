@@ -105,4 +105,17 @@ describe('asp-ls', function()
     assert.are.equal(line_of('Dim total'), loc3.range.start.line)
     assert.is_not_nil(loc2)
   end)
+
+  it('definition en un bloque <script> cliente (JS/regex) devuelve nil de forma estable', function()
+    -- Regresión del bug de carrera: M.definition confinaba la búsqueda al
+    -- árbol vbscript inyectado; una posición dentro de <script> (capa
+    -- javascript/regex, no vbscript) no tiene definición VBScript posible y
+    -- debe devolver nil siempre, sin flakiness entre llamadas sucesivas.
+    local pos = pos_of('function foo()')
+    pos.character = pos.character + #('function ')
+    for i = 1, 5 do
+      local loc = definition_at(pos)
+      assert.is_nil(loc, 'llamada ' .. i .. ' de 5 devolvió non-nil')
+    end
+  end)
 end)

@@ -119,6 +119,17 @@ function M.collect(bufnr)
   return entries
 end
 
+-- ¿(row,col) cae dentro del rango [start,end] de `node`? Misma semántica que
+-- vim.treesitter._range.Range.contains (límites inclusivos): usada para
+-- confinar la búsqueda de definition al árbol vbscript correcto en vez de
+-- recorrer todo el árbol de inyecciones (ver comentario en M.definition).
+local function range_contains(node, row, col)
+  local sr, sc, er, ec = node:range()
+  if row < sr or (row == sr and col < sc) then return false end
+  if row > er or (row == er and col > ec) then return false end
+  return true
+end
+
 ---Resuelve la definición del identificador bajo `position` (case-insensitive),
 ---con precedencia: scope local del cursor → página (Dim/Const de página,
 ---excluyendo miembros de clase) → miembro de clase homónimo → cualquier
@@ -145,16 +156,47 @@ function M.definition(bufnr, position)
   if not pok or not parser then return nil end
   parser:parse(true)
 
-  -- ignore_injections default es true (ver runtime vim.treesitter.get_node):
-  -- sin desactivarlo, la búsqueda nunca baja del árbol raíz aspclassic al
-  -- vbscript inyectado, y devuelve el nodo contenedor del bloque <% %> en
-  -- vez del identifier bajo el cursor.
-  local ok, node = pcall(vim.treesitter.get_node, {
-    bufnr = bufnr,
-    pos = { position.line, position.character },
-    ignore_injections = false,
-  })
-  if not ok or not node or node:type() ~= 'identifier' then return nil end
+  -- Deliberadamente NO usamos vim.treesitter.get_node({ignore_injections=
+  -- false}). Esa API global resuelve root_lang_tree:named_node_for_range(),
+  -- que —cuando ignore_injections es false— recorre TODOS los `_children`
+  -- del árbol de inyecciones (html, javascript, la gramática REGEX inyectada
+  -- dentro de <script>, vbscript, ...) vía `pairs()` sobre una tabla hash de
+  -- Lua: el orden de iteración no es estable y decide cuál árbol "gana" la
+  -- posición cuando hay solapes. plugin/asp.lua adjunta el highlighter
+  -- incremental (`vim.treesitter.start`) al mismo buffer, que reconstruye
+  -- ese árbol de _children en segundo plano (parses asíncronos programados
+  -- vía vim.schedule); mientras ese ciclo corre, el orden de `pairs()` puede
+  -- cambiar entre una llamada y la siguiente sobre la MISMA posición. En
+  -- archivos .asp grandes con <script> que contienen regexes, eso es lo que
+  -- produce el bug reportado: a veces se resuelve el `identifier` vbscript
+  -- correcto, a veces gana primero un `pattern_character` de la gramática
+  -- REGEX inyectada en una región del buffer completamente distinta →
+  -- definition no encuentra `identifier` y devuelve nil de forma errática.
+  --
+  -- La resolución de definición sólo tiene sentido dentro de la capa
+  -- vbscript, así que confinamos la búsqueda a ese único árbol
+  -- (`parser:children().vbscript`) sin tocar los demás lenguajes inyectados.
+  -- Esto es determinista: no depende del orden de _children ni de en qué
+  -- punto esté el highlighter async. Si la posición no cae dentro de ningún
+  -- árbol vbscript (cursor en HTML/JS/regex), es semánticamente correcto
+  -- devolver nil — no hay definición VBScript ahí.
+  --
+  -- NO "simplificar" esto de vuelta a vim.treesitter.get_node: reintroduce
+  -- la carrera de arriba.
+  local vbscript = parser:children().vbscript
+  if not vbscript then return nil end
+
+  local node
+  for _, tree in ipairs(vbscript:trees()) do
+    local root = tree:root()
+    if range_contains(root, position.line, position.character) then
+      node = root:named_descendant_for_range(
+        position.line, position.character, position.line, position.character
+      )
+      break
+    end
+  end
+  if not node or node:type() ~= 'identifier' then return nil end
   local wanted = vim.treesitter.get_node_text(node, bufnr):lower()
 
   local cursor_scope = nearest_ancestor(node, SCOPE_TYPES)
