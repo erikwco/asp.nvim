@@ -42,4 +42,4 @@ test: parsers-test build/plenary.nvim
 		-c "PlenaryBustedDirectory tests/spec { minimal_init = 'tests/minimal_init.lua' }"
 
 clean:
-	rm -rf parser build grammars/aspclassic/src
+	rm -rf parser build grammars/aspclassic/src grammars/vbscript/src
