@@ -172,8 +172,17 @@ module.exports = grammar({
     set_statement: $ => seq(ci('Set'), $.expression, '=', $.expression),
     call_statement: $ => choice(
       seq(ci('Call'), $.expression),
-      prec.left(1, seq($.expression, repeat1(seq(',', $.expression)))),
+      prec.left(1, seq(
+        $.expression,
+        repeat1(choice(
+          seq(',', $.expression),
+          seq($._omitted_run, $.expression),
+        )),
+      )),
     ),
+
+    _omitted_run: $ => token(/,(\s*,)+/),
+
     exit_statement: $ => seq(ci('Exit'), choice(ci('Sub'), ci('Function'), ci('Property'), ci('Do'), ci('For'), ci('While'))),
     goto_statement: $ => seq(ci('GoTo'), $.expression),
 

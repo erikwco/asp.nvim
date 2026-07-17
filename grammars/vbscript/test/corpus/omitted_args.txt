@@ -1,4 +1,33 @@
 ==================
+llamada sin parentesis con argumento omitido
+==================
+Objeto.MakeSelect "lb_empresa","select 1 from dual",1,,"","Seleccione .."
+---
+
+(source_file
+  (expression
+    (member_expression
+      (primary_expression
+        (identifier))
+      (identifier)))
+  (call_statement
+    (expression
+      (primary_expression
+        (string_literal)))
+    (expression
+      (primary_expression
+        (string_literal)))
+    (expression
+      (primary_expression
+        (number_literal)))
+    (expression
+      (primary_expression
+        (string_literal)))
+    (expression
+      (primary_expression
+        (string_literal)))))
+
+==================
 llamada con parentesis y hueco
 ==================
 x = f(1,,3)
