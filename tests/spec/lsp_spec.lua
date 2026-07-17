@@ -241,3 +241,61 @@ describe('asp-ls cross-file', function()
     end
   end)
 end)
+
+describe('asp-ls hover', function()
+  local FIX = vim.fn.fnamemodify('tests/fixtures/proyecto', ':p'):gsub('/$', '')
+
+  before_each(function()
+    vim.cmd.edit(FIX .. '/default.asp')
+    vim.wait(2000, function()
+      return #vim.lsp.get_clients({ bufnr = 0, name = 'asp-ls' }) > 0
+    end)
+  end)
+  after_each(function() vim.cmd('bwipeout!') end)
+
+  local function request(method, params)
+    local resp = vim.lsp.buf_request_sync(0, method, params, 3000)
+    for _, r in pairs(resp or {}) do return r.result end
+  end
+  local function pos_of(text)
+    local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+    for i, line in ipairs(lines) do
+      local c = line:find(text, 1, true)
+      if c then return { line = i - 1, character = c - 1 } end
+    end
+    error('no encontrado: ' .. text)
+  end
+  local function hover_at(pos)
+    return request('textDocument/hover', {
+      textDocument = vim.lsp.util.make_text_document_params(),
+      position = pos,
+    })
+  end
+
+  it('hover sobre un objeto intrínseco (Response)', function()
+    local h = hover_at(pos_of('Response'))
+    assert.is_not_nil(h)
+    assert.are.equal('markdown', h.contents.kind)
+    assert.is_true(h.contents.value:find('Response') ~= nil)
+  end)
+
+  it('hover sobre un miembro intrínseco (Server.CreateObject)', function()
+    local p = pos_of('CreateObject')
+    local h = hover_at(p)
+    assert.is_true(h.contents.value:find('CreateObject') ~= nil)
+    assert.is_true(h.contents.value:find('ProgID') ~= nil)
+  end)
+
+  it('hover sobre un símbolo de usuario muestra su declaración', function()
+    -- default.asp usa FormatearMoneda (definido en include); en el buffer
+    -- actual hay 'totalPagina' (Dim de página) — hover muestra su línea.
+    local h = hover_at(pos_of('totalPagina'))
+    assert.is_not_nil(h)
+    assert.is_true(h.contents.value:lower():find('totalpagina') ~= nil)
+  end)
+
+  it('hover sobre algo desconocido devuelve nil', function()
+    local h = hover_at(pos_of('<html>'))
+    assert.is_nil(h)
+  end)
+end)

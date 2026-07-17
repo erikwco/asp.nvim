@@ -8,6 +8,7 @@
 Dim conn, totalPagina
 Set conn = AbrirConexion()
 totalPagina = FormatearMoneda(BASE_PRECIO * IVA)
+Set conn = Server.CreateObject("ADODB.Connection")
 Response.Write totalPagina
 respuestarapida
 %>
