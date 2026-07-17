@@ -40,6 +40,12 @@ Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`:
 
 La resolución a través de `<!--#include -->` llega en la Fase 4.
 
+> **Nota de rendimiento:** en páginas muy grandes con muchos bloques
+> `<script>` (miles de líneas), la *primera* consulta LSP tras abrir el
+> archivo puede tardar varios segundos mientras tree-sitter parsea todas
+> las capas; las consultas siguientes son instantáneas. La Fase 4
+> optimizará esto parseando solo la capa VBScript.
+
 ## Verificación
 
 `:checkhealth asp`

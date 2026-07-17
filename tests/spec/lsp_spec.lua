@@ -106,6 +106,9 @@ describe('asp-ls', function()
     assert.is_not_nil(loc2)
   end)
 
+  -- Nota: este spec pinnea el comportamiento determinista del lookup
+  -- confinado a la capa vbscript; el race original solo era observable
+  -- a escala real (decenas de árboles inyectados), no con este fixture.
   it('definition en un bloque <script> cliente (JS/regex) devuelve nil de forma estable', function()
     -- Regresión del bug de carrera: M.definition confinaba la búsqueda al
     -- árbol vbscript inyectado; una posición dentro de <script> (capa
