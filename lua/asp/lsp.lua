@@ -9,6 +9,11 @@ M.handlers['textDocument/documentSymbol'] = function(params)
   return require('asp.symbols').document_symbols(bufnr)
 end
 
+M.handlers['textDocument/definition'] = function(params)
+  local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
+  return require('asp.symbols').definition(bufnr, params.position)
+end
+
 local function server(dispatchers)
   local closing = false
   return {

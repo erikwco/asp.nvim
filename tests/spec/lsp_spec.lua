@@ -54,4 +54,55 @@ describe('asp-ls', function()
     assert.is_nil(by_name['monto'])
     assert.is_nil(by_name['nuevoTotal'])
   end)
+
+  local function pos_of(text, occurrence)
+    local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+    local n = 0
+    for i, line in ipairs(lines) do
+      local col = line:find(text, 1, true)
+      if col then
+        n = n + 1
+        if n == (occurrence or 1) then
+          return { line = i - 1, character = col - 1 }
+        end
+      end
+    end
+    error('texto no encontrado en fixture: ' .. text)
+  end
+
+  local function line_of(text)
+    return pos_of(text).line
+  end
+
+  local function definition_at(pos)
+    return request('textDocument/definition', {
+      textDocument = vim.lsp.util.make_text_document_params(),
+      position = pos,
+    })
+  end
+
+  it('definition salta a la Function desde su llamada', function()
+    local loc = definition_at(pos_of('CalcularTotal(total)'))
+    assert.is_not_nil(loc)
+    assert.are.equal(line_of('Function CalcularTotal'), loc.range.start.line)
+  end)
+
+  it('definition es case-insensitive', function()
+    local loc = definition_at(pos_of('mostrar'))
+    assert.are.equal(line_of('Sub Mostrar'), loc.range.start.line)
+  end)
+
+  it('definition prefiere el scope local y cae a página', function()
+    -- 'recargo' usado dentro de CalcularTotal → Dim recargo local
+    local loc = definition_at(pos_of('recargo = base'))
+    assert.are.equal(line_of('Dim recargo'), loc.range.start.line)
+    -- 'total' usado dentro de Mostrar → Dim de página
+    local loc2 = definition_at(pos_of('CalcularTotal(total)'))
+    -- (posiciona sobre 'total' dentro del paréntesis:)
+    local p = pos_of('CalcularTotal(total)')
+    p.character = p.character + #('CalcularTotal(')
+    local loc3 = definition_at(p)
+    assert.are.equal(line_of('Dim total'), loc3.range.start.line)
+    assert.is_not_nil(loc2)
+  end)
 end)

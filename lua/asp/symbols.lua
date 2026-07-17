@@ -119,6 +119,72 @@ function M.collect(bufnr)
   return entries
 end
 
+---Resuelve la definición del identificador bajo `position` (case-insensitive),
+---con precedencia: scope local del cursor → página (Dim/Const de página,
+---excluyendo miembros de clase) → miembro de clase homónimo → cualquier
+---coincidencia restante.
+---
+---Refinamiento sobre el criterio "page_hit" del brief: tanto un `Dim` de
+---página como una propiedad de clase (p.ej. `Total`) tienen scope_id nil —
+---una property es miembro de clase pero no vive dentro de ningún
+---sub/function/property, así que nearest_ancestor(SCOPE_TYPES) no la alcanza.
+---Sin desambiguar por class_id, cuál de las dos gana dependería del orden de
+---iteración de `entries` (no determinista para el propósito del spec). Aquí
+---page_hit exige además `class_id == nil`; los miembros de clase con scope
+---nil caen a un tier `class_hit` intermedio, antes de `any_hit`.
+---@param bufnr integer
+---@param position table {line, character} (utf-8, 0-indexed como LSP)
+---@return table|nil Location
+function M.definition(bufnr, position)
+  bufnr = bufnr == 0 and vim.api.nvim_get_current_buf() or bufnr
+  -- vim.treesitter.get_node() sólo ve los árboles inyectados (vbscript) si
+  -- el parser ya corrió con injections resueltas; sin este parse(true)
+  -- previo devuelve nil para posiciones dentro del bloque <% %> aunque el
+  -- parser exista. M.collect() hace lo mismo por la misma razón.
+  local pok, parser = pcall(vim.treesitter.get_parser, bufnr)
+  if not pok or not parser then return nil end
+  parser:parse(true)
+
+  -- ignore_injections default es true (ver runtime vim.treesitter.get_node):
+  -- sin desactivarlo, la búsqueda nunca baja del árbol raíz aspclassic al
+  -- vbscript inyectado, y devuelve el nodo contenedor del bloque <% %> en
+  -- vez del identifier bajo el cursor.
+  local ok, node = pcall(vim.treesitter.get_node, {
+    bufnr = bufnr,
+    pos = { position.line, position.character },
+    ignore_injections = false,
+  })
+  if not ok or not node or node:type() ~= 'identifier' then return nil end
+  local wanted = vim.treesitter.get_node_text(node, bufnr):lower()
+
+  local cursor_scope = nearest_ancestor(node, SCOPE_TYPES)
+  local cursor_scope_id = cursor_scope and cursor_scope:id() or nil
+
+  local entries = M.collect(bufnr)
+  local local_hit, page_hit, class_hit, any_hit
+  for _, e in ipairs(entries) do
+    if e.name:lower() == wanted and e.decl_id ~= node:id() then
+      any_hit = any_hit or e
+      if cursor_scope_id and e.scope_id == cursor_scope_id then
+        local_hit = local_hit or e
+      elseif not e.scope_id and not e.class_id then
+        page_hit = page_hit or e
+      elseif not e.scope_id and e.class_id then
+        class_hit = class_hit or e
+      end
+    end
+  end
+  local best = local_hit or page_hit or class_hit or any_hit
+  if not best then return nil end
+  return {
+    uri = vim.uri_from_bufnr(bufnr),
+    range = {
+      start = { line = best.selection[1], character = best.selection[2] },
+      ['end'] = { line = best.selection[3], character = best.selection[4] },
+    },
+  }
+end
+
 local function to_lsp_range(r)
   return {
     start = { line = r[1], character = r[2] },
