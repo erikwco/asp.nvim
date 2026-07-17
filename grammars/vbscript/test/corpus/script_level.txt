@@ -1,0 +1,94 @@
+==================
+asignaciones y llamadas a nivel de script
+==================
+Response.Expires = -1
+Response.AddHeader "pragma","no-cache"
+Response.buffer=true
+---
+
+(source_file
+  (let_statement
+    (expression
+      (member_expression
+        (primary_expression
+          (identifier))
+        (identifier)))
+    (expression
+      (unary_expression
+        (expression
+          (primary_expression
+            (number_literal))))))
+  (expression
+    (member_expression
+      (primary_expression
+        (identifier))
+      (identifier)))
+  (call_statement
+    (expression
+      (primary_expression
+        (string_literal)))
+    (expression
+      (primary_expression
+        (string_literal))))
+  (let_statement
+    (expression
+      (member_expression
+        (primary_expression
+          (identifier))
+        (identifier)))
+    (expression
+      (primary_expression
+        (boolean_literal)))))
+
+==================
+set con createobject
+==================
+Set Objeto = server.CreateObject("Vendor.Componente")
+---
+
+(source_file
+  (set_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (call_expression
+        (member_expression
+          (primary_expression
+            (identifier))
+          (identifier))
+        (expression
+          (primary_expression
+            (string_literal)))))))
+
+==================
+asignacion a default property
+==================
+session("SerieEmpty") = ""
+tipoVentana = trim(request("tipoVentana"))
+---
+
+(source_file
+  (let_statement
+    (expression
+      (function_call
+        (identifier)
+        (expression
+          (primary_expression
+            (string_literal)))))
+    (expression
+      (primary_expression
+        (string_literal))))
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (function_call
+        (identifier)
+        (expression
+          (function_call
+            (identifier)
+            (expression
+              (primary_expression
+                (string_literal)))))))))

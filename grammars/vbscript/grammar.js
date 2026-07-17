@@ -26,17 +26,16 @@ module.exports = grammar({
   ],
 
   rules: {
-    source_file: $ => repeat($._module_scope),
+    source_file: $ => repeat(choice(
+      $.option_statement,
+      $.sub_statement,
+      $.function_statement,
+      $.property_statement,
+      $._statement,
+    )),
 
     comment: $ => token(seq("'", /[^\n]*/)),
     _line_continuation: $ => /_[ \t]*\r?\n/,
-
-    _module_scope: $ => choice(
-      $.option_statement, $.declare_statement,
-      $.sub_statement, $.function_statement,
-      $.property_statement, $.type_statement, $.enum_statement,
-      $.const_statement, $.dim_statement,
-    ),
 
     option_statement: $ => seq(
       ci('Option'),
@@ -46,14 +45,6 @@ module.exports = grammar({
         seq(ci('Base'), choice('0', '1')),
         seq(ci('Private'), ci('Module')),
       ),
-    ),
-
-    declare_statement: $ => seq(
-      optional(choice(ci('Public'), ci('Private'))),
-      ci('Declare'), choice(ci('Sub'), ci('Function')),
-      $.identifier, optional($._arg_list),
-      ci('Lib'), $.string_literal,
-      optional(seq(ci('Alias'), $.string_literal)),
     ),
 
     sub_statement: $ => seq(
@@ -75,20 +66,6 @@ module.exports = grammar({
       $.identifier, $._arg_list,
       optional(seq(ci('As'), $.type)),
       optional($.block), ci('End'), ci('Property'),
-    ),
-
-    type_statement: $ => seq(
-      optional(choice(ci('Public'), ci('Private'))),
-      ci('Type'), $.identifier,
-      repeat(seq($.identifier, optional(seq(ci('As'), $.type)))),
-      ci('End'), ci('Type'),
-    ),
-
-    enum_statement: $ => seq(
-      optional(choice(ci('Public'), ci('Private'))),
-      ci('Enum'), $.identifier,
-      repeat(seq($.identifier, optional(seq('=', $.expression)))),
-      ci('End'), ci('Enum'),
     ),
 
     _arg_list: $ => seq('(', optional(seq($._arg, repeat(seq(',', $._arg)))), ')'),
@@ -181,9 +158,12 @@ module.exports = grammar({
     resume_statement: $ => seq(ci('Resume'), choice(ci('Next'), $.expression)),
     erase_statement: $ => seq(ci('Erase'), $.expression, repeat(seq(',', $.expression))),
     redim_statement: $ => seq(ci('ReDim'), optional(ci('Preserve')), $.expression, repeat(seq(',', $.expression))),
-    let_statement: $ => seq(optional(ci('Let')), $.expression, '=', $.expression),
+    let_statement: $ => prec(4, seq(optional(ci('Let')), $.expression, '=', $.expression)),
     set_statement: $ => seq(ci('Set'), $.expression, '=', $.expression),
-    call_statement: $ => seq(ci('Call'), $.expression),
+    call_statement: $ => choice(
+      seq(ci('Call'), $.expression),
+      prec.left(1, seq($.expression, repeat1(seq(',', $.expression)))),
+    ),
     exit_statement: $ => seq(ci('Exit'), choice(ci('Sub'), ci('Function'), ci('Property'), ci('Do'), ci('For'), ci('While'))),
     goto_statement: $ => seq(ci('GoTo'), $.expression),
 
