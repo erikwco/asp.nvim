@@ -4,7 +4,7 @@ CFLAGS ?= -Os -fPIC -shared
 
 PARSERS := parser/aspclassic.so parser/vbscript.so
 
-.PHONY: parsers parsers-test test clean
+.PHONY: parsers parsers-test test clean helptags
 
 parsers: $(PARSERS)
 
@@ -43,3 +43,6 @@ test: parsers-test build/plenary.nvim
 
 clean:
 	rm -rf parser build grammars/aspclassic/src grammars/vbscript/src
+
+helptags:
+	$(NVIM) --headless -c 'helptags doc' -c 'quit'

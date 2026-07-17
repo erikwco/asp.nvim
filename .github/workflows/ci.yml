@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest ]
+        nvim: [ stable, nightly ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Neovim
+        uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: ${{ matrix.nvim }}
+
+      - name: Instalar tree-sitter CLI
+        run: npm install -g tree-sitter-cli@^0.25
+
+      - name: Compilar parsers y correr la suite
+        run: make test
+
+      - name: Corpus de las gramáticas
+        run: |
+          (cd grammars/aspclassic && tree-sitter generate && tree-sitter test)
+          (cd grammars/vbscript && tree-sitter generate && tree-sitter test)
+
+      - name: Generar helptags
+        run: make helptags

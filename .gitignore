@@ -7,3 +7,4 @@ grammars/aspclassic/node_modules/
 grammars/vbscript/src/
 grammars/vbscript/node_modules/
 .DS_Store
+doc/tags
