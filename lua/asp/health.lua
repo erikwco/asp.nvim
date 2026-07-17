@@ -62,6 +62,8 @@ function M.check()
   else
     health.info('asp-ls se adjunta al abrir un archivo .asp (documentSymbol y definition)')
   end
+
+  health.ok('diagnósticos de includes activos (namespace asp_includes)')
 end
 
 return M

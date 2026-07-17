@@ -16,5 +16,24 @@ vim.api.nvim_create_autocmd('FileType', {
     pcall(function()
       require('asp.lsp').start(args.buf)
     end)
+
+    vim.schedule(function()
+      pcall(function()
+        require('asp.diagnostics').refresh(args.buf)
+      end)
+    end)
+  end,
+})
+
+vim.api.nvim_create_autocmd('BufWritePost', {
+  pattern = { '*.asp', '*.inc' },
+  group = vim.api.nvim_create_augroup('asp_nvim_writes', { clear = true }),
+  callback = function(args)
+    pcall(function()
+      require('asp.symbols').invalidate(vim.api.nvim_buf_get_name(args.buf))
+      if vim.bo[args.buf].filetype == 'asp' then
+        require('asp.diagnostics').refresh(args.buf)
+      end
+    end)
   end,
 })

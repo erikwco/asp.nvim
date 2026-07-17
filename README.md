@@ -28,7 +28,7 @@ keywords, tipos, funciones/variables y llamadas.
 }
 ```
 
-## Navegación (Fase 3)
+## Navegación (Fases 3-4)
 
 Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`:
 
@@ -38,7 +38,13 @@ Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`:
 - **Símbolos del documento**: `vim.lsp.buf.document_symbol()` u outline de
   tu plugin favorito (aerial, Telescope `lsp_document_symbols`, ...).
 
-La resolución a través de `<!--#include -->` llega en la Fase 4.
+- **Cross-file**: definición y referencias siguen los
+  `<!--#include file/virtual="..."-->` (recursivo, ciclos tolerados);
+  `vim.lsp.buf.workspace_symbol()` busca en todo el proyecto.
+- **Diagnósticos**: los includes que no resuelven se marcan con un
+  warning en su línea. La raíz de los includes `virtual=` se autodetecta
+  (`web.config` o `.git`) y puede fijarse con
+  `require('asp').setup({ virtual_root = '/ruta/al/sitio' })`.
 
 > **Nota de rendimiento:** en páginas muy grandes con muchos bloques
 > `<script>` (miles de líneas), la *primera* consulta LSP tras abrir el
