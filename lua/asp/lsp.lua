@@ -14,6 +14,17 @@ M.handlers['textDocument/definition'] = function(params)
   return require('asp.symbols').definition(bufnr, params.position)
 end
 
+M.handlers['textDocument/references'] = function(params)
+  local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
+  return require('asp.symbols').references(bufnr, params.position)
+end
+
+M.handlers['workspace/symbol'] = function(params)
+  local client = vim.lsp.get_clients({ name = 'asp-ls' })[1]
+  local root = client and client.config.root_dir or vim.fn.getcwd()
+  return require('asp.symbols').workspace_symbols(params.query, root)
+end
+
 local function server(dispatchers)
   local closing = false
   return {
@@ -23,6 +34,8 @@ local function server(dispatchers)
           capabilities = {
             documentSymbolProvider = true,
             definitionProvider = true,
+            referencesProvider = true,
+            workspaceSymbolProvider = true,
             positionEncoding = 'utf-8',
           },
           serverInfo = { name = 'asp-ls', version = '0.3.0' },

@@ -188,4 +188,29 @@ describe('asp-ls cross-file', function()
     local loc = definition_at(pos_of('FuncionB()'))
     assert.is_truthy(loc.uri:find('ciclo_b%.asp$'))
   end)
+
+  it('references encuentra usos y definición en todo el grafo', function()
+    local refs = request('textDocument/references', {
+      textDocument = vim.lsp.util.make_text_document_params(),
+      position = pos_of('FormatearMoneda'),
+      context = { includeDeclaration = true },
+    })
+    -- default.asp: 1 uso; helpers.asp: nombre en Function + asignación de retorno
+    assert.are.equal(3, #refs)
+    local files = {}
+    for _, r in ipairs(refs) do
+      files[r.uri:match('([^/]+)$')] = (files[r.uri:match('([^/]+)$')] or 0) + 1
+    end
+    assert.are.equal(1, files['default.asp'])
+    assert.are.equal(2, files['helpers.asp'])
+  end)
+
+  it('workspace/symbol busca case-insensitive en todo el proyecto', function()
+    local syms = request('workspace/symbol', { query = 'funcion' })
+    local names = {}
+    for _, s in ipairs(syms) do names[s.name] = s end
+    assert.is_not_nil(names['FuncionA'])
+    assert.is_not_nil(names['FuncionB'])
+    assert.is_truthy(names['FuncionA'].location.uri:find('ciclo_a%.asp$'))
+  end)
 end)
