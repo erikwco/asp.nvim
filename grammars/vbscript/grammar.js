@@ -24,7 +24,6 @@ module.exports = grammar({
     [$.function_call, $.primary_expression],
     [$.dim_statement],
     [$.block, $._statement],
-    [$._statement_expression, $.expression],
   ],
 
   rules: {
@@ -86,7 +85,7 @@ module.exports = grammar({
       $.exit_statement, $.goto_statement,
       $.dim_statement, $.const_statement,
       $.label_statement, $.error_statement, $.mid_statement,
-      alias($._statement_expression, $.expression),
+      $.expression,
     )),
 
     _statement: $ => choice(
@@ -98,25 +97,7 @@ module.exports = grammar({
       $.exit_statement, $.goto_statement,
       $.dim_statement, $.const_statement,
       $.label_statement, $.error_statement, $.mid_statement,
-      alias($._statement_expression, $.expression),
-    ),
-
-    // Restricted view of $.expression used only as a bare-expression statement
-    // (block/_statement position): excludes a lone primary_expression (bare
-    // identifier, literal, or parenthesized group), which is never a meaningful
-    // standalone VBScript statement. Without this, any keyword no longer
-    // consumed by a specific rule (e.g. `As` after Task 5 removed `As Type`)
-    // still lexes as a plain $.identifier and silently reduces as its own
-    // no-op expression-statement, masking what should be a parse error (see
-    // NOTICE.md). Aliased back to `expression` so the tree shape for the
-    // still-supported case (bare member_expression/function_call, the
-    // paren-less-callee limitation from Task 2) is unchanged.
-    _statement_expression: $ => choice(
-      $.unary_expression,
-      $.binary_expression,
-      $.call_expression,
-      $.member_expression,
-      $.function_call,
+      $.expression,
     ),
 
     label_statement: $ => seq($.identifier, ':'),
