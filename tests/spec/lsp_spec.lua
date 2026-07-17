@@ -299,3 +299,57 @@ describe('asp-ls hover', function()
     assert.is_nil(h)
   end)
 end)
+
+describe('asp-ls completion', function()
+  local FIX = vim.fn.fnamemodify('tests/fixtures/proyecto', ':p'):gsub('/$', '')
+  after_each(function() vim.cmd('bwipeout!') end)
+
+  local function request(method, params)
+    local resp = vim.lsp.buf_request_sync(0, method, params, 3000)
+    for _, r in pairs(resp or {}) do return r.result end
+  end
+
+  local function complete_line(text_line)
+    -- crea un buffer asp con una sola línea de código y pide completion
+    -- al final de la línea
+    vim.cmd.edit(FIX .. '/scratch_complete.asp')
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, { '<%', text_line, '%>' })
+    vim.bo.filetype = 'asp'
+    require('asp.lsp').start(0)
+    vim.wait(2000, function()
+      return #vim.lsp.get_clients({ bufnr = 0, name = 'asp-ls' }) > 0
+    end)
+    local items = request('textDocument/completion', {
+      textDocument = vim.lsp.util.make_text_document_params(),
+      position = { line = 1, character = #text_line },
+    })
+    return items and (items.items or items) or {}
+  end
+
+  local function labels(items)
+    local out = {}
+    for _, it in ipairs(items) do out[it.label] = true end
+    return out
+  end
+
+  it('tras Response. ofrece los miembros del objeto', function()
+    local items = complete_line('Response.')
+    local l = labels(items)
+    assert.is_true(l['Write'], 'esperaba Write')
+    assert.is_true(l['Redirect'], 'esperaba Redirect')
+    assert.is_nil(l['CreateObject']) -- ese es de Server
+  end)
+
+  it('tras Server.Cr filtra por prefijo case-insensitive', function()
+    local items = complete_line('Server.cr')
+    local l = labels(items)
+    assert.is_true(l['CreateObject'])
+    assert.is_nil(l['MapPath'])
+  end)
+
+  it('sin punto ofrece objetos intrínsecos y símbolos', function()
+    local items = complete_line('Res')
+    local l = labels(items)
+    assert.is_true(l['Response'])
+  end)
+end)

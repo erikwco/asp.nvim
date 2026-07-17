@@ -30,6 +30,11 @@ M.handlers['textDocument/hover'] = function(params)
   return require('asp.hover').hover(bufnr, params.position)
 end
 
+M.handlers['textDocument/completion'] = function(params)
+  local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
+  return require('asp.completion').complete(bufnr, params.position)
+end
+
 local function server(dispatchers)
   local closing = false
   return {
@@ -42,6 +47,7 @@ local function server(dispatchers)
             referencesProvider = true,
             workspaceSymbolProvider = true,
             hoverProvider = true,
+            completionProvider = { triggerCharacters = { '.' } },
             positionEncoding = 'utf-8',
           },
           serverInfo = { name = 'asp-ls', version = '0.3.0' },
