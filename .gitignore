@@ -6,3 +6,4 @@ grammars/aspclassic/node_modules/
 asp/
 grammars/vbscript/src/
 grammars/vbscript/node_modules/
+.DS_Store
