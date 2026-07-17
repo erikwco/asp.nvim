@@ -119,4 +119,44 @@ function M.collect(bufnr)
   return entries
 end
 
+local function to_lsp_range(r)
+  return {
+    start = { line = r[1], character = r[2] },
+    ['end'] = { line = r[3], character = r[4] },
+  }
+end
+
+---@param bufnr integer
+---@return table[] DocumentSymbol[]
+function M.document_symbols(bufnr)
+  local entries = M.collect(bufnr)
+  local roots, by_decl = {}, {}
+
+  for _, e in ipairs(entries) do
+    local sym = {
+      name = e.name,
+      kind = e.kind,
+      range = to_lsp_range(e.range),
+      selectionRange = to_lsp_range(e.selection),
+      children = {},
+    }
+    by_decl[e.decl_id] = sym
+    e._sym = sym
+  end
+
+  for _, e in ipairs(entries) do
+    if e.scope_id and not e.class_id then
+      -- local de función: fuera del outline
+    elseif e.class_id and by_decl[e.class_id] then
+      if not e.scope_id then
+        table.insert(by_decl[e.class_id].children, e._sym)
+      end
+      -- (con scope_id dentro de clase = local de método: fuera)
+    else
+      table.insert(roots, e._sym)
+    end
+  end
+  return roots
+end
+
 return M

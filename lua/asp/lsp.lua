@@ -4,6 +4,11 @@ local M = {}
 -- Cada handler recibe (params) y retorna el resultado (o nil).
 M.handlers = {}
 
+M.handlers['textDocument/documentSymbol'] = function(params)
+  local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
+  return require('asp.symbols').document_symbols(bufnr)
+end
+
 local function server(dispatchers)
   local closing = false
   return {
