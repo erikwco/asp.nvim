@@ -241,3 +241,179 @@ describe('asp-ls cross-file', function()
     end
   end)
 end)
+
+describe('asp-ls hover', function()
+  local FIX = vim.fn.fnamemodify('tests/fixtures/proyecto', ':p'):gsub('/$', '')
+
+  before_each(function()
+    vim.cmd.edit(FIX .. '/default.asp')
+    vim.wait(2000, function()
+      return #vim.lsp.get_clients({ bufnr = 0, name = 'asp-ls' }) > 0
+    end)
+  end)
+  after_each(function() vim.cmd('bwipeout!') end)
+
+  local function request(method, params)
+    local resp = vim.lsp.buf_request_sync(0, method, params, 3000)
+    for _, r in pairs(resp or {}) do return r.result end
+  end
+  local function pos_of(text)
+    local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+    for i, line in ipairs(lines) do
+      local c = line:find(text, 1, true)
+      if c then return { line = i - 1, character = c - 1 } end
+    end
+    error('no encontrado: ' .. text)
+  end
+  local function hover_at(pos)
+    return request('textDocument/hover', {
+      textDocument = vim.lsp.util.make_text_document_params(),
+      position = pos,
+    })
+  end
+
+  it('hover sobre un objeto intrínseco (Response)', function()
+    local h = hover_at(pos_of('Response'))
+    assert.is_not_nil(h)
+    assert.are.equal('markdown', h.contents.kind)
+    assert.is_true(h.contents.value:find('Response') ~= nil)
+  end)
+
+  it('hover sobre un miembro intrínseco (Server.CreateObject)', function()
+    local p = pos_of('CreateObject')
+    local h = hover_at(p)
+    assert.is_true(h.contents.value:find('CreateObject') ~= nil)
+    assert.is_true(h.contents.value:find('ProgID') ~= nil)
+  end)
+
+  it('hover sobre un símbolo de usuario muestra su declaración', function()
+    -- default.asp usa FormatearMoneda (definido en include); en el buffer
+    -- actual hay 'totalPagina' (Dim de página) — hover muestra su línea.
+    local h = hover_at(pos_of('totalPagina'))
+    assert.is_not_nil(h)
+    assert.is_true(h.contents.value:lower():find('totalpagina') ~= nil)
+  end)
+
+  it('hover sobre algo desconocido devuelve nil', function()
+    local h = hover_at(pos_of('<html>'))
+    assert.is_nil(h)
+  end)
+end)
+
+describe('asp-ls completion', function()
+  local FIX = vim.fn.fnamemodify('tests/fixtures/proyecto', ':p'):gsub('/$', '')
+  after_each(function() vim.cmd('bwipeout!') end)
+
+  local function request(method, params)
+    local resp = vim.lsp.buf_request_sync(0, method, params, 3000)
+    for _, r in pairs(resp or {}) do return r.result end
+  end
+
+  local function complete_line(text_line)
+    -- crea un buffer asp con una sola línea de código y pide completion
+    -- al final de la línea
+    vim.cmd.edit(FIX .. '/scratch_complete.asp')
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, { '<%', text_line, '%>' })
+    vim.bo.filetype = 'asp'
+    require('asp.lsp').start(0)
+    vim.wait(2000, function()
+      return #vim.lsp.get_clients({ bufnr = 0, name = 'asp-ls' }) > 0
+    end)
+    local items = request('textDocument/completion', {
+      textDocument = vim.lsp.util.make_text_document_params(),
+      position = { line = 1, character = #text_line },
+    })
+    return items and (items.items or items) or {}
+  end
+
+  local function labels(items)
+    local out = {}
+    for _, it in ipairs(items) do out[it.label] = true end
+    return out
+  end
+
+  it('tras Response. ofrece los miembros del objeto', function()
+    local items = complete_line('Response.')
+    local l = labels(items)
+    assert.is_true(l['Write'], 'esperaba Write')
+    assert.is_true(l['Redirect'], 'esperaba Redirect')
+    assert.is_nil(l['CreateObject']) -- ese es de Server
+  end)
+
+  it('tras Server.Cr filtra por prefijo case-insensitive', function()
+    local items = complete_line('Server.cr')
+    local l = labels(items)
+    assert.is_true(l['CreateObject'])
+    assert.is_nil(l['MapPath'])
+  end)
+
+  it('sin punto ofrece objetos intrínsecos y símbolos', function()
+    local items = complete_line('Res')
+    local l = labels(items)
+    assert.is_true(l['Response'])
+  end)
+end)
+
+describe('asp-ls límite: múltiples <%= %> en una línea', function()
+  -- LIMITACIÓN CONOCIDA: bloques <%= %> múltiples en una línea se fusionan
+  -- por la injection combinada; hover/definition no resuelven ahí. Ver README.
+  local FIX = vim.fn.fnamemodify('tests/fixtures/proyecto', ':p'):gsub('/$', '')
+
+  before_each(function()
+    vim.cmd.edit(FIX .. '/inline_multi.asp')
+    vim.wait(2000, function()
+      return #vim.lsp.get_clients({ bufnr = 0, name = 'asp-ls' }) > 0
+    end)
+  end)
+
+  after_each(function() vim.cmd('bwipeout!') end)
+
+  local function request(method, params)
+    local resp = vim.lsp.buf_request_sync(0, method, params, 3000)
+    for _, r in pairs(resp or {}) do return r.result end
+  end
+
+  local function pos_of(text, occurrence)
+    local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+    local n = 0
+    for i, line in ipairs(lines) do
+      local col = line:find(text, 1, true)
+      if col then
+        n = n + 1
+        if n == (occurrence or 1) then
+          return { line = i - 1, character = col - 1 }
+        end
+      end
+    end
+    error('texto no encontrado en fixture: ' .. text)
+  end
+
+  local function definition_at(pos)
+    return request('textDocument/definition', {
+      textDocument = vim.lsp.util.make_text_document_params(),
+      position = pos,
+    })
+  end
+
+  it('definition sobre precio en su Dim de página (bloque standalone) funciona', function()
+    -- 1ª ocurrencia de 'precio' es el propio Dim de la línea 2, en un
+    -- bloque <% %> standalone (no adyacente a otro <%= %> en la misma
+    -- línea): esto SIGUE funcionando, prueba de que la limitación es
+    -- específica de bloques <%= %> adyacentes en una línea, no de todos
+    -- los ecos.
+    local loc = definition_at(pos_of('precio', 1))
+    assert.is_not_nil(loc)
+    assert.are.equal(1, loc.range.start.line)
+  end)
+
+  it('definition sobre precio DENTRO de <%=precio%> adyacente a otro bloque en la misma línea devuelve nil', function()
+    -- 3ª ocurrencia de 'precio': dentro de <%=precio%>, en la línea
+    -- <table><tr><td><%=precio%></td><td><%=cantidad%></td></tr></table>,
+    -- adyacente a otro bloque <%=cantidad%>. La injection combinada fusiona
+    -- ambos bloques en una sola región vbscript cuyo root no confina
+    -- correctamente la búsqueda por (row,col) a este bloque — pinneamos el
+    -- comportamiento actual (nil) para que un futuro fix sea detectable.
+    local loc = definition_at(pos_of('precio', 3))
+    assert.is_nil(loc)
+  end)
+end)

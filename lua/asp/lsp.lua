@@ -25,6 +25,16 @@ M.handlers['workspace/symbol'] = function(params)
   return require('asp.symbols').workspace_symbols(params.query, root)
 end
 
+M.handlers['textDocument/hover'] = function(params)
+  local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
+  return require('asp.hover').hover(bufnr, params.position)
+end
+
+M.handlers['textDocument/completion'] = function(params)
+  local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
+  return require('asp.completion').complete(bufnr, params.position)
+end
+
 local function server(dispatchers)
   local closing = false
   return {
@@ -36,9 +46,11 @@ local function server(dispatchers)
             definitionProvider = true,
             referencesProvider = true,
             workspaceSymbolProvider = true,
+            hoverProvider = true,
+            completionProvider = { triggerCharacters = { '.' } },
             positionEncoding = 'utf-8',
           },
-          serverInfo = { name = 'asp-ls', version = '0.3.0' },
+          serverInfo = { name = 'asp-ls', version = '0.5.0' },
         })
       elseif method == 'shutdown' then
         callback(nil, nil)

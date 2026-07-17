@@ -1,8 +1,9 @@
 # asp.nvim
 
 Soporte de Classic ASP (VBScript + HTML + JavaScript) para Neovim:
-resaltado por regiones vía tree-sitter. Fases futuras: go-to-definition
-con resolución de `<!--#include -->` (ver `docs/superpowers/specs/`).
+resaltado por regiones vía tree-sitter y navegación LSP (ir a definición,
+referencias, símbolos, hover y completion) incluyendo la resolución de
+`<!--#include -->` cross-file. Ver |asp.nvim| (`:help asp`) para el detalle.
 
 El VBScript de `<% %>`/`<%= %>` se parsea con gramática propia
 (`grammars/vbscript/`, fork de tree-sitter-vba), con resaltado de
@@ -12,6 +13,8 @@ keywords, tipos, funciones/variables y llamadas.
 
 - Neovim >= 0.10
 - `cc` y `git` (para compilar los parsers)
+- `tree-sitter` CLI >= 0.25 y Node.js >= 18: `make parsers` los necesita
+  para generar las gramáticas (`tree-sitter generate`) antes de compilar.
 - Parser `html` instalado (p. ej. con nvim-treesitter, `:TSInstall html`):
   `make parsers` no lo compila para no pisar el que instale el usuario.
 - Parsers `javascript` y `css` instalados (p. ej. con nvim-treesitter)
@@ -28,7 +31,7 @@ keywords, tipos, funciones/variables y llamadas.
 }
 ```
 
-## Navegación (Fases 3-4)
+## Navegación y ayuda al código
 
 Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`:
 
@@ -37,6 +40,11 @@ Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`:
   case-insensitive, con precedencia local → página.
 - **Símbolos del documento**: `vim.lsp.buf.document_symbol()` u outline de
   tu plugin favorito (aerial, Telescope `lsp_document_symbols`, ...).
+- **Hover**: documentación de los objetos intrínsecos de ASP
+  (`Response`, `Request`, `Server`, `Session`, `Application`) y firma de
+  tus propias funciones/subs.
+- **Completion**: miembros de los intrínsecos tras `Objeto.` (con
+  `triggerCharacters` en `.`) y los símbolos del proyecto.
 
 - **Cross-file**: definición y referencias siguen los
   `<!--#include file/virtual="..."-->` (recursivo, ciclos tolerados);
@@ -55,6 +63,16 @@ Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`:
 > archivo puede tardar varios segundos mientras tree-sitter parsea todas
 > sus capas; las consultas siguientes sobre ese buffer son instantáneas.
 
+## Limitaciones conocidas
+
+- Varios bloques `<%= %>` en una misma línea (p. ej.
+  `<td><%=a%></td><td><%=b%></td>`) se fusionan en una sola región por la
+  injection combinada de VBScript (necesaria para que construcciones
+  cruzadas como `<% If %>...<% End If %>` parseen como un solo programa);
+  como resultado, hover/definición/referencias no resuelven identificadores
+  dentro de esos bloques adyacentes. Poné cada `<%= %>` en su propia línea
+  para navegación LSP completa.
+
 ## Verificación
 
 `:checkhealth asp`
@@ -65,3 +83,15 @@ Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`:
 - `grammars/vbscript/`: **GPL-3.0** — fork de
   [arrmee-wt/tree-sitter-vba](https://github.com/arrmee-wt/tree-sitter-vba);
   cambios documentados en `grammars/vbscript/NOTICE.md`.
+
+## Documentación y estado
+
+- `:help asp` — referencia completa dentro de Neovim.
+- `:checkhealth asp` — diagnóstico de parsers y del servidor.
+- CI: la suite corre en Linux y macOS contra Neovim estable y nightly.
+  Windows no está en la matriz (el build usa `make`/`cc`/`.so`, Unix-only);
+  soporte Windows es backlog, requeriría un path de build separado.
+
+El plugin cubre las cinco fases del diseño: resaltado de las tres capas,
+gramática VBScript propia, navegación LSP, grafo de includes cross-file, y
+ayuda al código (hover/completion) con documentación y CI.

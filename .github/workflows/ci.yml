@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      # Windows no está en la matriz: el build usa make/cc/.so (Unix).
+      # Soporte Windows requeriría un path de build separado (backlog).
+      matrix:
+        os: [ ubuntu-latest, macos-latest ]
+        nvim: [ stable, nightly ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Neovim
+        uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: ${{ matrix.nvim }}
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Instalar tree-sitter CLI
+        # tree-sitter genera parsers con ABI retro-compatible: un CLI más
+        # viejo (0.25) produce parsers que cargan en Neovim stable Y nightly.
+        # NO subir a 0.26+ para "igualar" el local — arriesga ABI too-new
+        # para el runtime de Neovim stable.
+        run: npm install -g tree-sitter-cli@^0.25
+
+      - name: Compilar parsers y correr la suite
+        run: make test
+
+      - name: Corpus de las gramáticas
+        run: |
+          (cd grammars/aspclassic && tree-sitter generate && tree-sitter test)
+          (cd grammars/vbscript && tree-sitter generate && tree-sitter test)
+
+      - name: Generar helptags
+        run: make helptags

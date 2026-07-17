@@ -1,0 +1,106 @@
+*asp.nvim*  Soporte de Classic ASP (VBScript + HTML + JavaScript)
+
+==============================================================================
+CONTENIDO                                                       *asp-contents*
+
+  1. Introducción ............................ |asp-intro|
+  2. Requisitos .............................. |asp-requisitos|
+  3. Instalación ............................. |asp-instalacion|
+  4. Configuración ........................... |asp-setup|
+  5. Funcionalidades ......................... |asp-funcionalidades|
+  6. Licencias ............................... |asp-licencias|
+
+==============================================================================
+1. Introducción                                                   *asp-intro*
+
+asp.nvim da soporte de primera clase a Classic ASP, donde VBScript de
+servidor, HTML y JavaScript de cliente conviven en un mismo archivo .asp:
+
+  - Resaltado correcto de cada región vía tree-sitter.
+  - Navegación LSP (ir a definición, referencias, símbolos) incluyendo
+    los archivos referenciados con <!--#include -->.
+
+==============================================================================
+2. Requisitos                                                 *asp-requisitos*
+
+  - Neovim >= 0.10
+  - `cc` y `git` para compilar los parsers
+  - `tree-sitter` CLI >= 0.25 y Node.js >= 18: los usa `make parsers`
+    para generar las gramáticas antes de compilar.
+  - Parsers `javascript` y `css` (p. ej. nvim-treesitter) para el código
+    de cliente dentro de <script>/<style>.
+
+==============================================================================
+3. Instalación                                              *asp-instalacion*
+
+Con lazy.nvim: >lua
+  {
+    'erik/asp.nvim',
+    build = 'make parsers',
+    ft = 'asp',
+    opts = {},
+  }
+<
+==============================================================================
+4. Configuración                                                  *asp-setup*
+
+                                                              *asp.setup()*
+require('asp').setup({opts})
+
+  Opciones ({opts}):
+
+  virtual_root ~
+      Ruta raíz para resolver los includes `virtual="/..."`. Si se
+      omite, se autodetecta buscando hacia arriba un `web.config` y,
+      en su defecto, un directorio `.git`. >lua
+        require('asp').setup({ virtual_root = '/ruta/al/sitio' })
+<
+==============================================================================
+5. Funcionalidades                                       *asp-funcionalidades*
+
+El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
+
+  definition ~
+      Ir a la definición de Functions, Subs, Classes, variables y
+      constantes, en el archivo actual y a través del grafo de
+      includes. Case-insensitive.
+
+  references ~
+      Todas las referencias de un símbolo en el buffer y el grafo.
+      Los símbolos locales se limitan a su propio scope.
+
+  documentSymbol ~
+      Outline del archivo, con los miembros de clase anidados.
+
+  workspace/symbol ~
+      Búsqueda de símbolos en todo el proyecto.
+
+  hover ~
+      Documentación de los objetos intrínsecos (Response, Request,
+      Server, Session, Application) y firma de los símbolos de usuario.
+
+  completion ~
+      Miembros de los objetos intrínsecos tras `Objeto.`, más los
+      símbolos del proyecto.
+
+  diagnósticos ~
+      Los includes que no resuelven se marcan con un warning en su
+      línea; los ciclos de includes se reportan.
+
+  limitaciones conocidas ~
+      Varios `<%= %>` en una misma línea (p. ej. `<%=a%><%=b%>`) se
+      fusionan por la injection combinada de VBScript (necesaria para
+      `<% If %>...<% End If %>` cruzando bloques); hover/definición/
+      referencias no resuelven ahí. Un `<%= %>` por línea sí funciona.
+
+Salud: >
+  :checkhealth asp
+<
+==============================================================================
+6. Licencias                                                   *asp-licencias*
+
+El plugin (Lua, gramática aspclassic, queries) es MIT. El directorio
+`grammars/vbscript/` es GPL-3.0 (fork de tree-sitter-vba); ver
+`grammars/vbscript/NOTICE.md`.
+
+ vim:tw=78:ts=8:ft=help:norl:
