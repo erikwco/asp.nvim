@@ -25,6 +25,8 @@ servidor, HTML y JavaScript de cliente conviven en un mismo archivo .asp:
 
   - Neovim >= 0.10
   - `cc` y `git` para compilar los parsers
+  - `tree-sitter` CLI >= 0.25 y Node.js >= 18: los usa `make parsers`
+    para generar las gramáticas antes de compilar.
   - Parsers `javascript` y `css` (p. ej. nvim-treesitter) para el código
     de cliente dentro de <script>/<style>.
 
@@ -84,6 +86,12 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
   diagnósticos ~
       Los includes que no resuelven se marcan con un warning en su
       línea; los ciclos de includes se reportan.
+
+  limitaciones conocidas ~
+      Varios `<%= %>` en una misma línea (p. ej. `<%=a%><%=b%>`) se
+      fusionan por la injection combinada de VBScript (necesaria para
+      `<% If %>...<% End If %>` cruzando bloques); hover/definición/
+      referencias no resuelven ahí. Un `<%= %>` por línea sí funciona.
 
 Salud: >
   :checkhealth asp

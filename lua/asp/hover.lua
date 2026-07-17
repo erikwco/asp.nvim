@@ -1,26 +1,7 @@
 local M = {}
 
 local intrinsics = require('asp.intrinsics')
-
--- Nodo identifier bajo el cursor, confinado a la capa vbscript.
--- (misma técnica que asp.symbols; se reimplementa mínima aquí para no
--- exportar internals — es un lookup de lectura, barato.)
-local function node_at(bufnr, position)
-  local pok, parser = pcall(vim.treesitter.get_parser, bufnr)
-  if not pok or not parser then return nil end
-  parser:parse(true)
-  local vbscript = parser:children().vbscript
-  if not vbscript then return nil end
-  for _, tree in ipairs(vbscript:trees()) do
-    local root = tree:root()
-    local sr, _, er = root:range()
-    if position.line >= sr and position.line <= er then
-      return root:named_descendant_for_range(
-        position.line, position.character, position.line, position.character)
-    end
-  end
-  return nil
-end
+local symbols = require('asp.symbols')
 
 local function md(value)
   return { contents = { kind = 'markdown', value = value } }
@@ -46,7 +27,11 @@ end
 ---@return table|nil hover
 function M.hover(bufnr, position)
   bufnr = bufnr == 0 and vim.api.nvim_get_current_buf() or bufnr
-  local node = node_at(bufnr, position)
+  -- identifier_at() ya confina el lookup a la capa vbscript y filtra por
+  -- tipo identifier (ver asp/symbols.lua) — reusar en vez de duplicar
+  -- (Global Constraint del plan). La comprobación de tipo queda como guard
+  -- redundante pero inofensivo.
+  local node = symbols.identifier_at(bufnr, position)
   if not node or node:type() ~= 'identifier' then return nil end
   local text = vim.treesitter.get_node_text(node, bufnr)
 
@@ -68,7 +53,7 @@ function M.hover(bufnr, position)
   -- 3. símbolo de usuario del buffer: mostrar la primera línea de su
   -- declaración.
   local wanted = text:lower()
-  for _, e in ipairs(require('asp.symbols').collect(bufnr)) do
+  for _, e in ipairs(symbols.collect(bufnr)) do
     if e.name:lower() == wanted then
       local line = vim.api.nvim_buf_get_lines(bufnr, e.range[1], e.range[1] + 1, false)[1] or ''
       return md(('```vbscript\n%s\n```'):format(vim.trim(line)))

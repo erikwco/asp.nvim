@@ -9,6 +9,8 @@ jobs:
   test:
     strategy:
       fail-fast: false
+      # Windows no está en la matriz: el build usa make/cc/.so (Unix).
+      # Soporte Windows requeriría un path de build separado (backlog).
       matrix:
         os: [ ubuntu-latest, macos-latest ]
         nvim: [ stable, nightly ]

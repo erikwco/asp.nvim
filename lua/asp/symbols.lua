@@ -220,7 +220,7 @@ end
 ---@param bufnr integer
 ---@param position table {line, character} (utf-8, 0-indexed como LSP)
 ---@return TSNode|nil
-local function identifier_at(bufnr, position)
+function M.identifier_at(bufnr, position)
   local pok, parser = pcall(vim.treesitter.get_parser, bufnr)
   if not pok or not parser then return nil end
   parser:parse(true)
@@ -326,7 +326,7 @@ function M.definition(bufnr, position)
   --
   -- NO "simplificar" esto de vuelta a vim.treesitter.get_node: reintroduce
   -- la carrera de arriba.
-  local node = identifier_at(bufnr, position)
+  local node = M.identifier_at(bufnr, position)
   if not node then return nil end
   local wanted = vim.treesitter.get_node_text(node, bufnr):lower()
 
@@ -432,7 +432,7 @@ end
 ---@return table[] Location[]
 function M.references(bufnr, position)
   bufnr = bufnr == 0 and vim.api.nvim_get_current_buf() or bufnr
-  local node = identifier_at(bufnr, position)
+  local node = M.identifier_at(bufnr, position)
   if not node then return {} end
   local wanted = vim.treesitter.get_node_text(node, bufnr):lower()
 

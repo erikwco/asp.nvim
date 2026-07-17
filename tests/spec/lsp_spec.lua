@@ -353,3 +353,67 @@ describe('asp-ls completion', function()
     assert.is_true(l['Response'])
   end)
 end)
+
+describe('asp-ls límite: múltiples <%= %> en una línea', function()
+  -- LIMITACIÓN CONOCIDA: bloques <%= %> múltiples en una línea se fusionan
+  -- por la injection combinada; hover/definition no resuelven ahí. Ver README.
+  local FIX = vim.fn.fnamemodify('tests/fixtures/proyecto', ':p'):gsub('/$', '')
+
+  before_each(function()
+    vim.cmd.edit(FIX .. '/inline_multi.asp')
+    vim.wait(2000, function()
+      return #vim.lsp.get_clients({ bufnr = 0, name = 'asp-ls' }) > 0
+    end)
+  end)
+
+  after_each(function() vim.cmd('bwipeout!') end)
+
+  local function request(method, params)
+    local resp = vim.lsp.buf_request_sync(0, method, params, 3000)
+    for _, r in pairs(resp or {}) do return r.result end
+  end
+
+  local function pos_of(text, occurrence)
+    local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+    local n = 0
+    for i, line in ipairs(lines) do
+      local col = line:find(text, 1, true)
+      if col then
+        n = n + 1
+        if n == (occurrence or 1) then
+          return { line = i - 1, character = col - 1 }
+        end
+      end
+    end
+    error('texto no encontrado en fixture: ' .. text)
+  end
+
+  local function definition_at(pos)
+    return request('textDocument/definition', {
+      textDocument = vim.lsp.util.make_text_document_params(),
+      position = pos,
+    })
+  end
+
+  it('definition sobre precio en su Dim de página (bloque standalone) funciona', function()
+    -- 1ª ocurrencia de 'precio' es el propio Dim de la línea 2, en un
+    -- bloque <% %> standalone (no adyacente a otro <%= %> en la misma
+    -- línea): esto SIGUE funcionando, prueba de que la limitación es
+    -- específica de bloques <%= %> adyacentes en una línea, no de todos
+    -- los ecos.
+    local loc = definition_at(pos_of('precio', 1))
+    assert.is_not_nil(loc)
+    assert.are.equal(1, loc.range.start.line)
+  end)
+
+  it('definition sobre precio DENTRO de <%=precio%> adyacente a otro bloque en la misma línea devuelve nil', function()
+    -- 3ª ocurrencia de 'precio': dentro de <%=precio%>, en la línea
+    -- <table><tr><td><%=precio%></td><td><%=cantidad%></td></tr></table>,
+    -- adyacente a otro bloque <%=cantidad%>. La injection combinada fusiona
+    -- ambos bloques en una sola región vbscript cuyo root no confina
+    -- correctamente la búsqueda por (row,col) a este bloque — pinneamos el
+    -- comportamiento actual (nil) para que un futuro fix sea detectable.
+    local loc = definition_at(pos_of('precio', 3))
+    assert.is_nil(loc)
+  end)
+end)
