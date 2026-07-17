@@ -12,5 +12,9 @@ vim.api.nvim_create_autocmd('FileType', {
     -- pcall: si el parser no está compilado aún, no romper la apertura
     -- del buffer; :checkhealth asp (Task 6) diagnostica el motivo.
     pcall(vim.treesitter.start, args.buf, 'aspclassic')
+
+    pcall(function()
+      require('asp.lsp').start(args.buf)
+    end)
   end,
 })

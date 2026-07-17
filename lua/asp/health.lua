@@ -55,6 +55,13 @@ function M.check()
       )
     end
   end
+
+  local asp_clients = vim.lsp.get_clients({ name = 'asp-ls' })
+  if #asp_clients > 0 then
+    health.ok(('asp-ls activo (%d cliente(s))'):format(#asp_clients))
+  else
+    health.info('asp-ls se adjunta al abrir un archivo .asp (documentSymbol y definition)')
+  end
 end
 
 return M

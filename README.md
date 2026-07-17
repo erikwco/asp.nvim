@@ -28,6 +28,24 @@ keywords, tipos, funciones/variables y llamadas.
 }
 ```
 
+## Navegación (Fase 3)
+
+Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`:
+
+- **Ir a definición**: `C-]` (vía tagfunc) o `vim.lsp.buf.definition()` —
+  Functions, Subs, Classes, variables y constantes del archivo actual,
+  case-insensitive, con precedencia local → página.
+- **Símbolos del documento**: `vim.lsp.buf.document_symbol()` u outline de
+  tu plugin favorito (aerial, Telescope `lsp_document_symbols`, ...).
+
+La resolución a través de `<!--#include -->` llega en la Fase 4.
+
+> **Nota de rendimiento:** en páginas muy grandes con muchos bloques
+> `<script>` (miles de líneas), la *primera* consulta LSP tras abrir el
+> archivo puede tardar varios segundos mientras tree-sitter parsea todas
+> las capas; las consultas siguientes son instantáneas. La Fase 4
+> optimizará esto parseando solo la capa VBScript.
+
 ## Verificación
 
 `:checkhealth asp`
