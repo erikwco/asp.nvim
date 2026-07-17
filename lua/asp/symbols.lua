@@ -1,21 +1,33 @@
 local M = {}
 
 -- SymbolKind (LSP): Class=5, Property=7, Function=12, Variable=13, Constant=14
+--
+-- IMPORTANTE sobre el orden de los patrones: los patrones "nombre anclado"
+-- (1, 2, 4 — sub/function/property) DEBEN preceder a sus contrapartes
+-- "todos los identifier hijos" (7, 8, 9). El dedupe vía seen[name_node:id()]
+-- hace que el PRIMER patrón que visita un name_node dado sea el que fija su
+-- kind — si el patrón unanchored corriera primero, el nombre de la propia
+-- declaración se clasificaría con kind Variable (13) en vez de Function/
+-- Property. Por eso 7/8/9 quedan al final: para cuando corren, el nombre ya
+-- fue registrado por su patrón anclado y el dedupe deja pasar solo los
+-- parámetros.
 local QUERY = [[
 (sub_statement . (identifier) @name) @decl
 (function_statement . (identifier) @name) @decl
 (class_statement name: (identifier) @name) @decl
-(property_statement (identifier) @name) @decl
+(property_statement . (identifier) @name) @decl
 (dim_statement (identifier) @name) @decl
 (const_statement (identifier) @name) @decl
 (sub_statement (identifier) @name) @decl
 (function_statement (identifier) @name) @decl
+(property_statement (identifier) @name) @decl
 ]]
 -- Patrones 1-6: nombres de declaraciones (anclados donde aplica).
--- Patrones 7-8: hijos identifier directos de sub/function — capturan nombre
--- Y parámetros (los _arg son reglas ocultas); el nombre se descarta por
--- dedupe (ya visto por 1-2) y quedan solo los parámetros, kind Variable.
-local PATTERN_KINDS = { 12, 12, 5, 7, 13, 14, 13, 13 }
+-- Patrones 7-9: hijos identifier directos de sub/function/property —
+-- capturan nombre Y parámetros (los _arg son reglas ocultas); el nombre se
+-- descarta por dedupe (ya visto por 1-2-4) y quedan solo los parámetros,
+-- kind Variable.
+local PATTERN_KINDS = { 12, 12, 5, 7, 13, 14, 13, 13, 13 }
 
 local SCOPE_TYPES = {
   sub_statement = true,

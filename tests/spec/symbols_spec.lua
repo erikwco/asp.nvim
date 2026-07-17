@@ -43,4 +43,28 @@ describe('asp.symbols', function()
     assert.are.equal(agregar.decl_id, monto.scope_id)
     assert.are.equal(13, monto.kind)
   end)
+
+  it('da kind Property a la property y kind Variable a su parámetro', function()
+    local entries = require('asp.symbols').collect(0)
+    local pedido = by_name(entries, 'Pedido')[1]
+
+    -- 'total' colisiona case-insensitively con la property 'Total' de la
+    -- clase; el Dim de página sigue siendo distinguible por class_id nil.
+    local page_total = by_name(entries, 'total')[1]
+    assert.is_nil(page_total.class_id)
+    assert.are.equal(13, page_total.kind)
+
+    local property
+    for _, e in ipairs(by_name(entries, 'Total')) do
+      if e.class_id == pedido.decl_id then property = e end
+    end
+    assert.is_not_nil(property)
+    assert.are.equal(7, property.kind) -- Property, no Variable
+    assert.are.equal(pedido.decl_id, property.class_id)
+
+    local nuevo_total = by_name(entries, 'nuevoTotal')[1]
+    assert.is_not_nil(nuevo_total)
+    assert.are.equal(13, nuevo_total.kind) -- Variable, no Property
+    assert.are.equal(property.decl_id, nuevo_total.scope_id)
+  end)
 end)

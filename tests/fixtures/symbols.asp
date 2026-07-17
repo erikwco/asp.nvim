@@ -10,6 +10,9 @@ Class Pedido
   Public Sub Agregar(monto)
     m_total = m_total + monto
   End Sub
+  Public Property Let Total(nuevoTotal)
+    m_total = nuevoTotal
+  End Property
 End Class
 
 Function CalcularTotal(base)
