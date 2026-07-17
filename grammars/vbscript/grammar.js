@@ -181,7 +181,7 @@ module.exports = grammar({
       )),
     ),
 
-    _omitted_run: $ => token(/,(\s*,)+/),
+    _omitted_run: $ => token(/,[ \t]*(,[ \t]*)+/),
 
     exit_statement: $ => seq(ci('Exit'), choice(ci('Sub'), ci('Function'), ci('Property'), ci('Do'), ci('For'), ci('While'))),
     goto_statement: $ => seq(ci('GoTo'), $.expression),

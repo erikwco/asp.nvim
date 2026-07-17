@@ -1,4 +1,14 @@
 ==================
+hueco entre lineas no es continuacion valida
+:error
+==================
+a
+,
+,
+b
+---
+
+==================
 llamada sin parentesis con argumento omitido
 ==================
 Objeto.MakeSelect "lb_empresa","select 1 from dual",1,,"","Seleccione .."
