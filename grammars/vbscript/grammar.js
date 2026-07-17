@@ -137,8 +137,8 @@ module.exports = grammar({
       optional(seq(ci('Else'), $._statement)),
     )),
 
-    elseif_clause: $ => seq(ci('ElseIf'), $.expression, ci('Then'), $.block),
-    else_clause: $ => seq(ci('Else'), $.block),
+    elseif_clause: $ => seq(ci('ElseIf'), $.expression, ci('Then'), optional($.block)),
+    else_clause: $ => seq(ci('Else'), optional($.block)),
 
     for_statement: $ => seq(
       ci('For'), $.identifier, '=', $.expression, ci('To'), $.expression,
