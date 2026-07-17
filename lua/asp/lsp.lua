@@ -50,7 +50,7 @@ local function server(dispatchers)
             completionProvider = { triggerCharacters = { '.' } },
             positionEncoding = 'utf-8',
           },
-          serverInfo = { name = 'asp-ls', version = '0.3.0' },
+          serverInfo = { name = 'asp-ls', version = '0.5.0' },
         })
       elseif method == 'shutdown' then
         callback(nil, nil)

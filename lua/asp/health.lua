@@ -62,7 +62,7 @@ function M.check()
   else
     health.info(
       'asp-ls se adjunta al abrir un archivo .asp (documentSymbol, definition, '
-        .. 'references, workspace/symbol, diagnósticos de includes)'
+        .. 'references, workspace/symbol, hover, completion, diagnósticos de includes)'
     )
   end
 

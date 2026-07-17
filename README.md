@@ -28,7 +28,7 @@ keywords, tipos, funciones/variables y llamadas.
 }
 ```
 
-## Navegación (Fases 3-4)
+## Navegación y ayuda al código
 
 Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`:
 
@@ -37,6 +37,11 @@ Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`:
   case-insensitive, con precedencia local → página.
 - **Símbolos del documento**: `vim.lsp.buf.document_symbol()` u outline de
   tu plugin favorito (aerial, Telescope `lsp_document_symbols`, ...).
+- **Hover**: documentación de los objetos intrínsecos de ASP
+  (`Response`, `Request`, `Server`, `Session`, `Application`) y firma de
+  tus propias funciones/subs.
+- **Completion**: miembros de los intrínsecos tras `Objeto.` (con
+  `triggerCharacters` en `.`) y los símbolos del proyecto.
 
 - **Cross-file**: definición y referencias siguen los
   `<!--#include file/virtual="..."-->` (recursivo, ciclos tolerados);
@@ -65,3 +70,13 @@ Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`:
 - `grammars/vbscript/`: **GPL-3.0** — fork de
   [arrmee-wt/tree-sitter-vba](https://github.com/arrmee-wt/tree-sitter-vba);
   cambios documentados en `grammars/vbscript/NOTICE.md`.
+
+## Documentación y estado
+
+- `:help asp` — referencia completa dentro de Neovim.
+- `:checkhealth asp` — diagnóstico de parsers y del servidor.
+- CI: la suite corre en Linux y macOS contra Neovim estable y nightly.
+
+El plugin cubre las cinco fases del diseño: resaltado de las tres capas,
+gramática VBScript propia, navegación LSP, grafo de includes cross-file, y
+ayuda al código (hover/completion) con documentación y CI.
