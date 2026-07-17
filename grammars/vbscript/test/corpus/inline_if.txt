@@ -82,3 +82,21 @@ End If
         (expression
           (primary_expression
             (number_literal)))))))
+
+==================
+if de bloque con cuerpo vacio
+==================
+if tiene_bmatic="S" then
+end if
+---
+
+(source_file
+  (if_statement
+    (expression
+      (binary_expression
+        (expression
+          (primary_expression
+            (identifier)))
+        (expression
+          (primary_expression
+            (string_literal)))))))

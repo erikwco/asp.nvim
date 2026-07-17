@@ -29,6 +29,7 @@ module.exports = grammar({
   rules: {
     source_file: $ => repeat(choice(
       $.option_statement,
+      $.class_statement,
       $.sub_statement,
       $.function_statement,
       $.property_statement,
@@ -65,6 +66,18 @@ module.exports = grammar({
       ci('Property'), choice(ci('Get'), ci('Let'), ci('Set')),
       $.identifier, $._arg_list,
       optional($.block), ci('End'), ci('Property'),
+    ),
+
+    class_statement: $ => seq(
+      ci('Class'), field('name', $.identifier),
+      repeat(choice(
+        $.dim_statement,
+        $.const_statement,
+        $.sub_statement,
+        $.function_statement,
+        $.property_statement,
+      )),
+      ci('End'), ci('Class'),
     ),
 
     _arg_list: $ => seq('(', optional(seq($._arg, repeat(seq(',', $._arg)))), ')'),
@@ -112,7 +125,7 @@ module.exports = grammar({
 
     _block_if: $ => seq(
       ci('If'), $.expression, ci('Then'),
-      $.block,
+      optional($.block),
       repeat($.elseif_clause),
       optional($.else_clause),
       ci('End'), ci('If'),

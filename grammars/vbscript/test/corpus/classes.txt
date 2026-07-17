@@ -1,0 +1,48 @@
+==================
+clase con campo, property y metodo
+==================
+Class Pedido
+  Private m_total
+
+  Public Property Get Total()
+    Total = m_total
+  End Property
+
+  Public Sub Agregar(monto)
+    m_total = m_total + monto
+  End Sub
+End Class
+---
+
+(source_file
+  (class_statement
+    name: (identifier)
+    (dim_statement
+      (identifier))
+    (property_statement
+      (identifier)
+      (block
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (identifier))))))
+    (sub_statement
+      (identifier)
+      (identifier)
+      (block
+        (expression
+          (binary_expression
+            (expression
+              (binary_expression
+                (expression
+                  (primary_expression
+                    (identifier)))
+                (expression
+                  (primary_expression
+                    (identifier)))))
+            (expression
+              (primary_expression
+                (identifier)))))))))
