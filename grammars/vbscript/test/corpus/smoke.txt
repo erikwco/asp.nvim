@@ -1,0 +1,13 @@
+==================
+smoke: option y dim a nivel de script
+==================
+option explicit
+dim Objeto,tipoVentana,vParcialesActivos
+---
+
+(source_file
+  (option_statement)
+  (dim_statement
+    (identifier)
+    (identifier)
+    (identifier)))

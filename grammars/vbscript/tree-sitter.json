@@ -1,0 +1,16 @@
+{
+  "grammars": [
+    {
+      "name": "vbscript",
+      "camelcase": "VBScript",
+      "scope": "source.vbscript",
+      "file-types": ["vbs"],
+      "injection-regex": "^(vb|vbs|vbscript)$"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "GPL-3.0",
+    "description": "Tree-sitter grammar for VBScript (Classic ASP)"
+  }
+}

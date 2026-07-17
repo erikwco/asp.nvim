@@ -17,7 +17,8 @@ Plugin completo y publicable para Neovim que dé soporte de primera clase a Clas
 - No existe ningún LSP para Classic ASP/VBScript. El nicho está vacío.
 - No existe gramática tree-sitter de VBScript, pero sí de VBA:
   [arrmee-wt/tree-sitter-vba](https://github.com/arrmee-wt/tree-sitter-vba)
-  (basada en la especificación de Microsoft, case-insensitive, MIT). VBScript es
+  (basada en la especificación de Microsoft, case-insensitive, GPL-3.0; el
+  LICENSE del repo prevalece sobre el header MIT de su grammar.js). VBScript es
   aproximadamente un subconjunto de VBA → se adapta por fork en lugar de escribir desde cero.
 - Lo único existente para ASP en Vim/Neovim es el syntax legado por regex
   ([aspvbs.vim](https://github.com/vim-scripts/aspvbs.vim)), sin navegación.
@@ -32,6 +33,8 @@ Plugin completo y publicable para Neovim que dé soporte de primera clase a Clas
 - **Enfoque elegido (A):** gramáticas tree-sitter + plugin Lua con LSP in-process.
   Descartados: (B) LSP externo multi-editor — posible fase 2; (C) solo piezas existentes —
   se recupera como fase 1 del plan.
+- 2026-07-16: fork GPL-3.0 aceptado para la gramática vbscript; licenciamiento
+  dividido documentado en README.
 
 ## Arquitectura
 

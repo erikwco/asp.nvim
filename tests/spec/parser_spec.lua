@@ -6,11 +6,12 @@ describe('parsers', function()
     assert.is_true((pcall(function() return assert(vim.treesitter.language.add('aspclassic')) end)))
   end)
 
-  it('carga el parser vba', function()
-    assert.is_true((pcall(function() return assert(vim.treesitter.language.add('vba')) end)))
-  end)
-
   it('carga el parser html', function()
     assert.is_true((pcall(function() return assert(vim.treesitter.language.add('html')) end)))
+  end)
+
+  it('carga el parser vbscript', function()
+    local ok, added = pcall(vim.treesitter.language.add, 'vbscript')
+    assert.is_true(ok and added == true)
   end)
 end)

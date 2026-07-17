@@ -1,0 +1,68 @@
+==================
+dim con as parsea leniente (invalido en vbscript, tolerado)
+==================
+Dim x As Integer
+---
+
+(source_file
+  (dim_statement
+    (identifier))
+  (expression
+    (primary_expression
+      (identifier)))
+  (expression
+    (primary_expression
+      (identifier))))
+
+==================
+literal de fecha
+==================
+fecha = #2026-07-16#
+---
+
+(source_file
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (date_literal)))))
+
+==================
+dos statements en una linea con dos puntos
+==================
+a = 1 : b = 2
+---
+
+(source_file
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal))))
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal)))))
+
+==================
+llamada paren-less con un solo literal
+==================
+Response.Write "hi"
+---
+
+(source_file
+  (expression
+    (member_expression
+      (primary_expression
+        (identifier))
+      (identifier)))
+  (expression
+    (primary_expression
+      (string_literal))))

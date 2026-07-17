@@ -13,7 +13,7 @@ describe('treesitter en buffers asp', function()
     assert.are.equal('aspclassic', parser:lang())
   end)
 
-  it('inyecta html y vba', function()
+  it('inyecta html y vbscript', function()
     local parser = vim.treesitter.get_parser(0)
     parser:parse(true)
     local langs = {}
@@ -21,7 +21,7 @@ describe('treesitter en buffers asp', function()
       langs[lang] = true
     end
     assert.is_true(langs.html, 'esperaba injection html')
-    assert.is_true(langs.vba, 'esperaba injection vba')
+    assert.is_true(langs.vbscript, 'esperaba injection vbscript')
   end)
 
   it('las queries de aspclassic compilan', function()
@@ -30,8 +30,8 @@ describe('treesitter en buffers asp', function()
   end)
 end)
 
-describe('queries de vba', function()
-  it('la query de highlights de vba compila', function()
-    assert.is_not_nil(vim.treesitter.query.get('vba', 'highlights'))
+describe('queries de vbscript', function()
+  it('las queries de vbscript compilan', function()
+    assert.is_not_nil(vim.treesitter.query.get('vbscript', 'highlights'))
   end)
 end)

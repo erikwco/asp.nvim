@@ -1,0 +1,106 @@
+==================
+hueco entre lineas no es continuacion valida
+:error
+==================
+a
+,
+,
+b
+---
+
+==================
+llamada sin parentesis con argumento omitido
+==================
+Objeto.MakeSelect "lb_empresa","select 1 from dual",1,,"","Seleccione .."
+---
+
+(source_file
+  (expression
+    (member_expression
+      (primary_expression
+        (identifier))
+      (identifier)))
+  (call_statement
+    (expression
+      (primary_expression
+        (string_literal)))
+    (expression
+      (primary_expression
+        (string_literal)))
+    (expression
+      (primary_expression
+        (number_literal)))
+    (expression
+      (primary_expression
+        (string_literal)))
+    (expression
+      (primary_expression
+        (string_literal)))))
+
+==================
+llamada con parentesis y hueco
+==================
+x = f(1,,3)
+---
+
+(source_file
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (function_call
+        (identifier)
+        (expression
+          (primary_expression
+            (number_literal)))
+        (expression
+          (primary_expression
+            (number_literal)))))))
+
+==================
+llamada con parentesis, hueco inicial
+==================
+x = f(,2)
+---
+
+(source_file
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (function_call
+        (identifier)
+        (expression
+          (primary_expression
+            (number_literal)))))))
+
+==================
+llamada con parentesis, hueco final
+==================
+x = f(1,)
+---
+
+(source_file
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (function_call
+        (identifier)
+        (expression
+          (primary_expression
+            (number_literal)))))))
+
+==================
+llamada con parentesis sin argumentos sigue funcionando
+==================
+f()
+---
+
+(source_file
+  (expression
+    (function_call
+      (identifier))))
