@@ -3,3 +3,6 @@ build/
 grammars/aspclassic/src/
 grammars/aspclassic/node_modules/
 .superpowers/
+asp/
+grammars/vbscript/src/
+grammars/vbscript/node_modules/

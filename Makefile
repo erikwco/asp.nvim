@@ -2,7 +2,7 @@ NVIM ?= nvim
 CC ?= cc
 CFLAGS ?= -Os -fPIC -shared
 
-PARSERS := parser/aspclassic.so parser/vba.so
+PARSERS := parser/aspclassic.so parser/vba.so parser/vbscript.so
 
 .PHONY: parsers parsers-test test clean
 
@@ -33,6 +33,12 @@ parser/aspclassic.so: grammars/aspclassic/src/parser.c | parser
 
 parser/vba.so: | build/tree-sitter-vba parser
 	$(CC) $(CFLAGS) -Ibuild/tree-sitter-vba/src build/tree-sitter-vba/src/*.c -o $@
+
+grammars/vbscript/src/parser.c: grammars/vbscript/grammar.js
+	cd grammars/vbscript && tree-sitter generate
+
+parser/vbscript.so: grammars/vbscript/src/parser.c | parser
+	$(CC) $(CFLAGS) -Igrammars/vbscript/src grammars/vbscript/src/*.c -o $@
 
 parser/html.so: | build/tree-sitter-html parser
 	$(CC) $(CFLAGS) -Ibuild/tree-sitter-html/src build/tree-sitter-html/src/*.c -o $@

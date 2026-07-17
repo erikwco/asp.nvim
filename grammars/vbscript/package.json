@@ -1,0 +1,8 @@
+{
+  "name": "tree-sitter-vbscript",
+  "version": "0.1.0",
+  "description": "Tree-sitter grammar for VBScript (Classic ASP), fork of tree-sitter-vba",
+  "license": "GPL-3.0",
+  "main": "bindings/node",
+  "dependencies": {}
+}
