@@ -22,7 +22,16 @@ jobs:
           neovim: true
           version: ${{ matrix.nvim }}
 
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Instalar tree-sitter CLI
+        # tree-sitter genera parsers con ABI retro-compatible: un CLI más
+        # viejo (0.25) produce parsers que cargan en Neovim stable Y nightly.
+        # NO subir a 0.26+ para "igualar" el local — arriesga ABI too-new
+        # para el runtime de Neovim stable.
         run: npm install -g tree-sitter-cli@^0.25
 
       - name: Compilar parsers y correr la suite
