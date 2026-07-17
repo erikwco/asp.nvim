@@ -12,7 +12,7 @@
 // ANTLR4 grammar or other third-party VBA parser implementation.
 
 function ci(word) {
-  return new RegExp(word, 'i');
+  return alias(new RegExp(word, 'i'), word);
 }
 
 module.exports = grammar({
