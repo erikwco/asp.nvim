@@ -57,3 +57,13 @@ SSI no-include es content
 
 (template
   (content))
+
+==================
+< suelto al final del buffer (EOF-safe)
+==================
+texto<
+---
+
+(template
+  (content)
+  (content))
