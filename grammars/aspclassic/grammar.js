@@ -43,6 +43,6 @@ module.exports = grammar({
     // Todo lo que hay fuera de los bloques. El '<' suelto cubre los
     // '<' de HTML que no abren un bloque ASP; el lexer prefiere los
     // tokens más largos ('<%', '<%=', '<%@') cuando aplican.
-    content: () => token(prec(-1, choice(/[^<]+/, '<'))),
+    content: () => token(prec(-1, /([^<]+|<[^%!]|<!([^-]|-[^-]|--[^#]|--#[^i]))+|</)),
   },
 });

@@ -36,8 +36,34 @@ codigo entre html
 
 (template
   (content)
-  (content)
   (code_directive
     (code))
+  (content))
+
+==================
+content no fragmenta en cada < (perf)
+==================
+<div>a</div><span>b</span>
+---
+
+(template
+  (content))
+
+==================
+SSI no-include es content
+==================
+<!--#config timefmt="x" -->
+---
+
+(template
+  (content))
+
+==================
+< suelto al final del buffer (EOF-safe)
+==================
+texto<
+---
+
+(template
   (content)
   (content))
