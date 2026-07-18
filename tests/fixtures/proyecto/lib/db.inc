@@ -3,6 +3,7 @@ Function AbrirConexion()
   Set AbrirConexion = Server.CreateObject("ADODB.Connection")
 End Function
 
+
 Class Repositorio
   Private m_conn
   Public Sub Init(conexion)
