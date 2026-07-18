@@ -27,5 +27,4 @@ comentario html normal no es include
 ---
 
 (template
-  (content)
   (content))
