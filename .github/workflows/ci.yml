@@ -36,9 +36,11 @@ jobs:
           node-version: '20'
 
       - name: Corpus de las gramáticas
+        # `tree-sitter test` necesita src/grammar.json (ignorado en el repo),
+        # así que se regenera de forma transitoria antes de correr el corpus.
         run: |
-          (cd grammars/aspclassic && npx -y tree-sitter-cli@0.25.10 test)
-          (cd grammars/vbscript && npx -y tree-sitter-cli@0.25.10 test)
+          (cd grammars/aspclassic && npx -y tree-sitter-cli@0.25.10 generate && npx -y tree-sitter-cli@0.25.10 test)
+          (cd grammars/vbscript && npx -y tree-sitter-cli@0.25.10 generate && npx -y tree-sitter-cli@0.25.10 test)
 
       - name: Generar helptags
         run: make helptags
