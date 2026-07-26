@@ -24,25 +24,43 @@ jobs:
           neovim: true
           version: ${{ matrix.nvim }}
 
+      # `make test` compila el parser.c versionado (sólo requiere cc) — este
+      # job replica lo que hace un usuario al instalar. Node/tree-sitter CLI
+      # sólo se instalan para el paso de corpus, no para compilar.
+      - name: Compilar (desde parser.c versionado) y correr la suite
+        run: make test
+
       - name: Configurar Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Instalar tree-sitter CLI
-        # tree-sitter genera parsers con ABI retro-compatible: un CLI más
-        # viejo (0.25) produce parsers que cargan en Neovim stable Y nightly.
-        # NO subir a 0.26+ para "igualar" el local — arriesga ABI too-new
-        # para el runtime de Neovim stable.
-        run: npm install -g tree-sitter-cli@^0.25
-
-      - name: Compilar parsers y correr la suite
-        run: make test
-
       - name: Corpus de las gramáticas
         run: |
-          (cd grammars/aspclassic && tree-sitter generate && tree-sitter test)
-          (cd grammars/vbscript && tree-sitter generate && tree-sitter test)
+          (cd grammars/aspclassic && npx -y tree-sitter-cli@0.25.10 test)
+          (cd grammars/vbscript && npx -y tree-sitter-cli@0.25.10 test)
 
       - name: Generar helptags
         run: make helptags
+
+  # Falla si el parser.c versionado quedó desactualizado respecto a su
+  # grammar.js (alguien editó la gramática y olvidó `make generate`).
+  parser-freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Regenerar y verificar que no hay cambios
+        run: |
+          make generate
+          git diff --exit-code -- \
+            grammars/aspclassic/src/parser.c \
+            grammars/aspclassic/src/node-types.json \
+            grammars/vbscript/src/parser.c \
+            grammars/vbscript/src/node-types.json \
+          || (echo "::error::parser.c versionado desactualizado — corré 'make generate' y commiteá" && exit 1)

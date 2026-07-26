@@ -1,10 +1,10 @@
 parser/
 build/
-grammars/aspclassic/src/
 grammars/aspclassic/node_modules/
+grammars/aspclassic/src/grammar.json
+grammars/vbscript/node_modules/
+grammars/vbscript/src/grammar.json
 .superpowers/
 /asp/
-grammars/vbscript/src/
-grammars/vbscript/node_modules/
 .DS_Store
 doc/tags

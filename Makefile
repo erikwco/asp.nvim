@@ -2,13 +2,26 @@ NVIM ?= nvim
 CC ?= cc
 CFLAGS ?= -Os -fPIC -shared
 
+# El parser.c de cada gramática está versionado en el repo (ABI 14, para
+# cargar en Neovim >= 0.10). Por eso `make parsers` sólo necesita un
+# compilador C — NO tree-sitter CLI ni Node.js. Esos sólo se necesitan
+# para `make generate` (regenerar tras editar una grammar.js).
+TS_CLI ?= npx -y tree-sitter-cli@0.25.10
+TS_ABI ?= 14
+
 PARSERS := parser/aspclassic.so parser/vbscript.so
 
-.PHONY: parsers parsers-test test clean helptags
+.PHONY: parsers parsers-test generate test clean helptags
 
 parsers: $(PARSERS)
 
 parsers-test: parsers parser/html.so
+
+# Regenera el parser.c versionado desde grammar.js. Requiere Node.js.
+# Corré esto tras cambiar cualquier grammar.js y commiteá el resultado.
+generate:
+	cd grammars/aspclassic && $(TS_CLI) generate --abi $(TS_ABI)
+	cd grammars/vbscript && $(TS_CLI) generate --abi $(TS_ABI)
 
 build:
 	mkdir -p build
@@ -22,14 +35,8 @@ build/plenary.nvim: | build
 build/tree-sitter-html: | build
 	git clone --depth 1 https://github.com/tree-sitter/tree-sitter-html $@
 
-grammars/aspclassic/src/parser.c: grammars/aspclassic/grammar.js
-	cd grammars/aspclassic && tree-sitter generate
-
 parser/aspclassic.so: grammars/aspclassic/src/parser.c | parser
 	$(CC) $(CFLAGS) -Igrammars/aspclassic/src grammars/aspclassic/src/*.c -o $@
-
-grammars/vbscript/src/parser.c: grammars/vbscript/grammar.js
-	cd grammars/vbscript && tree-sitter generate
 
 parser/vbscript.so: grammars/vbscript/src/parser.c | parser
 	$(CC) $(CFLAGS) -Igrammars/vbscript/src grammars/vbscript/src/*.c -o $@
@@ -42,7 +49,7 @@ test: parsers-test build/plenary.nvim
 		-c "PlenaryBustedDirectory tests/spec { minimal_init = 'tests/minimal_init.lua' }"
 
 clean:
-	rm -rf parser build grammars/aspclassic/src grammars/vbscript/src
+	rm -rf parser build doc/tags
 
 helptags:
 	$(NVIM) --headless -c 'helptags doc' -c 'quit'
