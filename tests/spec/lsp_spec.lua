@@ -352,6 +352,27 @@ describe('asp-ls completion', function()
     local l = labels(items)
     assert.is_true(l['Response'])
   end)
+
+  -- Regresión E565: un servidor in-process que responde SINCRÓNICAMENTE hace
+  -- que la maquinaria de completion de Neovim llame vim.fn.complete() dentro
+  -- de un contexto restringido → "E565: Not allowed to change text". El fix
+  -- difiere la respuesta con vim.schedule (como un servidor real, async).
+  it('el servidor responde de forma diferida, no sincrónica', function()
+    vim.cmd.edit(FIX .. '/default.asp')
+    vim.bo.filetype = 'asp'
+    require('asp.lsp').start(0)
+    vim.wait(2000, function()
+      return #vim.lsp.get_clients({ bufnr = 0, name = 'asp-ls' }) > 0
+    end)
+    local fired = false
+    vim.lsp.buf_request(0, 'textDocument/documentSymbol',
+      { textDocument = vim.lsp.util.make_text_document_params() },
+      function() fired = true end)
+    -- Sincrónico dispararía el callback aquí mismo; diferido, todavía no.
+    assert.is_false(fired, 'la respuesta fue sincrónica (regresión E565)')
+    vim.wait(1000, function() return fired end)
+    assert.is_true(fired, 'la respuesta nunca llegó')
+  end)
 end)
 
 describe('asp-ls límite: múltiples <%= %> en una línea', function()

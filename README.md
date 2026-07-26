@@ -9,6 +9,24 @@ El VBScript de `<% %>`/`<%= %>` se parsea con gramática propia
 (`grammars/vbscript/`, fork de tree-sitter-vba), con resaltado de
 keywords, tipos, funciones/variables y llamadas.
 
+## Demo
+
+Las tres capas (VBScript, HTML y JavaScript) resaltadas en un mismo `.asp`:
+
+![Resaltado de las tres capas](demo/01-resaltado.gif)
+
+Ir a la definición a través de `<!--#include -->` (de `default.asp` a
+`includes/helpers.asp`):
+
+![Ir a definición cross-include](demo/02-ir-a-definicion.gif)
+
+Hover con la doc de los intrínsecos y completion de sus miembros:
+
+![Hover y completion de intrínsecos](demo/03-hover-completion.gif)
+
+> Los GIFs se generan con [vhs](https://github.com/charmbracelet/vhs) desde
+> `demo/*.tape` — ver [`demo/README.md`](demo/README.md).
+
 ## Requisitos
 
 - Neovim >= 0.10

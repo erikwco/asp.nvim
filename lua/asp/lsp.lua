@@ -1,7 +1,9 @@
 local M = {}
 
--- Handlers por método; las Tasks 3-4 agregan entradas aquí.
--- Cada handler recibe (params) y retorna el resultado (o nil).
+-- Handlers por método. Cada handler recibe (params) y retorna el resultado
+-- (o nil). Su respuesta se entrega SIEMPRE de forma diferida (vim.schedule,
+-- ver `request` abajo) — no agregues un handler que necesite responder
+-- sincrónicamente.
 M.handlers = {}
 
 M.handlers['textDocument/documentSymbol'] = function(params)
@@ -56,11 +58,18 @@ local function server(dispatchers)
         callback(nil, nil)
       elseif M.handlers[method] then
         local ok, result = pcall(M.handlers[method], params)
-        if ok then
-          callback(nil, result)
-        else
-          callback({ code = -32603, message = tostring(result) }, nil)
-        end
+        -- Respuesta diferida (como un servidor LSP real, que contesta async
+        -- por un pipe). Si se contesta sincrónicamente, la maquinaria de
+        -- completion de Neovim llama vim.fn.complete() dentro de un contexto
+        -- donde no se permite cambiar texto → E565. vim.schedule mueve el
+        -- callback al siguiente tick del event loop, fuera de ese contexto.
+        vim.schedule(function()
+          if ok then
+            callback(nil, result)
+          else
+            callback({ code = -32603, message = tostring(result) }, nil)
+          end
+        end)
       else
         callback(nil, nil)
       end
