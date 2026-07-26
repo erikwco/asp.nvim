@@ -689,7 +689,7 @@ servidor, HTML y JavaScript de cliente conviven en un mismo archivo .asp:
 
 Con lazy.nvim: >lua
   {
-    'erik/asp.nvim',
+    'erikwco/asp.nvim',
     build = 'make parsers',
     ft = 'asp',
     opts = {},

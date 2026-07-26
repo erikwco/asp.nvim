@@ -807,7 +807,7 @@ con resolución de `<!--#include -->` (ver `docs/superpowers/specs/`).
 
 ```lua
 {
-  'erik/asp.nvim',
+  'erikwco/asp.nvim',
   build = 'make parsers',
   ft = 'asp',
   opts = {},
