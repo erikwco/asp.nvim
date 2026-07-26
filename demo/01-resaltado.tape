@@ -10,7 +10,7 @@ Set Padding 20
 Set TypingSpeed 60ms
 
 Hide
-Type "nvim demo/app/default.asp"
+Type "nvim -u demo/init.lua demo/app/default.asp"
 Enter
 Sleep 2500ms
 Show

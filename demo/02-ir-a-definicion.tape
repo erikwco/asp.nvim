@@ -11,22 +11,23 @@ Set Padding 20
 Set TypingSpeed 90ms
 
 Hide
-Type "nvim demo/app/default.asp"
+Type "nvim -u demo/init.lua demo/app/default.asp"
 Enter
-Sleep 2500ms
+Sleep 4s
 Show
 
-# Buscamos un uso de FormatearMoneda...
-Type "/etiqueta = Format"
+# Cursor sobre un uso de FormatearMoneda...
+Type "/FormatearMoneda(conTasas"
 Enter
-Sleep 1500ms
+Sleep 2s
 
 # ...y saltamos a su definición (LazyVim: gd), que vive en otro archivo.
 Type "gd"
 Sleep 3s
 
-# El cursor aterriza en Function FormatearMoneda dentro de includes/helpers.asp
+# El cursor aterriza en Function FormatearMoneda en includes/helpers.asp;
+# K muestra su firma.
 Type "K"
-Sleep 2500ms
+Sleep 3s
 Escape
-Sleep 1s
+Sleep 1500ms

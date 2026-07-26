@@ -10,27 +10,28 @@ Set Padding 20
 Set TypingSpeed 90ms
 
 Hide
-Type "nvim demo/app/default.asp"
+Type "nvim -u demo/init.lua demo/app/default.asp"
 Enter
-Sleep 2500ms
+Sleep 4s
 Show
 
 # Hover (K) sobre Response muestra la doc del objeto intrínseco.
-Type "/Response"
+Type "/Response.Write"
 Enter
-Sleep 1200ms
+Sleep 1500ms
 Type "K"
 Sleep 3s
 Escape
-Sleep 800ms
+Sleep 1s
 
-# Completion: tras "Server." aparecen los miembros (CreateObject, MapPath...).
-Type "o"
-Sleep 500ms
+# Completion: en una línea nueva dentro del bloque, tras "Server." aparecen
+# sus miembros (CreateObject, MapPath, ...).
+Type "A"
+Enter
 Type "Server."
-Sleep 500ms
+Sleep 800ms
 Ctrl+X
 Ctrl+O
 Sleep 3s
 Escape
-Sleep 1s
+Sleep 1500ms
