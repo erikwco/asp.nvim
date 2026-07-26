@@ -12,19 +12,20 @@ keywords, tipos, funciones/variables y llamadas.
 ## Requisitos
 
 - Neovim >= 0.10
-- `cc` y `git` (para compilar los parsers)
-- `tree-sitter` CLI >= 0.25 y Node.js >= 18: `make parsers` los necesita
-  para generar las gramáticas (`tree-sitter generate`) antes de compilar.
-- Parser `html` instalado (p. ej. con nvim-treesitter, `:TSInstall html`):
-  `make parsers` no lo compila para no pisar el que instale el usuario.
-- Parsers `javascript` y `css` instalados (p. ej. con nvim-treesitter)
-  para el código de cliente dentro de `<script>`/`<style>`.
+- `cc` y `git`: `make parsers` compila los parsers versionados en el repo.
+  **No** necesitás tree-sitter CLI ni Node.js para instalar — el `parser.c`
+  ya viene generado (ABI 14, compatible desde Neovim 0.10).
+- Parsers `html`, `javascript` y `css` instalados (p. ej. con
+  nvim-treesitter: `:TSInstall html javascript css`): asp.nvim no los
+  compila para no pisar los que instale el usuario. `html` es necesario
+  para el resaltado de las regiones HTML; `javascript`/`css` para el
+  código de cliente dentro de `<script>`/`<style>`.
 
 ## Instalación (lazy.nvim)
 
 ```lua
 {
-  'erik/asp.nvim',
+  'erikwco/asp.nvim',
   build = 'make parsers',
   ft = 'asp',
   opts = {},
@@ -95,3 +96,16 @@ Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`:
 El plugin cubre las cinco fases del diseño: resaltado de las tres capas,
 gramática VBScript propia, navegación LSP, grafo de includes cross-file, y
 ayuda al código (hover/completion) con documentación y CI.
+
+## Desarrollo
+
+El `parser.c` de cada gramática está versionado (por eso instalar sólo
+necesita `cc`). Si editás una `grammars/*/grammar.js`, regenerá y commiteá:
+
+```bash
+make generate   # requiere Node.js; usa tree-sitter-cli 0.25.10, ABI 14
+make test       # corpus + suite plenary
+```
+
+El CI falla si el `parser.c` versionado quedó desactualizado respecto a su
+`grammar.js`.

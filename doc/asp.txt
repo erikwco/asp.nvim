@@ -24,18 +24,18 @@ servidor, HTML y JavaScript de cliente conviven en un mismo archivo .asp:
 2. Requisitos                                                 *asp-requisitos*
 
   - Neovim >= 0.10
-  - `cc` y `git` para compilar los parsers
-  - `tree-sitter` CLI >= 0.25 y Node.js >= 18: los usa `make parsers`
-    para generar las gramáticas antes de compilar.
-  - Parsers `javascript` y `css` (p. ej. nvim-treesitter) para el código
-    de cliente dentro de <script>/<style>.
+  - `cc` y `git`: `make parsers` compila el parser.c versionado. NO se
+    necesita tree-sitter CLI ni Node.js para instalar (sólo para
+    `make generate` al desarrollar la gramática).
+  - Parsers `html`, `javascript` y `css` (p. ej. nvim-treesitter) para
+    las regiones HTML y el código de cliente en <script>/<style>.
 
 ==============================================================================
 3. Instalación                                              *asp-instalacion*
 
 Con lazy.nvim: >lua
   {
-    'erik/asp.nvim',
+    'erikwco/asp.nvim',
     build = 'make parsers',
     ft = 'asp',
     opts = {},
