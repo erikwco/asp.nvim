@@ -1,7 +1,9 @@
 local M = {}
 
--- Handlers por método; las Tasks 3-4 agregan entradas aquí.
--- Cada handler recibe (params) y retorna el resultado (o nil).
+-- Handlers por método. Cada handler recibe (params) y retorna el resultado
+-- (o nil). Su respuesta se entrega SIEMPRE de forma diferida (vim.schedule,
+-- ver `request` abajo) — no agregues un handler que necesite responder
+-- sincrónicamente.
 M.handlers = {}
 
 M.handlers['textDocument/documentSymbol'] = function(params)
