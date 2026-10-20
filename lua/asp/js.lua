@@ -1,8 +1,10 @@
 -- Capa JavaScript de cliente de asp-ls: definición y referencias de los
--- identificadores de los bloques <script> del buffer, con el mismo contrato
--- que asp.symbols (Location / lista de Location / nil). El scope global de
--- la página se extiende con las declaraciones globales de los `.js` de sus
--- `<script src>` y del JS de las páginas incluidas (ver each_external).
+-- identificadores de los bloques <script> del buffer y de sus manejadores
+-- de evento inline (`onclick="..."`, ver handler_regions), con el mismo
+-- contrato que asp.symbols (Location / lista de Location / nil). El scope
+-- global de la página se extiende con las declaraciones globales de los
+-- `.js` de sus `<script src>` y del JS de las páginas incluidas (ver
+-- each_external).
 --
 -- Dos decisiones de diseño, ambas por determinismo:
 --
@@ -55,6 +57,13 @@ local JS_TYPES = {
 -- Todo <script>, también los de `src` (sin raw_text): el cuerpo se busca
 -- entre los hijos (ver script_regions).
 local SCRIPT_QUERY = [[ (script_element (start_tag) @tag) @script ]]
+-- Todo atributo con valor, con o sin comillas, de cualquier elemento. Los
+-- de manejador se eligen por nombre en Lua (ver handler_regions): #match?
+-- sobre el nombre no se comporta igual en todas las versiones soportadas.
+local ATTRIBUTE_QUERY = [[
+(attribute (attribute_name) @name (attribute_value) @value)
+(attribute (attribute_name) @name (quoted_attribute_value (attribute_value) @value))
+]]
 local CONTENT_QUERY = [[ (content) @content ]]
 --  * @scope: los nodos que abren un scope. let/const se tratan como var
 --    (function-scoped, no block-scoped): límite documentado.
@@ -104,12 +113,13 @@ local function start_byte_of(node)
   return b
 end
 
----Intervalos de bytes `{inicio, fin, output}` (fin exclusivo) de los
+---Intervalos de bytes `{inicio, fin, output, range}` (fin exclusivo) de los
 ---bloques ASP de la plantilla, en orden del documento: todo hijo de la raíz
----que no es `content`; `output` marca los `<%= %>`. La capa html sólo ve
----los `content`, así que un nodo html que se cruza con alguno se armó con
----ASP (ver script_attrs), y en el javascript un identificador que se cruza
----con alguno es VBScript (ver js_source y overlaps_asp).
+---que no es `content`; `output` marca los `<%= %>` y `range` es el Range6
+---del bloque. La capa html sólo ve los `content`, así que un nodo html que
+---se cruza con alguno se armó con ASP (ver script_attrs), y en el
+---javascript un identificador que se cruza con alguno es VBScript (ver
+---js_source y overlaps_asp).
 ---@param root TSNode raíz de la plantilla aspclassic
 ---@return table[] blocks
 local function asp_blocks(root)
@@ -117,8 +127,8 @@ local function asp_blocks(root)
   for i = 0, root:named_child_count() - 1 do
     local child = root:named_child(i)
     if child:type() ~= 'content' then
-      local _, _, sb, _, _, eb = child:range(true)
-      table.insert(blocks, { sb, eb, output = child:type() == 'output_directive' })
+      local range = { child:range(true) }
+      table.insert(blocks, { range[3], range[6], output = child:type() == 'output_directive', range = range })
     end
   end
   return blocks
@@ -258,6 +268,69 @@ local function script_regions(html, source, blocks)
   return regions, srcs
 end
 
+---Regiones de los manejadores de evento inline: el valor de todo atributo
+---`on*` de cualquier elemento (`onclick`, `ONCHANGE`, ...) y el de un
+---`href` con URL `javascript:`, desde después del prefijo. El navegador
+---compila cada uno como el cuerpo de una función aparte: cada uno es su
+---propia región, como cada <script>, y su propio scope (ver index_js).
+---
+---El rango del `attribute_value` se ensancha sobre los bloques ASP pegados
+---a sus bordes: el parser html no los ve, así que en
+---`onkeyup="<%= p %>g()"` el valor interior empieza en `g`. Ensanchado,
+---`g` queda pegado al relleno del bloque y se descarta como en un <script>
+---(ver js_source). Un valor que es entero un bloque ASP no tiene
+---`attribute_value` y no da región; un `href` con un bloque delante
+---(`<%= url %>javascript:...`) tampoco: su prefijo no es estático.
+---
+---No se decodifican las entidades HTML del valor (`&quot;`) ni los `%xx`
+---de una URL `javascript:`: el JS queda con un error de sintaxis donde
+---aparecen y el resto resuelve igual.
+---@param html vim.treesitter.LanguageTree capa html, ya parseada
+---@param source integer|string bufnr o texto del archivo
+---@param blocks table[] de asp_blocks
+---@return Range6[] handlers en orden del documento
+local function handler_regions(html, source, blocks)
+  local starts, ends = {}, {}
+  for _, b in ipairs(blocks) do
+    starts[b[1]], ends[b[2]] = b.range, b.range
+  end
+  local aq = vim.treesitter.query.parse('html', ATTRIBUTE_QUERY)
+  local handlers = {}
+  for _, tree in pairs(html:trees()) do
+    for _, match in aq:iter_matches(tree:root(), source) do
+      local name, value
+      for id, nodes in pairs(match) do
+        if type(nodes) ~= 'table' then nodes = { nodes } end
+        if aq.captures[id] == 'name' then name = nodes[1] end
+        if aq.captures[id] == 'value' then value = nodes[1] end
+      end
+      local attr = name and value and vim.treesitter.get_node_text(name, source):lower()
+      local skip -- bytes del valor antes del JS: el prefijo `javascript:`
+      if attr and attr:match('^on%a+$') then
+        skip = 0
+      elseif attr == 'href' and not ends[start_byte_of(value)] then
+        local lead = vim.treesitter.get_node_text(value, source):lower():match('^[ \t]*javascript:')
+        skip = lead and #lead
+      end
+      if skip then
+        local r = { value:range(true) }
+        r[2], r[3] = r[2] + skip, r[3] + skip
+        while ends[r[3]] do
+          local b = ends[r[3]]
+          r[1], r[2], r[3] = b[1], b[2], b[3]
+        end
+        while starts[r[6]] do
+          local b = starts[r[6]]
+          r[4], r[5], r[6] = b[4], b[5], b[6]
+        end
+        if r[3] < r[6] then table.insert(handlers, r) end
+      end
+    end
+  end
+  table.sort(handlers, function(a, b) return a[3] < b[3] end)
+  return handlers
+end
+
 ---Texto tal como lo ve el parser javascript: cada bloque ASP de la
 ---plantilla (todo hijo que no es `content`) se reemplaza byte a byte,
 ---conservando los saltos de línea, por un relleno de la misma longitud, así
@@ -347,17 +420,20 @@ end
 ---funciones en un <script>, references se volvía cuadrático.
 ---
 ---Cada scope recibe una clave entera, su posición en el orden del
----documento; 0 es el global, compartido por todos los <script> de la
----página. Las declaraciones se indexan por (clave, nombre); en cada clave
----gana la primera del documento (un `var x` redeclarado es la misma
----variable).
+---documento; 0 es el global, compartido por todos los <script> y
+---manejadores de la página. Las declaraciones se indexan por (clave,
+---nombre); en cada clave gana la primera del documento (un `var x`
+---redeclarado es la misma variable).
 ---@param data table
----@param scopes table[] {node, sb, eb} de las capturas @scope
+---@param scopes table[] {node, sb, eb, handler?} de las capturas @scope y
+---  de los manejadores de evento
 ---@param items table[] {node, sb, method} de @id/@method, en orden
 local function index(data, scopes, items)
   table.sort(scopes, function(a, b)
     if a.sb ~= b.sb then return a.sb < b.sb end
-    return a.eb > b.eb
+    if a.eb ~= b.eb then return a.eb > b.eb end
+    -- `onclick="x => x"`: la función ocupa el manejador entero y va adentro.
+    return a.handler == true and not b.handler
   end)
   local stack, next_scope = {}, 1
   local function close_before(byte)
@@ -450,13 +526,14 @@ end
 ---@param source string texto de js_source (o un .js entero)
 ---@param regions Range6[][]|nil nil: todo el texto (un .js)
 ---@param blocks table[] de asp_blocks ({} en un .js)
-local function index_js(data, source, regions, blocks)
+---@param handlers Range6[] de handler_regions, también en `regions`
+local function index_js(data, source, regions, blocks, handlers)
   data.source = source
   -- Parser STRING sobre el texto con los bloques ASP neutralizados (ver
-  -- js_source), confinado a los <script>. Injection query vacía: el JS
-  -- puede traer regex/jsdoc/... inyectados (queries de nvim-treesitter)
-  -- que esta capa no usa y sólo costarían parseo. parse(true) porque
-  -- parse() a secas no parsea regiones no vacías (ver
+  -- js_source), confinado a los <script> y manejadores. Injection query
+  -- vacía: el JS puede traer regex/jsdoc/... inyectados (queries de
+  -- nvim-treesitter) que esta capa no usa y sólo costarían parseo.
+  -- parse(true) porque parse() a secas no parsea regiones no vacías (ver
   -- asp.symbols.collect_file).
   local lt = vim.treesitter.get_string_parser(source, 'javascript', {
     injections = { javascript = '' },
@@ -476,6 +553,19 @@ local function index_js(data, source, regions, blocks)
 
   local q = vim.treesitter.query.parse('javascript', JS_QUERY)
   local scopes, items = {}, {}
+  -- Un manejador es el cuerpo de una función: sus `var` y sus funciones no
+  -- son globales. Se abre como un scope más, sobre el rango de su región,
+  -- con la raíz de su árbol como nodo: esa raíz empieza en el primer token
+  -- de la región (o en su final, si no tiene ninguno), así que basta
+  -- buscar el manejador que la contiene.
+  local h = 1
+  for _, tree in ipairs(data.trees) do
+    local rb = start_byte_of(tree:root())
+    while handlers[h] and handlers[h][6] < rb do h = h + 1 end
+    if handlers[h] and handlers[h][3] <= rb then
+      table.insert(scopes, { node = tree:root(), sb = handlers[h][3], eb = handlers[h][6], handler = true })
+    end
+  end
   for _, tree in ipairs(data.trees) do
     for id, node in q:iter_captures(tree:root(), source) do
       local _, _, sb = node:start()
@@ -488,6 +578,31 @@ local function index_js(data, source, regions, blocks)
     end
   end
   index(data, scopes, items)
+end
+
+---Llena `data` con el JS de una página (el buffer o una incluida): sus
+---<script> de JS de cliente y sus manejadores de evento, cada uno en su
+---región, en orden del documento.
+---@param data table de new_data
+---@param html vim.treesitter.LanguageTree capa html, ya parseada
+---@param source integer|string bufnr o texto del archivo
+---@param blocks table[] de asp_blocks
+local function index_page(data, html, source, blocks)
+  local regions
+  regions, data.srcs = script_regions(html, source, blocks)
+  local handlers = handler_regions(html, source, blocks)
+  if #regions + #handlers == 0 then return end
+  -- Las regiones no se solapan: un valor de atributo está dentro de un tag
+  -- y un raw_text en el cuerpo de un <script>, y el ensanche de un
+  -- manejador sólo toma bloques ASP pegados a su valor. Ordenadas, sus
+  -- árboles dan las capturas en orden del documento, como pide index.
+  for _, r in ipairs(handlers) do table.insert(regions, { r }) end
+  table.sort(regions, function(a, b) return a[1][3] < b[1][3] end)
+
+  local text = type(source) == 'number'
+    and table.concat(vim.api.nvim_buf_get_lines(source, 0, -1, false), '\n')
+    or source
+  index_js(data, js_source(text, blocks), regions, blocks, handlers)
 end
 
 ---@param bufnr integer
@@ -503,13 +618,7 @@ local function build(bufnr)
 
   local data = new_data()
   if not html then return data end
-  local blocks = asp_blocks(root)
-  local regions
-  regions, data.srcs = script_regions(html, bufnr, blocks)
-  if #regions == 0 then return data end
-
-  local text = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), '\n')
-  index_js(data, js_source(text, blocks), regions, blocks)
+  index_page(data, html, bufnr, asp_blocks(root))
   return data
 end
 
@@ -546,20 +655,25 @@ end
 ---  * 'page': una página incluida (.asp/.inc/...), que es una plantilla:
 ---    se parsea la capa aspclassic, de ahí sólo la capa html confinada a
 ---    los `content` (sin vbscript ni las inyecciones js/css de html), y
----    el javascript confinado a sus <script>, con el mismo relleno de
----    bloques ASP que el buffer (js_source).
+---    el javascript confinado a sus <script> y sus manejadores de evento,
+---    con el mismo relleno de bloques ASP que el buffer (js_source).
 ---@param content string
 ---@param kind 'js'|'page'
 ---@return table data
 local function build_file(content, kind)
   local data = new_data()
   if kind == 'js' then
-    index_js(data, content, nil, {})
+    index_js(data, content, nil, {}, {})
     return detach(data)
   end
-  -- Sin <script> no hay nada que extraer: los includes de puro VBScript
-  -- (los más) no se parsean.
-  if not content:lower():find('<script', 1, true) then return data end
+  -- Sin <script>, manejadores de evento ni URLs `javascript:` no hay nada
+  -- que extraer: los includes de puro VBScript (los más) no se parsean. Un
+  -- falso positivo (`If online = 1` en VBScript) sólo cuesta el parseo.
+  local lower = content:lower()
+  if not (lower:find('<script', 1, true) or lower:find('javascript:', 1, true)
+      or lower:find('[%s"\'/]on%a+%s*=')) then
+    return data
+  end
 
   local tpl = vim.treesitter.get_string_parser(content, 'aspclassic')
   local troot = tpl:parse()[1]:root()
@@ -577,12 +691,7 @@ local function build_file(content, kind)
   })
   hp:set_included_regions({ content_nodes })
   hp:parse(true)
-  local blocks = asp_blocks(troot)
-  local regions
-  regions, data.srcs = script_regions(hp, content, blocks)
-  if #regions == 0 then return data end
-
-  index_js(data, js_source(content, blocks), regions, blocks)
+  index_page(data, hp, content, asp_blocks(troot))
   return detach(data)
 end
 
@@ -729,9 +838,9 @@ local function occurrence_at(data, position)
 end
 
 ---Declaración a la que resuelve `occ`: se suben sus scopes, del más
----interno al global (compartido por todos los <script> de la página),
----buscando el nombre en las declaraciones de cada uno y, si el scope es
----una function expression con nombre, en ese nombre después.
+---interno al global (compartido por todos los <script> y manejadores de
+---la página), buscando el nombre en las declaraciones de cada uno y, si
+---el scope es una function expression con nombre, en ese nombre después.
 ---
 ---Si `occ` es él mismo el nombre de una declaración, resuelve a la primera
 ---de su mismo binding: así un `var x` redeclarado resuelve al primero
