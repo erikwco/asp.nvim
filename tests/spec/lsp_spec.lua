@@ -107,18 +107,22 @@ describe('asp-ls', function()
   end)
 
   -- Nota: este spec pinnea el comportamiento determinista del lookup
-  -- confinado a la capa vbscript; el race original solo era observable
-  -- a escala real (decenas de árboles inyectados), no con este fixture.
-  it('definition en un bloque <script> cliente (JS/regex) devuelve nil de forma estable', function()
-    -- Regresión del bug de carrera: M.definition confinaba la búsqueda al
-    -- árbol vbscript inyectado; una posición dentro de <script> (capa
-    -- javascript/regex, no vbscript) no tiene definición VBScript posible y
-    -- debe devolver nil siempre, sin flakiness entre llamadas sucesivas.
+  -- confinado a un árbol propio por capa; el race original solo era
+  -- observable a escala real (decenas de árboles inyectados), no con este
+  -- fixture.
+  it('definition en un bloque <script> cliente (JS/regex) resuelve vía la capa JS de forma estable', function()
+    -- Regresión del bug de carrera: asp.symbols confina la búsqueda al árbol
+    -- vbscript inyectado (una posición en <script> no tiene definición
+    -- VBScript) y asp.js a su propio parser javascript, sin tocar el árbol
+    -- de inyecciones del highlighter. `foo` resuelve a su propia
+    -- declaración, siempre igual entre llamadas sucesivas.
     local pos = pos_of('function foo()')
     pos.character = pos.character + #('function ')
     for i = 1, 5 do
       local loc = definition_at(pos)
-      assert.is_nil(loc, 'llamada ' .. i .. ' de 5 devolvió non-nil')
+      assert.is_not_nil(loc, 'llamada ' .. i .. ' de 5 devolvió nil')
+      assert.are.equal(pos.line, loc.range.start.line, 'llamada ' .. i .. ' de 5')
+      assert.are.equal(pos.character, loc.range.start.character, 'llamada ' .. i .. ' de 5')
     end
   end)
 end)

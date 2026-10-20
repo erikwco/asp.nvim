@@ -8,19 +8,38 @@ M.handlers = {}
 
 M.handlers['textDocument/documentSymbol'] = function(params)
   local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
-  return require('asp.symbols').document_symbols(bufnr)
+  local syms = require('asp.symbols').document_symbols(bufnr)
+  -- Funciones y clases JS de los <script> (detail = 'javascript'), después
+  -- de las de VBScript.
+  vim.list_extend(syms, require('asp.js').document_symbols(bufnr) or {})
+  return syms
 end
 
+-- definition y references encadenan capas con `or`, en orden fijo
+-- (VBScript → JavaScript de cliente → páginas): cada capa devuelve nil cuando la
+-- posición no es suya y nunca lanza.
 M.handlers['textDocument/definition'] = function(params)
   local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
   local pos = params.position
   return require('asp.symbols').definition(bufnr, pos)
+    or require('asp.js').definition(bufnr, pos)
     or require('asp.pages').definition(bufnr, pos)
 end
 
+-- asp.symbols.references devuelve {} (no nil) cuando la posición no es
+-- VBScript: se normaliza a nil para que el `or` pase a la capa siguiente.
+local function nonempty(list)
+  if list and #list > 0 then return list end
+  return nil
+end
+
+-- Si ninguna capa resuelve, {} como antes de encadenarlas (no nil).
 M.handlers['textDocument/references'] = function(params)
   local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
-  return require('asp.symbols').references(bufnr, params.position)
+  local pos = params.position
+  return nonempty(require('asp.symbols').references(bufnr, pos))
+    or require('asp.js').references(bufnr, pos)
+    or {}
 end
 
 M.handlers['workspace/symbol'] = function(params)

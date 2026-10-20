@@ -29,6 +29,8 @@ servidor, HTML y JavaScript de cliente conviven en un mismo archivo .asp:
     `make generate` al desarrollar la gramática).
   - Parsers `html`, `javascript` y `css` (p. ej. nvim-treesitter) para
     las regiones HTML y el código de cliente en <script>/<style>.
+    `javascript` también alimenta la navegación JS (|asp-javascript|);
+    sin él esa capa queda inerte y `:checkhealth asp` lo advierte.
 
 ==============================================================================
 3. Instalación                                              *asp-instalacion*
@@ -64,7 +66,8 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
   definition ~
       Ir a la definición de Functions, Subs, Classes, variables y
       constantes, en el archivo actual y a través del grafo de
-      includes. Case-insensitive.
+      includes. Case-insensitive. En los <script> de cliente, ver
+      |asp-javascript|.
 
       Dentro de un literal entre comillas simples o dobles, abre el
       archivo referenciado en su primera línea. Admite `.asp`, `.inc`,
@@ -96,7 +99,9 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       Los símbolos locales se limitan a su propio scope.
 
   documentSymbol ~
-      Outline del archivo, con los miembros de clase anidados.
+      Outline del archivo, con los miembros de clase anidados. Las
+      funciones y clases globales de JavaScript van al final, con
+      detail `javascript`.
 
   workspace/symbol ~
       Búsqueda de símbolos en todo el proyecto.
@@ -141,6 +146,45 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       `<% If %>...<% End If %>` cruzando bloques); hover/definición/
       referencias de identificadores no resuelven ahí. Un `<%= %>` por
       línea sí funciona.
+
+                                                              *asp-javascript*
+JavaScript de cliente ~
+
+definition y references también resuelven los identificadores del
+JavaScript de cliente de los bloques <script> del archivo actual:
+
+  - Declaraciones: `function`, `class`, métodos de clase, `var`/`let`/
+    `const`, parámetros (incluido el de `x => ...`) y el nombre de una
+    function expression (visible sólo dentro de ella, y sombreado por
+    sus parámetros y locales homónimos). Case-sensitive, como
+    JavaScript.
+  - Scopes: el de cada función (declaración, expression, arrow o
+    método); fuera de toda función, el global, compartido por todos los
+    <script> de la página (como en el navegador). Gana la declaración
+    de la función más interna que envuelve el uso; si no hay, la
+    global.
+  - references devuelve la declaración y todos los usos que resuelven
+    a ella (incluida la `x` de `{ x }`); un local no se mezcla con un
+    homónimo de otra función. Un nombre sin declaración en la página
+    (`document`, `alert`, ...) no tiene definición ni referencias.
+  - Se ignoran `<script runat="server">` (JScript de servidor), los
+    `type` que no son JavaScript (`text/template`, ...) y el VBScript
+    de cliente (`<script language="VBScript">`).
+  - Un `<%= %>` dentro del JS se trata como un valor opaco y un
+    `<% %>` como espacio: el VBScript de adentro nunca se toma por JS,
+    tampoco un nombre pegado a él (`foo<%= n %>`).
+
+Límites:
+
+  - Sólo el archivo actual: no sigue `<script src>` ni los includes.
+  - `let`/`const` se tratan como `var` (scope de función, no de
+    bloque).
+  - Las propiedades no se resuelven (`obj.metodo`, `this.x`, jQuery
+    `$`...): no hay resolución por tipos ni objetos.
+  - No se recogen como declaración los nombres desestructurados
+    (`const { a } = o`), los parámetros con default o rest, el de
+    `catch (e)` ni la variable de `for (const x of xs)`.
+  - Sin hover ni completion para JavaScript.
 
 Salud: >
   :checkhealth asp

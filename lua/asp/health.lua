@@ -44,14 +44,29 @@ function M.check()
     end
   end
 
-  for _, lang in ipairs({ 'javascript', 'css' }) do
-    local ok, added = pcall(vim.treesitter.language.add, lang)
+  do
+    -- javascript alimenta además la capa de navegación JS (asp.js), que
+    -- sin el parser devuelve nil en silencio: este warning es el único
+    -- aviso de por qué definition/references no resuelven en <script>.
+    local ok, added = pcall(vim.treesitter.language.add, 'javascript')
     if ok and added then
-      health.ok(('parser %s encontrado (resaltado dentro de <script>/<style>)'):format(lang))
+      health.ok('parser javascript encontrado (resaltado y definición/referencias dentro de <script>)')
+    else
+      health.warn('parser javascript no encontrado', {
+        'Instálalo con nvim-treesitter (`:TSInstall javascript`) para resaltar el JavaScript '
+          .. 'del cliente y navegar sus definiciones/referencias en los <script>.',
+      })
+    end
+  end
+
+  do
+    local ok, added = pcall(vim.treesitter.language.add, 'css')
+    if ok and added then
+      health.ok('parser css encontrado (resaltado dentro de <style>)')
     else
       health.warn(
-        ('parser %s no encontrado'):format(lang),
-        { 'Instálalo con nvim-treesitter (`:TSInstall ' .. lang .. '`) para resaltar el JavaScript/CSS del cliente.' }
+        'parser css no encontrado',
+        { 'Instálalo con nvim-treesitter (`:TSInstall css`) para resaltar el CSS del cliente.' }
       )
     end
   end
