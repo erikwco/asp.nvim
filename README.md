@@ -190,11 +190,19 @@ if path then vim.cmd.find(vim.fn.fnameescape(path)) end
 > con la misma técnica (sólo html confinado y javascript, nunca
 > VBScript ni CSS) y se cachea por mtime. Con 20 includes de 250
 > funciones JS cada uno, la primera definición cross-file tarda ~150 ms
-> y las siguientes ~8 ms (casi todo es recorrer el grafo de includes).
-> La caché guarda hasta 64 archivos (descarta el usado hace más tiempo) y
-> olvida los borrados en la siguiente consulta; si el conjunto de una
-> página pasa de 64 archivos, la caché deja de servirle y cada consulta los
-> vuelve a leer y parsear.
+> y las siguientes ~0,5 ms. Al terminar cada consulta, la caché vuelve a
+> 64 archivos descartando los usados hace más tiempo, salvo los que usó
+> esa consulta: si fueron más de 64, los conserva todos. Olvida los
+> borrados en la siguiente consulta.
+>
+> El grafo de includes cachea las directivas de cada archivo por mtime y
+> tamaño, con el mismo criterio y un tope de 512 archivos: al terminar
+> cada consulta vuelve a 512, salvo que esa consulta haya recorrido más,
+> y entonces conserva todos los suyos. El destino de cada include se
+> resuelve en cada consulta, así que crear o borrar un archivo incluido
+> no requiere invalidar nada. En caliente, una definición cross-file con
+> 100 includes tarda ~1,8 ms en JS y ~1,7 ms en VBScript, frente a 115 y
+> 17 ms antes. [Mediciones](tests/bench/includes_graph.md).
 >
 > La primera búsqueda de usos de una página recorre y lee el sitio entero,
 > y puede tardar segundos. Las siguientes comprueban mtime y tamaño y solo

@@ -711,10 +711,8 @@ end
 -- hace más tiempo (LRU). Cada entrada guarda el rango de cada ocurrencia
 -- JS del archivo (un .js de 250 funciones ocupa ~1,2 MiB de Lua), y sin
 -- tope la caché crecía con cada archivo consultado en la sesión. 64 cubre
--- con holgura el conjunto de una página (sus `<script src>` y su grafo de
--- includes). Si una página lo supera, como cada consulta recorre el
--- conjunto en el mismo orden, cada archivo se expulsa antes de volver a
--- usarse: la caché deja de servirle y todo se relee de disco.
+-- el conjunto de casi cualquier página (sus `<script src>` y su grafo de
+-- includes); el de una página más grande no se expulsa (ver trim).
 local FILE_CACHE_MAX = 64
 
 -- ruta → {stamp, used, js?, page?}; `used` es el valor de `clock` en la
@@ -729,18 +727,25 @@ local function stamp_of(path)
   return st and (st.mtime.sec .. ':' .. st.mtime.nsec .. ':' .. st.size) or nil
 end
 
----Guarda `hit` en file_cache y, si se pasa de FILE_CACHE_MAX, expulsa la
----entrada usada hace más tiempo.
----@param path string
----@param hit table
-local function remember(path, hit)
-  file_cache[path] = hit
-  local count, lru = 0, nil
+---Cierra un recorrido de each_external que empezó con `clock` en `start`:
+---expulsa las entradas usadas hace más tiempo hasta volver a
+---FILE_CACHE_MAX, pero nunca una que usó ese recorrido. El tope efectivo
+---es el mayor entre FILE_CACHE_MAX y el conjunto del recorrido: con un
+---tope fijo, una página más grande expulsaba cada archivo antes de volver
+---a usarlo (cada consulta recorre el conjunto en el mismo orden) y todo se
+---releía de disco. Se recorta al terminar y no al guardar cada entrada
+---para que también vuelva al tope un recorrido que sólo encuentra
+---entradas cacheadas, y para hacerlo en una sola pasada.
+---@param start integer
+local function trim(start)
+  local count, old = 0, {}
   for p, e in pairs(file_cache) do
     count = count + 1
-    if not lru or e.used < file_cache[lru].used then lru = p end
+    if e.used < start then table.insert(old, p) end
   end
-  if count > FILE_CACHE_MAX then file_cache[lru] = nil end
+  if count <= FILE_CACHE_MAX then return end
+  table.sort(old, function(a, b) return file_cache[a].used < file_cache[b].used end)
+  for i = 1, math.min(count - FILE_CACHE_MAX, #old) do file_cache[old[i]] = nil end
 end
 
 ---Quita de file_cache los archivos que ya no existen. El resolver de rutas
@@ -771,7 +776,7 @@ local function file_data(path, kind)
     hit.used = clock
   else
     hit = { stamp = stamp, used = clock }
-    remember(path, hit)
+    file_cache[path] = hit
   end
   if hit[kind] == nil then
     local ok, data = pcall(function()
@@ -885,21 +890,8 @@ local function global_binding(data, name)
   return g and g[name]
 end
 
----Archivos externos cuyo JS global ve la página, en orden de prioridad de
----resolución: los `.js` de los `<script src>` del buffer, en orden del
----documento, y después cada include de includes.buffer_graph (su JS
----inline y luego sus `<script src>`, resueltos relativos al include). Un
----`src` externo (`http://`, CDN), inexistente o que no es `.js` se ignora.
----
----Cada archivo se carga recién al visitarlo: `visit` devuelve un valor no
----nil para cortar el recorrido (primer match de definition) y
----each_external lo devuelve.
----@param bufnr integer
----@param data table del buffer
----@param visit fun(uri: string, ext: table): any
----@return any
-local function each_external(bufnr, data, visit)
-  prune()
+-- Recorrido de each_external, sin el mantenimiento de file_cache.
+local function walk_externals(bufnr, data, visit)
   local pages = require('asp.pages')
   local seen = {}
   local function from_src(src, from)
@@ -928,6 +920,35 @@ local function each_external(bufnr, data, visit)
     end
   end
   return nil
+end
+
+---Archivos externos cuyo JS global ve la página, en orden de prioridad de
+---resolución: los `.js` de los `<script src>` del buffer, en orden del
+---documento, y después cada include de includes.buffer_graph (su JS
+---inline y luego sus `<script src>`, resueltos relativos al include). Un
+---`src` externo (`http://`, CDN), inexistente o que no es `.js` se ignora.
+---
+---Cada archivo se carga recién al visitarlo: `visit` devuelve un valor no
+---nil para cortar el recorrido (primer match de definition) y
+---each_external lo devuelve. Al terminar, también tras un corte, recorta
+---file_cache (ver trim).
+---@param bufnr integer
+---@param data table del buffer
+---@param visit fun(uri: string, ext: table): any
+---@return any
+local function each_external(bufnr, data, visit)
+  prune()
+  -- El inicio es local a cada recorrido: uno anidado no puede moverlo.
+  -- Ninguna ruta de producción anida recorridos (haría falta que `visit`
+  -- o pages.resolve volvieran a consultar); si pasara, el anidado
+  -- recortaría al terminar con su propio inicio y podría expulsar
+  -- archivos que el exterior ya visitó: el resultado no cambia, sólo se
+  -- releerían en la consulta siguiente. Si un error corta el recorrido,
+  -- no se recorta: lo hace la consulta siguiente.
+  local start = clock + 1
+  local hit = walk_externals(bufnr, data, visit)
+  trim(start)
+  return hit
 end
 
 local function definition(bufnr, position)

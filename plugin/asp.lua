@@ -40,6 +40,7 @@ vim.api.nvim_create_autocmd('BufWritePost', {
       require('asp.pages').invalidate(path)
       require('asp.symbols').invalidate(path)
       require('asp.js').invalidate(path)
+      require('asp.includes').invalidate(path)
       if vim.bo[args.buf].filetype == 'asp' then
         require('asp.diagnostics').refresh(args.buf)
       end
