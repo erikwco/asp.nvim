@@ -238,13 +238,18 @@ describe('asp.includes', function()
       local buf = vim.api.nvim_create_buf(false, true)
       vim.api.nvim_buf_set_name(buf, f1)
       vim.api.nvim_buf_set_lines(buf, 0, -1, false, files['f1.inc'])
+      -- El parser del buffer se crea antes de contar: al crearlo, Neovim
+      -- lee con io.open las queries de aspclassic, y en 0.10 las guarda en
+      -- una caché débil que el recolector puede vaciar en cualquier momento.
+      vim.treesitter.get_parser(buf, 'aspclassic'):parse()
       local queries = {
-        includes_of = function() return includes.includes_of(f1) end,
-        graph = function() return includes.graph(f1) end,
-        buffer_graph = function() return includes.buffer_graph(buf) end,
+        { 'includes_of', function() return includes.includes_of(f1) end },
+        { 'graph', function() return includes.graph(f1) end },
+        { 'buffer_graph', function() return includes.buffer_graph(buf) end },
       }
       local ok, err = pcall(function()
-        for name, query in pairs(queries) do
+        for _, q in ipairs(queries) do
+          local name, query = q[1], q[2]
           includes.graph(dir .. '/grande.asp')
           assert.are.equal(n + 1, #includes._cached_files(), name)
           local _, opens = counting_opens(query)
