@@ -9,6 +9,7 @@ CONTENIDO                                                       *asp-contents*
   4. Configuración ........................... |asp-setup|
   5. Funcionalidades ......................... |asp-funcionalidades|
   6. Licencias ............................... |asp-licencias|
+  7. Cambios ................................. |asp-cambios|
 
 ==============================================================================
 1. Introducción                                                   *asp-intro*
@@ -150,6 +151,32 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       strings que no son rutas, busca quién usa el archivo abierto.
       Los símbolos VBScript conservan la precedencia.
 
+  documentHighlight ~
+      Ocurrencias del símbolo VBScript o JavaScript bajo el cursor en el
+      buffer actual. Respeta el scope de references y descarta las
+      ocurrencias de otros archivos. No consulta usos de páginas.
+      La declaración se marca como Write y los usos como Read; si no
+      se resuelve la declaración, se usa Text. Sin símbolo devuelve
+      una lista vacía.
+
+      Activá el resaltado desde tu plugin de LSP o llamá a
+      vim.lsp.buf.document_highlight() en CursorHold. Para limpiar las
+      marcas al mover el cursor, entrar en Insert o salir del buffer: >lua
+        local group = vim.api.nvim_create_augroup('asp_document_highlight', {
+          clear = true,
+        })
+        vim.api.nvim_create_autocmd('CursorHold', {
+          group = group,
+          pattern = '*.asp',
+          callback = vim.lsp.buf.document_highlight,
+        })
+        local clear = { 'CursorMoved', 'InsertEnter', 'BufLeave' }
+        vim.api.nvim_create_autocmd(clear, {
+          group = group,
+          pattern = '*.asp',
+          callback = vim.lsp.buf.clear_references,
+        })
+<
   documentSymbol ~
       Outline del archivo, con los miembros de clase anidados. Las
       funciones y clases globales de JavaScript van al final, con
@@ -344,5 +371,22 @@ Salud: >
 El plugin (Lua, gramática aspclassic, queries) es MIT. El directorio
 `grammars/vbscript/` es GPL-3.0 (fork de tree-sitter-vba); ver
 `grammars/vbscript/NOTICE.md`.
+
+==============================================================================
+7. Cambios                                                       *asp-cambios*
+
+0.5.0 → 0.6.0 ~
+
+  - Navegación JavaScript en <script>, archivos .js e includes, con scopes
+    locales y globales compartidos por la página.
+  - Definición y referencias en manejadores on* y URLs javascript:.
+  - Apertura de páginas y recursos por literal, gf y CTRL-W f; búsqueda
+    de enlaces e includes que usan una página en todo el sitio.
+  - documentHighlight para VBScript y JavaScript del buffer actual.
+  - Compatibilidad verificada con Neovim 0.10.4 y CI en 0.10.4, estable
+    y nightly sobre Linux y macOS.
+  - Cachés de archivos JS y de candidatos para usos de páginas, con
+    invalidación al guardar y depuración de archivos borrados.
+  - Demos regeneradas y un cuarto GIF de navegación JS y páginas.
 
  vim:tw=78:ts=8:ft=help:norl:
