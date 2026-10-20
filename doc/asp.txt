@@ -177,11 +177,14 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       limitado a VBScript, sin parsear sus capas HTML, JS o CSS.
 
       El grafo de includes cachea las directivas de cada archivo por
-      mtime y tamaño, hasta 512 archivos, y resuelve sus destinos en cada
-      consulta: crear o borrar un archivo incluido no requiere invalidar
-      nada. En caliente, una definición cross-file con 100 includes tarda
-      ~1,8 ms en JS y ~1,7 ms en VBScript, frente a 115 y 17 ms antes.
-      Detalles en tests/bench/includes_graph.md.
+      mtime y tamaño y resuelve sus destinos en cada consulta: crear o
+      borrar un archivo incluido no requiere invalidar nada. Al terminar
+      cada consulta, la caché vuelve a 512 archivos descartando los
+      usados hace más tiempo, salvo los que recorrió esa consulta: si
+      fueron más de 512, los conserva todos para no releerlos en la
+      siguiente. En caliente, una definición cross-file con 100
+      includes tarda ~1,8 ms en JS y ~1,7 ms en VBScript, frente a 115 y
+      17 ms antes. Detalles en tests/bench/includes_graph.md.
 
       La primera búsqueda de usos de una página lee todo el sitio y puede
       tardar segundos. Las siguientes comprueban mtime y tamaño y solo
@@ -303,10 +306,11 @@ también dentro de los atributos de evento `on*` y de las URLs
     references reúne todas esas declaraciones y sus usos.
   - Los archivos externos se leen de disco y se cachean por mtime: sólo
     se parsean html (confinado a la plantilla) y javascript, nunca
-    VBScript ni CSS. La caché guarda hasta 64 archivos, o todos los de
-    la página si son más: al llenarse descarta el usado hace más tiempo,
-    pero nunca uno de la consulta en curso. Un archivo borrado sale de
-    ella en la siguiente consulta entre archivos.
+    VBScript ni CSS. Al terminar cada consulta entre archivos, la caché
+    vuelve a 64 archivos descartando los usados hace más tiempo, salvo
+    los que usó esa consulta: si fueron más de 64, los conserva todos.
+    Un archivo borrado sale de ella en la siguiente consulta entre
+    archivos.
 
 Límites:
 

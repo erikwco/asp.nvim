@@ -91,8 +91,15 @@ directivas por archivo (parte A) elimina esas lecturas. Lo que queda en
 Con 100 includes JS, la caché de archivos JS (tope fijo de 64) se vaciaba
 en cada recorrido: cada archivo se expulsaba antes de volver a usarse y
 se releía y reparseaba su JavaScript. Por eso "solo A" sigue en 95 ms con
-100 lecturas. Con la parte B, la caché no expulsa archivos de la consulta
-en curso y el tope efectivo pasa a ser el tamaño del conjunto.
+100 lecturas. Con la parte B, la caché se recorta al terminar cada
+consulta sin expulsar ningún archivo que esa consulta usó, así que el tope
+efectivo pasa a ser el tamaño del conjunto.
+
+Las tablas se midieron con el recorte hecho al guardar cada entrada; la
+segunda ronda de revisión lo pasó al final de la consulta. Cinco
+procesos de comprobación con ese cambio, sin alternar con las otras
+variantes, dieron medianas de 0,46, 1,64, 1,58, 1,63 y 0,55 ms en los
+cinco casos, en el orden de la tabla, y ninguna lectura.
 
 `buffer_graph` sigue siendo entre el 54 y el 66 % de la consulta en
 caliente, pero sobre un total entre 6,5 y 68 veces menor. Las diferencias entre "solo A" y
