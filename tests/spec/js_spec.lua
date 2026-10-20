@@ -219,6 +219,141 @@ describe('asp.js', function()
     assert.is_true(rok)
     assert.is_nil(refs)
   end)
+
+  it('la falta de parser no se cachea: resuelve en cuanto aparece, sin editar', function()
+    local add = vim.treesitter.language.add
+    vim.treesitter.language.add = function(lang, ...)
+      if lang == 'javascript' then error('no hay parser') end
+      return add(lang, ...)
+    end
+    local ok, loc = pcall(js.definition, 0, pos_in('inicializar({ inicio', 'inicializar'))
+    vim.treesitter.language.add = add
+    assert.is_true(ok)
+    assert.is_nil(loc)
+    assert.are.equal(line_of('function inicializar('),
+      def_line('inicializar({ inicio', 'inicializar'))
+  end)
+end)
+
+describe('asp.js casos borde', function()
+  local js = require('asp.js')
+
+  local function setup(lines)
+    vim.cmd('enew!')
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, lines)
+    vim.bo.filetype = 'asp'
+  end
+
+  after_each(function()
+    vim.cmd('bwipeout!')
+  end)
+
+  -- Posición de la n-ésima aparición de `word` en la línea que contiene `text`.
+  local function nth(text, word, n)
+    local p = pos_of(text)
+    local line = vim.api.nvim_buf_get_lines(0, p.line, p.line + 1, false)[1]
+    local col = 0
+    for _ = 1, n do
+      col = assert(line:find(word, col + 1, true), word .. ' no aparece ' .. n .. ' veces')
+    end
+    return { line = p.line, character = col - 1 }
+  end
+
+  local function def_pos(pos)
+    local loc = js.definition(0, pos)
+    return loc and loc.range.start
+  end
+
+  it('un identificador pegado a un <%= %> es VBScript aunque coincida con uno real', function()
+    setup({
+      '<script>',
+      'var foo______ = 1;',
+      'foo<%=x%>();',
+      'var bar<%= sufijo %> = 1;',
+      'bar<%= sufijo %>++;',
+      '</script>',
+    })
+    -- `foo<%=x%>` se parsea como `foo______`, homónimo del `var` real.
+    for _, pos in ipairs({
+      pos_in('foo<%=x%>', 'x%>'),
+      pos_in('foo<%=x%>', 'foo'),
+      pos_in('bar<%= sufijo %>++', 'sufijo'),
+      pos_in('bar<%= sufijo %>++', 'bar'),
+    }) do
+      assert.is_nil(js.definition(0, pos))
+      assert.is_nil(js.references(0, pos))
+    end
+    assert.are.equal(1, #js.references(0, pos_in('var foo______', 'foo______')))
+    for _, e in ipairs(js.collect(0)) do
+      assert.is_nil(e.name:match('^bar'), 'declaración pegada a un <%= %>: ' .. e.name)
+    end
+  end)
+
+  it('los parámetros y locales sombrean el nombre de una function expression', function()
+    setup({
+      '<script>',
+      'const f = function inner(inner) { return inner; };',
+      'const g = function propio() { var propio = 1; return propio; };',
+      '</script>',
+    })
+    local name, param, use = nth('const f', 'inner', 1), nth('const f', 'inner', 2), nth('const f', 'inner', 3)
+    assert.are.same(param, def_pos(use))
+    assert.are.equal(2, #js.references(0, use))
+    -- el nombre mismo sigue resolviendo a la función
+    assert.are.same(name, def_pos(name))
+    assert.are.equal(1, #js.references(0, name))
+    assert.are.same(nth('const g', 'propio', 2), def_pos(nth('const g', 'propio', 3)))
+  end)
+
+  it('la x de { x } es un uso de la variable x', function()
+    setup({
+      '<script>',
+      'const x = 1;',
+      'const o = { x };',
+      'console.log(x);',
+      '</script>',
+    })
+    assert.are.same(pos_in('const x', 'x'), def_pos(pos_in('const o = { x }', 'x')))
+    local lines = {}
+    for _, r in ipairs(js.references(0, pos_in('const x', 'x'))) do
+      lines[r.range.start.line] = true
+    end
+    assert.are.same({ [1] = true, [2] = true, [3] = true }, lines)
+  end)
+
+  it('un nombre sin declaración en la página no tiene definición ni referencias', function()
+    setup({
+      '<script>',
+      'function a() { unknown(); }',
+      'function b() { unknown(); }',
+      '</script>',
+    })
+    assert.is_nil(js.definition(0, pos_in('function a', 'unknown')))
+    assert.is_nil(js.references(0, pos_in('function a', 'unknown')))
+  end)
+
+  it('references no crece con el número de declaraciones homónimas', function()
+    -- 2900 funciones con un parámetro `data` cada una (8700 líneas).
+    local lines = { '<script>' }
+    for i = 1, 2900 do
+      lines[#lines + 1] = 'function f' .. i .. '(data) {'
+      lines[#lines + 1] = '  consume(data); return data;'
+      lines[#lines + 1] = '}'
+    end
+    lines[#lines + 1] = '</script>'
+    setup(lines)
+    local pos = { line = 3 * 1449 + 2, character = #'  consume(' }
+    assert.are.equal(pos.line - 1, js.definition(0, pos).range.start.line) -- caché caliente
+
+    local t0 = vim.uv.hrtime()
+    local refs = js.references(0, pos)
+    local ms = (vim.uv.hrtime() - t0) / 1e6
+    assert.are.equal(3, #refs)
+    -- Con la resolución cuadrática tardaba ~1,1 s en una máquina de
+    -- desarrollo; con el índice por scope, ~1 ms. Umbral holgado para
+    -- runners lentos de CI.
+    assert.is_true(ms < 250, ('references tardó %.1f ms'):format(ms))
+  end)
 end)
 
 describe('asp-ls JavaScript', function()
