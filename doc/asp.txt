@@ -173,10 +173,32 @@ JavaScript de cliente de los bloques <script> del archivo actual:
   - Un `<%= %>` dentro del JS se trata como un valor opaco y un
     `<% %>` como espacio: el VBScript de adentro nunca se toma por JS,
     tampoco un nombre pegado a él (`foo<%= n %>`).
+  - Entre archivos: el scope global de la página suma las
+    declaraciones globales de los `.js` de sus `<script src>` (rutas
+    relativas o con `/` inicial, como |asp-funcionalidades|) y de los
+    <script> de las páginas incluidas con `<!--#include-->`, junto con
+    los `<script src>` de esos includes (relativos al include). Si el
+    buffer no declara el nombre en ninguno de sus scopes, gana el
+    primero que lo declare en este orden: los `<script src>` del
+    buffer, en orden del documento, y luego los includes en el orden
+    del grafo (su JS inline antes que sus `<script src>`). Los locales
+    de otro archivo no son visibles desde la página.
+  - references reúne los usos del buffer y de esos archivos que
+    resuelven a la misma declaración; en cada archivo sus propios
+    locales sombrean igual que en el buffer.
+  - Los archivos externos se leen de disco y se cachean por mtime: sólo
+    se parsean html (confinado a la plantilla) y javascript, nunca
+    VBScript ni CSS.
 
 Límites:
 
-  - Sólo el archivo actual: no sigue `<script src>` ni los includes.
+  - Entre archivos sólo se ven los globales. Si dos archivos declaran
+    el mismo global, definition y references siguen sólo al de mayor
+    prioridad (en el navegador serían la misma variable).
+  - Se ignoran los `src` externos (`http://`, CDN), los inexistentes y
+    los armados con `<%= %>`. No se siguen `import`/`export`.
+  - Abrir un `.js` suelto no activa asp-ls: ahí va el LSP de
+    JavaScript del usuario.
   - `let`/`const` se tratan como `var` (scope de función, no de
     bloque).
   - Las propiedades no se resuelven (`obj.metodo`, `this.x`, jQuery
