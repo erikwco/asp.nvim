@@ -56,20 +56,26 @@ local function extract(root_node, source)
   return out
 end
 
----Compartida con asp.pages para que ambas navegaciones usen la misma raíz
----y comprueben el destino con las mismas reglas.
+---Normaliza la ruta sin exigir que el destino exista todavía.
+---@param item table {kind, path_text} con separadores ya normalizados
+---@param from_abs string
+---@param root? string|false raíz virtual ya calculada; false si no hay
+---@return string|nil
+function M.candidate_for(item, from_abs, root)
+  if item.kind == 'virtual' then
+    if root == nil then root = M.virtual_root_for(from_abs) end
+    if not root then return nil end
+    return norm(root .. '/' .. item.path_text)
+  end
+  return norm(vim.fs.dirname(from_abs) .. '/' .. item.path_text)
+end
+
 ---@param item table {kind, path_text} con separadores ya normalizados
 ---@param from_abs string
 ---@return string|nil
 function M.resolve_one(item, from_abs)
-  local candidate
-  if item.kind == 'virtual' then
-    local root = M.virtual_root_for(from_abs)
-    if not root then return nil end
-    candidate = norm(root .. '/' .. item.path_text)
-  else
-    candidate = norm(vim.fs.dirname(from_abs) .. '/' .. item.path_text)
-  end
+  local candidate = M.candidate_for(item, from_abs)
+  if not candidate then return nil end
   local stat = vim.uv.fs_stat(candidate)
   return (stat and stat.type == 'file') and candidate or nil
 end
