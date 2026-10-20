@@ -1,6 +1,8 @@
 -- Capa JavaScript de cliente de asp-ls: definición y referencias de los
 -- identificadores de los bloques <script> del buffer, con el mismo contrato
--- que asp.symbols (Location / lista de Location / nil).
+-- que asp.symbols (Location / lista de Location / nil). El scope global de
+-- la página se extiende con las declaraciones globales de los `.js` de sus
+-- `<script src>` y del JS de las páginas incluidas (ver each_external).
 --
 -- Dos decisiones de diseño, ambas por determinismo:
 --
@@ -50,7 +52,10 @@ local JS_TYPES = {
   ['text/x-ecmascript'] = true,
 }
 
-local SCRIPT_QUERY = [[ (script_element (start_tag) @tag (raw_text) @body) ]]
+-- Todo <script>, también los de `src` (sin raw_text): el cuerpo se busca
+-- entre los hijos (ver script_regions).
+local SCRIPT_QUERY = [[ (script_element (start_tag) @tag) @script ]]
+local CONTENT_QUERY = [[ (content) @content ]]
 --  * @scope: los nodos que abren un scope. let/const se tratan como var
 --    (function-scoped, no block-scoped): límite documentado.
 --  * @id: los identificadores resolubles. shorthand_property_identifier es
@@ -94,122 +99,35 @@ local function range_contains(node, row, col)
   return true
 end
 
----¿El <script> de `tag` es JavaScript de cliente? Excluye el JScript de
----servidor (`runat="server"`), los type que no son JS (`text/template`,
----...) y, sin type, el `language` legacy que no lo es (`language="VBScript"`
----es VBScript de cliente de IE: HTML lo trata como type `text/vbscript`).
----@param tag TSNode start_tag
----@param bufnr integer
----@return boolean
-local function is_client_js(tag, bufnr)
-  local attrs = {}
-  for child in tag:iter_children() do
-    if child:type() == 'attribute' then
-      local name, value
-      for part in child:iter_children() do
-        local t = part:type()
-        if t == 'attribute_name' then
-          name = vim.treesitter.get_node_text(part, bufnr):lower()
-        elseif t == 'attribute_value' then
-          value = vim.treesitter.get_node_text(part, bufnr)
-        elseif t == 'quoted_attribute_value' then
-          local inner = part:named_child(0)
-          value = inner and vim.treesitter.get_node_text(inner, bufnr) or ''
-        end
-      end
-      -- Atributo repetido: HTML se queda con el primero.
-      if name and attrs[name] == nil then
-        attrs[name] = vim.trim(value or ''):lower()
-      end
-    end
-  end
-
-  if attrs.runat == 'server' then return false end
-  local mime = attrs.type
-  if mime == nil and attrs.language and attrs.language ~= '' then
-    mime = 'text/' .. attrs.language
-  end
-  if mime == nil then return true end
-  mime = vim.trim(mime:match('^[^;]*'))
-  return JS_TYPES[mime] == true or mime:match('^text/javascript1%.[0-5]$') ~= nil
+local function start_byte_of(node)
+  local _, _, b = node:start()
+  return b
 end
 
----Regiones (una por <script> de JS de cliente) para el parser javascript:
----el rango del `raw_text` de cada bloque.
----
----Una región por <script> (no una sola combinada): un error de sintaxis en
----un bloque no altera el parseo de los siguientes, igual que en el
----navegador. El scope global compartido entre bloques se resuelve después,
----en resolve().
----@param html vim.treesitter.LanguageTree capa html, ya parseada
----@param bufnr integer
----@return Range6[][]
-local function script_regions(html, bufnr)
-  local regions = {}
-  local sq = vim.treesitter.query.parse('html', SCRIPT_QUERY)
-  for _, tree in pairs(html:trees()) do
-    for _, match in sq:iter_matches(tree:root(), bufnr) do
-      local tag, body
-      for id, nodes in pairs(match) do
-        -- Neovim 0.10 entrega un nodo por captura; 0.11+ una lista.
-        if type(nodes) ~= 'table' then nodes = { nodes } end
-        if sq.captures[id] == 'tag' then tag = nodes[1] end
-        if sq.captures[id] == 'body' then body = nodes[1] end
-      end
-      if tag and body and is_client_js(tag, bufnr) then
-        table.insert(regions, { { body:range(true) } })
-      end
-    end
-  end
-  return regions
-end
-
----Texto del buffer tal como lo ve el parser javascript: cada bloque ASP de
----la plantilla (todo hijo que no es `content`) se reemplaza byte a byte,
----conservando los saltos de línea, por un relleno de la misma longitud, así
----las posiciones coinciden con las del buffer:
----
----  * `<%= x %>` → `________`, un identificador de relleno. Un `<%= %>` casi
----    siempre es un VALOR dentro del JS (`var n = <%= x %>;`, `f(<%= a %>)`,
----    `"<%= s %>"`), y con un identificador en su lugar el JS parsea limpio.
----    Con el texto crudo, `<%` se lee como JSX y el error se traga el resto
----    del bloque; con blancos, `var n = ;` hace que la recuperación de
----    errores tome la `function` siguiente como el valor de `n` (y deje de
----    ser una declaración global).
----  * `<% ... %>` y las directivas → blancos: son sentencias VBScript
----    (`<% If x Then %>...<% End If %>`) que no aportan nada al JS.
----
----Devuelve también los intervalos de bytes `{inicio, fin}` (fin exclusivo)
----de todos los bloques ASP, en orden del documento: un identificador que se
----cruza con alguno es VBScript, entero (el relleno de un `<%= %>`) o en
----parte (`foo<%= x %>` se parsea como el identificador `foo________`), y se
----descarta (ver overlaps_asp).
----@param bufnr integer
+---Intervalos de bytes `{inicio, fin, output}` (fin exclusivo) de los
+---bloques ASP de la plantilla, en orden del documento: todo hijo de la raíz
+---que no es `content`; `output` marca los `<%= %>`. La capa html sólo ve
+---los `content`, así que un nodo html que se cruza con alguno se armó con
+---ASP (ver script_attrs), y en el javascript un identificador que se cruza
+---con alguno es VBScript (ver js_source y overlaps_asp).
 ---@param root TSNode raíz de la plantilla aspclassic
----@return string source, integer[][] blocks
-local function js_source(bufnr, root)
-  local text = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), '\n')
-  local parts, blocks, prev = {}, {}, 0
+---@return table[] blocks
+local function asp_blocks(root)
+  local blocks = {}
   for i = 0, root:named_child_count() - 1 do
     local child = root:named_child(i)
     if child:type() ~= 'content' then
       local _, _, sb, _, _, eb = child:range(true)
-      local piece = text:sub(sb + 1, eb)
-      local fill = child:type() == 'output_directive' and '_' or ' '
-      table.insert(blocks, { sb, eb })
-      table.insert(parts, text:sub(prev + 1, sb))
-      table.insert(parts, (piece:gsub('[^\n]', fill)))
-      prev = eb
+      table.insert(blocks, { sb, eb, output = child:type() == 'output_directive' })
     end
   end
-  table.insert(parts, text:sub(prev + 1))
-  return table.concat(parts), blocks
+  return blocks
 end
 
 ---¿El tramo de bytes [sb, eb) se cruza con algún bloque ASP? Los bloques
 ---están ordenados y no se solapan, así que basta mirar el último que
 ---empieza antes de `eb` (búsqueda binaria).
----@param blocks integer[][] de js_source
+---@param blocks table[] de asp_blocks
 ---@param sb integer
 ---@param eb integer
 ---@return boolean
@@ -224,6 +142,157 @@ local function overlaps_asp(blocks, sb, eb)
     end
   end
   return last ~= nil and blocks[last][2] > sb
+end
+
+---Atributos del start_tag de un <script>: nombre en minúsculas → valor sin
+---comillas ni espacios exteriores. Atributo repetido: HTML se queda con el
+---primero.
+---
+---También devuelve el conjunto de nombres de los atributos que se arman
+---con ASP. Eso se decide sobre el rango del `attribute` completo, no sobre
+---el texto del valor: el parser html no ve los bloques ASP, así que en
+---`src="<%= base %>a.js"` el `attribute_value` interior es sólo `a.js` y
+---parecería estático. Sin comillas el valor sigue hasta el primer blanco o
+---`>`: un bloque pegado a su final (`src=a.js<%= v %>`) también es parte
+---del valor, aunque el `attribute` termine justo donde empieza el bloque.
+---@param tag TSNode start_tag
+---@param source integer|string bufnr o texto del archivo
+---@param blocks table[] de asp_blocks
+---@return table<string, string> attrs, table<string, true> dynamic
+local function script_attrs(tag, source, blocks)
+  local attrs, dynamic = {}, {}
+  for child in tag:iter_children() do
+    if child:type() == 'attribute' then
+      local name, value, quoted
+      for part in child:iter_children() do
+        local t = part:type()
+        if t == 'attribute_name' then
+          name = vim.treesitter.get_node_text(part, source):lower()
+        elseif t == 'attribute_value' then
+          value = vim.treesitter.get_node_text(part, source)
+        elseif t == 'quoted_attribute_value' then
+          local inner = part:named_child(0)
+          value = inner and vim.treesitter.get_node_text(inner, source) or ''
+          quoted = true
+        end
+      end
+      if name and attrs[name] == nil then
+        attrs[name] = vim.trim(value or '')
+        local _, _, sb, _, _, eb = child:range(true)
+        if overlaps_asp(blocks, sb, (value and not quoted) and eb + 1 or eb) then
+          dynamic[name] = true
+        end
+      end
+    end
+  end
+  return attrs, dynamic
+end
+
+---¿Los atributos son los de un <script> de JavaScript de cliente? Excluye
+---el JScript de servidor (`runat="server"`), los type que no son JS
+---(`text/template`, ...) y, sin type, el `language` legacy que no lo es
+---(`language="VBScript"` es VBScript de cliente de IE: HTML lo trata como
+---type `text/vbscript`).
+---@param attrs table<string, string> de script_attrs
+---@return boolean
+local function is_client_js(attrs)
+  if (attrs.runat or ''):lower() == 'server' then return false end
+  local mime = attrs.type and attrs.type:lower()
+  if mime == nil and attrs.language and attrs.language ~= '' then
+    mime = 'text/' .. attrs.language:lower()
+  end
+  if mime == nil then return true end
+  mime = vim.trim(mime:match('^[^;]*'))
+  return JS_TYPES[mime] == true or mime:match('^text/javascript1%.[0-5]$') ~= nil
+end
+
+---Regiones (una por <script> de JS de cliente) para el parser javascript:
+---el rango del `raw_text` de cada bloque. También devuelve los `src` de
+---esos <script>, en orden del documento y sin resolver. Un `src` armado
+---con ASP (`<%= base %>a.js`) se resuelve en runtime: no se puede seguir y
+---se omite.
+---
+---Una región por <script> (no una sola combinada): un error de sintaxis en
+---un bloque no altera el parseo de los siguientes, igual que en el
+---navegador. El scope global compartido entre bloques se resuelve después,
+---en resolve().
+---@param html vim.treesitter.LanguageTree capa html, ya parseada
+---@param source integer|string bufnr o texto del archivo
+---@param blocks table[] de asp_blocks
+---@return Range6[][] regions, string[] srcs
+local function script_regions(html, source, blocks)
+  local regions, srcs = {}, {}
+  local sq = vim.treesitter.query.parse('html', SCRIPT_QUERY)
+  local found = {}
+  for _, tree in pairs(html:trees()) do
+    for _, match in sq:iter_matches(tree:root(), source) do
+      local tag, script
+      for id, nodes in pairs(match) do
+        -- Neovim 0.10 entrega un nodo por captura; 0.11+ una lista.
+        if type(nodes) ~= 'table' then nodes = { nodes } end
+        if sq.captures[id] == 'tag' then tag = nodes[1] end
+        if sq.captures[id] == 'script' then script = nodes[1] end
+      end
+      if tag and script then
+        table.insert(found, { tag = tag, script = script, sb = start_byte_of(script) })
+      end
+    end
+  end
+  -- La capa html del buffer puede traer varios árboles (pairs no tiene
+  -- orden): el orden de los src es el de prioridad de resolución.
+  table.sort(found, function(a, b) return a.sb < b.sb end)
+
+  for _, f in ipairs(found) do
+    local attrs, dynamic = script_attrs(f.tag, source, blocks)
+    if is_client_js(attrs) then
+      for child in f.script:iter_children() do
+        if child:type() == 'raw_text' then
+          table.insert(regions, { { child:range(true) } })
+        end
+      end
+      if attrs.src and attrs.src ~= '' and not dynamic.src then
+        table.insert(srcs, attrs.src)
+      end
+    end
+  end
+  return regions, srcs
+end
+
+---Texto tal como lo ve el parser javascript: cada bloque ASP de la
+---plantilla (todo hijo que no es `content`) se reemplaza byte a byte,
+---conservando los saltos de línea, por un relleno de la misma longitud, así
+---las posiciones coinciden con las del texto original:
+---
+---  * `<%= x %>` → `________`, un identificador de relleno. Un `<%= %>` casi
+---    siempre es un VALOR dentro del JS (`var n = <%= x %>;`, `f(<%= a %>)`,
+---    `"<%= s %>"`), y con un identificador en su lugar el JS parsea limpio.
+---    Con el texto crudo, `<%` se lee como JSX y el error se traga el resto
+---    del bloque; con blancos, `var n = ;` hace que la recuperación de
+---    errores tome la `function` siguiente como el valor de `n` (y deje de
+---    ser una declaración global).
+---  * `<% ... %>` y las directivas → blancos: son sentencias VBScript
+---    (`<% If x Then %>...<% End If %>`) que no aportan nada al JS.
+---
+---Un identificador que se cruza con algún bloque es VBScript, entero (el
+---relleno de un `<%= %>`) o en parte (`foo<%= x %>` se parsea como el
+---identificador `foo________`), y se descarta (ver index_js).
+---
+---Sirve igual para el buffer (sus líneas unidas con `\n`) y para un archivo
+---de disco (su contenido), con los bloques de la plantilla parseada de ese
+---mismo texto.
+---@param text string
+---@param blocks table[] de asp_blocks sobre `text`
+---@return string source
+local function js_source(text, blocks)
+  local parts, prev = {}, 0
+  for _, b in ipairs(blocks) do
+    local sb, eb = b[1], b[2]
+    table.insert(parts, text:sub(prev + 1, sb))
+    table.insert(parts, (text:sub(sb + 1, eb):gsub('[^\n]', b.output and '_' or ' ')))
+    prev = eb
+  end
+  table.insert(parts, text:sub(prev + 1))
+  return table.concat(parts)
 end
 
 ---Clasifica un `identifier` como nombre de declaración. Devuelve kind, el
@@ -268,11 +337,6 @@ local function classify(n)
     return 13, n, 'inner'
   end
   return nil
-end
-
-local function start_byte_of(node)
-  local _, _, b = node:start()
-  return b
 end
 
 ---Llena los índices de `data` en un solo barrido de las capturas, en orden
@@ -344,6 +408,7 @@ local function index(data, scopes, items)
           node = it.node,
           decl = decl,
           scope = s and s.node,
+          global = key == 0,
           slot = slots[key],
         }
         e.slot[name] = e.slot[name] or e
@@ -357,22 +422,8 @@ local function index(data, scopes, items)
   end
 end
 
----@param bufnr integer
----@return table|nil data
-local function build(bufnr)
-  -- Sin parser javascript la capa queda inerte; :checkhealth asp lo avisa.
-  -- Neovim 0.10 lanza si el parser falta y no devuelve nada si lo carga;
-  -- 0.11+ no lanza y devuelve true o nil + mensaje.
-  local ok, added = pcall(vim.treesitter.language.add, 'javascript')
-  if not ok or (added == nil and vim.fn.has('nvim-0.11') == 1) then return nil end
-
-  local parser = vim.treesitter.get_parser(bufnr)
-  -- parse(true): la capa html es una inyección y sólo existe con las
-  -- injections resueltas (igual que en asp.symbols.identifier_at).
-  local root = parser:parse(true)[1]:root()
-  local html = parser:children().html
-
-  local data = {
+local function new_data()
+  return {
     trees = {},
     decls = {},       -- declaraciones, en orden del documento
     occurrences = {}, -- nombre → ocurrencias (usos y declaraciones)
@@ -380,13 +431,27 @@ local function build(bufnr)
     bindings = {},    -- clave de scope → nombre → declaración
     fnames = {},      -- ídem, sólo los nombres de function expression
     parent = {},      -- clave de scope → clave del que lo envuelve
+    srcs = {},        -- `src` de los <script>, sin resolver (externals)
   }
-  local regions = html and script_regions(html, bufnr) or {}
-  if #regions == 0 then return data end
+end
 
-  local source, blocks = js_source(bufnr, root)
+---Sin parser javascript la capa queda inerte; :checkhealth asp lo avisa.
+---Neovim 0.10 lanza si el parser falta y no devuelve nada si lo carga;
+---0.11+ no lanza y devuelve true o nil + mensaje.
+---@return boolean
+local function has_js_parser()
+  local ok, added = pcall(vim.treesitter.language.add, 'javascript')
+  return ok and not (added == nil and vim.fn.has('nvim-0.11') == 1)
+end
+
+---Parsea `source` con un parser javascript propio y llena los índices de
+---`data`.
+---@param data table de new_data
+---@param source string texto de js_source (o un .js entero)
+---@param regions Range6[][]|nil nil: todo el texto (un .js)
+---@param blocks table[] de asp_blocks ({} en un .js)
+local function index_js(data, source, regions, blocks)
   data.source = source
-
   -- Parser STRING sobre el texto con los bloques ASP neutralizados (ver
   -- js_source), confinado a los <script>. Injection query vacía: el JS
   -- puede traer regex/jsdoc/... inyectados (queries de nvim-treesitter)
@@ -396,7 +461,7 @@ local function build(bufnr)
   local lt = vim.treesitter.get_string_parser(source, 'javascript', {
     injections = { javascript = '' },
   })
-  lt:set_included_regions(regions)
+  if regions then lt:set_included_regions(regions) end
   lt:parse(true)
   -- Referencia al LanguageTree: mantiene vivos los árboles cuyos nodos se
   -- guardan en el caché.
@@ -423,7 +488,195 @@ local function build(bufnr)
     end
   end
   index(data, scopes, items)
+end
+
+---@param bufnr integer
+---@return table|nil data
+local function build(bufnr)
+  if not has_js_parser() then return nil end
+
+  local parser = vim.treesitter.get_parser(bufnr)
+  -- parse(true): la capa html es una inyección y sólo existe con las
+  -- injections resueltas (igual que en asp.symbols.identifier_at).
+  local root = parser:parse(true)[1]:root()
+  local html = parser:children().html
+
+  local data = new_data()
+  if not html then return data end
+  local blocks = asp_blocks(root)
+  local regions
+  regions, data.srcs = script_regions(html, bufnr, blocks)
+  if #regions == 0 then return data end
+
+  local text = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), '\n')
+  index_js(data, js_source(text, blocks), regions, blocks)
   return data
+end
+
+local function lsp_range(node)
+  local r0, c0, r1, c1 = node:range()
+  return {
+    start = { line = r0, character = c0 },
+    ['end'] = { line = r1, character = c1 },
+  }
+end
+
+---Los datos de un archivo de disco se guardan sin nodos ni árboles, como
+---los de asp.symbols.collect_file: cada ocurrencia y declaración conserva
+---sólo su rango LSP, y el caché no retiene parsers por archivo.
+---@param data table
+---@return table data
+local function detach(data)
+  for _, list in pairs(data.occurrences) do
+    for _, o in ipairs(list) do
+      o.range, o.node = lsp_range(o.node), nil
+    end
+  end
+  for _, e in ipairs(data.decls) do
+    e.range = lsp_range(e.node)
+    e.node, e.decl, e.scope, e.class = nil, nil, nil, nil
+  end
+  data.trees, data.ltree, data.source, data.at, data.decls = nil, nil, nil, nil, nil
+  return data
+end
+
+---Datos JS de un archivo de disco, sin buffer. `kind`:
+---
+---  * 'js': un `.js` de `<script src>`, JavaScript puro, parseado entero.
+---  * 'page': una página incluida (.asp/.inc/...), que es una plantilla:
+---    se parsea la capa aspclassic, de ahí sólo la capa html confinada a
+---    los `content` (sin vbscript ni las inyecciones js/css de html), y
+---    el javascript confinado a sus <script>, con el mismo relleno de
+---    bloques ASP que el buffer (js_source).
+---@param content string
+---@param kind 'js'|'page'
+---@return table data
+local function build_file(content, kind)
+  local data = new_data()
+  if kind == 'js' then
+    index_js(data, content, nil, {})
+    return detach(data)
+  end
+  -- Sin <script> no hay nada que extraer: los includes de puro VBScript
+  -- (los más) no se parsean.
+  if not content:lower():find('<script', 1, true) then return data end
+
+  local tpl = vim.treesitter.get_string_parser(content, 'aspclassic')
+  local troot = tpl:parse()[1]:root()
+  local cq = vim.treesitter.query.parse('aspclassic', CONTENT_QUERY)
+  local content_nodes = {}
+  for _, node in cq:iter_captures(troot, content) do
+    table.insert(content_nodes, node)
+  end
+  if #content_nodes == 0 then return data end
+
+  -- Una sola región combinada, como la inyección html de
+  -- queries/aspclassic/injections.scm.
+  local hp = vim.treesitter.get_string_parser(content, 'html', {
+    injections = { html = '' },
+  })
+  hp:set_included_regions({ content_nodes })
+  hp:parse(true)
+  local blocks = asp_blocks(troot)
+  local regions
+  regions, data.srcs = script_regions(hp, content, blocks)
+  if #regions == 0 then return data end
+
+  index_js(data, js_source(content, blocks), regions, blocks)
+  return detach(data)
+end
+
+-- Tope de archivos de disco en file_cache; al pasarlo se expulsa el usado
+-- hace más tiempo (LRU). Cada entrada guarda el rango de cada ocurrencia
+-- JS del archivo (un .js de 250 funciones ocupa ~1,2 MiB de Lua), y sin
+-- tope la caché crecía con cada archivo consultado en la sesión. 64 cubre
+-- con holgura el conjunto de una página (sus `<script src>` y su grafo de
+-- includes). Si una página lo supera, como cada consulta recorre el
+-- conjunto en el mismo orden, cada archivo se expulsa antes de volver a
+-- usarse: la caché deja de servirle y todo se relee de disco.
+local FILE_CACHE_MAX = 64
+
+-- ruta → {stamp, used, js?, page?}; `used` es el valor de `clock` en la
+-- última consulta de la entrada.
+local file_cache = {}
+local clock = 0
+
+---Clave de caché de un archivo: mtime y tamaño (el tamaño cubre los
+---sistemas de archivos con mtime de un segundo).
+local function stamp_of(path)
+  local st = vim.uv.fs_stat(path)
+  return st and (st.mtime.sec .. ':' .. st.mtime.nsec .. ':' .. st.size) or nil
+end
+
+---Guarda `hit` en file_cache y, si se pasa de FILE_CACHE_MAX, expulsa la
+---entrada usada hace más tiempo.
+---@param path string
+---@param hit table
+local function remember(path, hit)
+  file_cache[path] = hit
+  local count, lru = 0, nil
+  for p, e in pairs(file_cache) do
+    count = count + 1
+    if not lru or e.used < file_cache[lru].used then lru = p end
+  end
+  if count > FILE_CACHE_MAX then file_cache[lru] = nil end
+end
+
+---Quita de file_cache los archivos que ya no existen. El resolver de rutas
+---descarta un archivo borrado antes de que llegue a file_data, así que su
+---entrada no se revalida nunca: sin esto quedaría hasta que la expulse el
+---LRU. Cuesta un fs_stat por entrada, en cada recorrido de each_external.
+local function prune()
+  for p in pairs(file_cache) do
+    if not vim.uv.fs_stat(p) then file_cache[p] = nil end
+  end
+end
+
+---Datos de `path` cacheados por mtime, o nil si no se puede leer o
+---parsear.
+---@param path string ruta absoluta normalizada
+---@param kind 'js'|'page' ver build_file
+---@return table|nil
+local function file_data(path, kind)
+  local stamp = stamp_of(path)
+  if not stamp then
+    -- Borrado o inaccesible: su entrada ya no sirve.
+    file_cache[path] = nil
+    return nil
+  end
+  clock = clock + 1
+  local hit = file_cache[path]
+  if hit and hit.stamp == stamp then
+    hit.used = clock
+  else
+    hit = { stamp = stamp, used = clock }
+    remember(path, hit)
+  end
+  if hit[kind] == nil then
+    local ok, data = pcall(function()
+      local f = assert(io.open(path, 'rb'))
+      local content = f:read('*a')
+      f:close()
+      -- Neovim no muestra el BOM en el buffer: sin quitarlo, las columnas
+      -- de la primera línea quedarían corridas tres bytes.
+      return build_file((content:gsub('^\239\187\191', '')), kind)
+    end)
+    hit[kind] = ok and data or false
+  end
+  return hit[kind] or nil
+end
+
+---Olvida los datos cacheados de un archivo de disco (BufWritePost). El
+---caché ya se valida por mtime en cada consulta; esto sólo lo adelanta.
+---@param abs_path string
+function M.invalidate(abs_path)
+  file_cache[vim.fs.normalize(abs_path)] = nil
+end
+
+-- Para los tests: el tope y las rutas de file_cache.
+M._FILE_CACHE_MAX = FILE_CACHE_MAX
+function M._cached_files()
+  return vim.tbl_keys(file_cache)
 end
 
 local cache = {}
@@ -497,16 +750,60 @@ local function resolve(data, occ)
   return nil
 end
 
-local function lsp_range(node)
-  local r0, c0, r1, c1 = node:range()
-  return {
-    start = { line = r0, character = c0 },
-    ['end'] = { line = r1, character = c1 },
-  }
+---@param uri string
+---@param item table ocurrencia o declaración (con node, o range si es de disco)
+local function location(uri, item)
+  return { uri = uri, range = item.range or lsp_range(item.node) }
 end
 
-local function location(bufnr, node)
-  return { uri = vim.uri_from_bufnr(bufnr), range = lsp_range(node) }
+local function global_binding(data, name)
+  local g = data.bindings[0]
+  return g and g[name]
+end
+
+---Archivos externos cuyo JS global ve la página, en orden de prioridad de
+---resolución: los `.js` de los `<script src>` del buffer, en orden del
+---documento, y después cada include de includes.buffer_graph (su JS
+---inline y luego sus `<script src>`, resueltos relativos al include). Un
+---`src` externo (`http://`, CDN), inexistente o que no es `.js` se ignora.
+---
+---Cada archivo se carga recién al visitarlo: `visit` devuelve un valor no
+---nil para cortar el recorrido (primer match de definition) y
+---each_external lo devuelve.
+---@param bufnr integer
+---@param data table del buffer
+---@param visit fun(uri: string, ext: table): any
+---@return any
+local function each_external(bufnr, data, visit)
+  prune()
+  local pages = require('asp.pages')
+  local seen = {}
+  local function from_src(src, from)
+    local path = pages.resolve(src, from)
+    if not path or not path:lower():match('%.js$') or seen[path] then return nil end
+    seen[path] = true
+    local ext = file_data(path, 'js')
+    if ext then return visit(vim.uri_from_fname(path), ext) end
+    return nil
+  end
+
+  local name = vim.api.nvim_buf_get_name(bufnr)
+  for _, src in ipairs(data.srcs) do
+    local hit = from_src(src, name)
+    if hit ~= nil then return hit end
+  end
+  for _, path in ipairs(require('asp.includes').buffer_graph(bufnr).order) do
+    local ext = file_data(path, 'page')
+    if ext then
+      local hit = visit(vim.uri_from_fname(path), ext)
+      if hit ~= nil then return hit end
+      for _, src in ipairs(ext.srcs) do
+        hit = from_src(src, path)
+        if hit ~= nil then return hit end
+      end
+    end
+  end
+  return nil
 end
 
 local function definition(bufnr, position)
@@ -515,8 +812,15 @@ local function definition(bufnr, position)
   local occ = occurrence_at(data, position)
   if not occ then return nil end
   local best = resolve(data, occ)
-  if not best then return nil end
-  return location(bufnr, best.node)
+  if best then return location(vim.uri_from_bufnr(bufnr), best) end
+  -- Sin binding en el buffer (tampoco en su global): el global de los
+  -- archivos externos, primer match gana. Sus locales no existen para la
+  -- página.
+  return each_external(bufnr, data, function(uri, ext)
+    local e = global_binding(ext, occ.name)
+    if e then return location(uri, e) end
+    return nil
+  end)
 end
 
 local function references(bufnr, position)
@@ -524,16 +828,39 @@ local function references(bufnr, position)
   if not data then return nil end
   local occ = occurrence_at(data, position)
   if not occ then return nil end
-  -- Sin declaración en la página (`document`, `alert`, un global
-  -- implícito) no hay binding: nil, como definition.
-  local binding = resolve(data, occ)
-  if not binding then return nil end
+  local name = occ.name
 
   local out = {}
-  for _, o in ipairs(data.occurrences[occ.name]) do
-    if resolve(data, o) == binding then
-      table.insert(out, location(bufnr, o.node))
+  -- Cada archivo resuelve con su propio índice: sus locales sombrean.
+  local function collect(uri, d, keep)
+    for _, o in ipairs(d.occurrences[name] or {}) do
+      if keep(resolve(d, o)) then table.insert(out, location(uri, o)) end
     end
+  end
+
+  -- Un local del buffer no puede aparecer en otro archivo: los externos
+  -- sólo se cargan si el binding es global o no está en el buffer.
+  local binding = resolve(data, occ)
+  if binding and not binding.global then
+    collect(vim.uri_from_bufnr(bufnr), data, function(r) return r == binding end)
+    return out
+  end
+
+  -- En el navegador el scope global de la página es uno solo: los globales
+  -- homónimos del buffer y de sus externos son la misma variable, y un uso
+  -- que no resuelve en su archivo cae a ella. definition elige una de esas
+  -- declaraciones por prioridad; references las reúne todas.
+  local files = { { uri = vim.uri_from_bufnr(bufnr), data = data } }
+  local declared = binding ~= nil
+  each_external(bufnr, data, function(uri, ext)
+    table.insert(files, { uri = uri, data = ext })
+    declared = declared or global_binding(ext, name) ~= nil
+  end)
+  -- Sin declaración en la página ni en sus archivos externos (`document`,
+  -- `alert`, un global implícito): nil, como definition.
+  if not declared then return nil end
+  for _, f in ipairs(files) do
+    collect(f.uri, f.data, function(r) return r == nil or r.global end)
   end
   return out
 end
@@ -602,7 +929,9 @@ function M.collect(bufnr)
   end, bufnr)
 end
 
----Definición del identificador JS bajo `position` (case-sensitive).
+---Definición del identificador JS bajo `position` (case-sensitive): en el
+---buffer, o si su global no lo declara, en el global de los archivos
+---externos (ver each_external).
 ---@param bufnr integer
 ---@param position table {line, character} (utf-8, 0-indexed como LSP)
 ---@return table|nil Location
@@ -610,8 +939,10 @@ function M.definition(bufnr, position)
   return safe(definition, bufnr, position)
 end
 
----Ocurrencias del buffer que resuelven a la misma declaración que el
----identificador JS bajo `position`, incluida la declaración.
+---Ocurrencias del buffer y de sus archivos externos que resuelven a la
+---misma declaración que el identificador JS bajo `position`, incluida la
+---declaración. Un global es uno solo para toda la página: reúne las
+---declaraciones homónimas de todos esos archivos y sus usos.
 ---@param bufnr integer
 ---@param position table {line, character}
 ---@return table[]|nil Location[]

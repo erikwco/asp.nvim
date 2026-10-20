@@ -65,7 +65,12 @@ Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`:
   compartido por todos los `<script>` de la página. Se ignoran
   `<script runat="server">`, los `type` que no son JavaScript
   (`text/template`, ...) y `<script language="VBScript">`; un `<%= %>`
-  dentro del JS se trata como un valor opaco. Ver `:help asp-javascript`.
+  dentro del JS se trata como un valor opaco. El scope global de la
+  página incluye además las funciones, clases y variables globales de
+  los `.js` de sus `<script src>` y de los `<script>` de las páginas
+  incluidas con `<!--#include-->` (y de los `<script src>` de esos
+  includes): `C-]` abre la declaración en ese archivo y references
+  reúne los usos de todos. Ver `:help asp-javascript`.
 - **Abrir una página o recurso**: la misma consulta dentro de un literal
   entre comillas simples o dobles abre el archivo en su primera línea.
   Funciona en VBScript (`Response.Redirect "otra.asp"`), atributos HTML
@@ -119,6 +124,16 @@ if path then vim.cmd.find(vim.fn.fnameescape(path)) end
 > `<script>` (miles de líneas), la *primera* consulta LSP tras abrir el
 > archivo puede tardar varios segundos mientras tree-sitter parsea todas
 > sus capas; las consultas siguientes sobre ese buffer son instantáneas.
+>
+> El JavaScript de los `<script src>` y de los includes se lee desde disco
+> con la misma técnica (sólo html confinado y javascript, nunca
+> VBScript ni CSS) y se cachea por mtime. Con 20 includes de 250
+> funciones JS cada uno, la primera definición cross-file tarda ~150 ms
+> y las siguientes ~8 ms (casi todo es recorrer el grafo de includes).
+> La caché guarda hasta 64 archivos (descarta el usado hace más tiempo) y
+> olvida los borrados en la siguiente consulta; si el conjunto de una
+> página pasa de 64 archivos, la caché deja de servirle y cada consulta los
+> vuelve a leer y parsear.
 
 ## Limitaciones conocidas
 
@@ -145,11 +160,18 @@ if path then vim.cmd.find(vim.fn.fnameescape(path)) end
   como resultado, hover/definición/referencias no resuelven identificadores
   dentro de esos bloques adyacentes. Poné cada `<%= %>` en su propia línea
   para navegación LSP completa.
-- JavaScript: sólo el archivo actual (no sigue `<script src>` ni includes);
-  `let`/`const` se tratan como `var` (scope de función, no de bloque); las
-  propiedades (`obj.metodo`, `this.x`, jQuery `$`) no se resuelven; no se
-  recogen como declaración los nombres desestructurados, los parámetros
-  con default o rest, el de `catch (e)` ni la variable de
+- JavaScript entre archivos: de cada `.js` de `<script src>` y de cada
+  include sólo se ven sus declaraciones globales. Gana el buffer, luego
+  los `<script src>` en orden y después los includes en el orden del
+  grafo. Si varios archivos declaran el mismo global, la definición va
+  al de mayor prioridad y las referencias los reúnen a todos (en el
+  navegador son la misma variable). Se ignoran los `src` externos (`http://`, CDN),
+  inexistentes o armados con `<%= %>`; no se siguen `import`/`export`.
+  Abrir un `.js` suelto no activa `asp-ls`: ahí va tu LSP de JavaScript.
+- JavaScript: `let`/`const` se tratan como `var` (scope de función, no de
+  bloque); las propiedades (`obj.metodo`, `this.x`, jQuery `$`) no se
+  resuelven; no se recogen como declaración los nombres desestructurados,
+  los parámetros con default o rest, el de `catch (e)` ni la variable de
   `for (const x of xs)`. Sin hover ni completion para JS.
 
 ## Verificación
