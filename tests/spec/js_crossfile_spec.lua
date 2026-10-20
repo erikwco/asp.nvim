@@ -365,6 +365,45 @@ describe('asp.js cross-file', function()
     end)
   end)
 
+  it('la caché no expulsa los archivos de la consulta en curso', function()
+    local max = js._FILE_CACHE_MAX
+    -- Más externos que el tope: mitad .js de <script src>, mitad includes.
+    local half = math.ceil((max + 6) / 2)
+    local files, page = { ['otro.js'] = { 'function otro() {}' } }, {}
+    for i = 1, half do
+      files['s' .. i .. '.js'] = { 'function s' .. i .. '() {}' }
+      files['i' .. i .. '.inc'] = { '<script>', 'function i' .. i .. '() {}', '</script>' }
+      table.insert(page, '<script src="s' .. i .. '.js"></script>')
+      table.insert(page, '<!--#include file="i' .. i .. '.inc" -->')
+    end
+    vim.list_extend(page, { '<script>', 'nadie();', '</script>' })
+    files['pagina.asp'] = page
+    in_project(files, function(dir)
+      -- `nadie` no se declara en ningún archivo: definition los recorre todos.
+      assert.is_nil(js.definition(0, pos_in('nadie();')))
+      assert.are.equal(2 * half, #js._cached_files())
+
+      local open, opens = io.open, 0
+      io.open = function(...)
+        opens = opens + 1
+        return open(...)
+      end
+      local ok, res = pcall(js.definition, 0, pos_in('nadie();'))
+      io.open = open
+      assert.is_true(ok, res)
+      assert.is_nil(res)
+      assert.are.equal(0, opens)
+
+      -- La consulta siguiente, de otro conjunto, vuelve al tope.
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, {
+        '<script src="otro.js"></script>', '<script>', 'nadie();', '</script>',
+      })
+      assert.is_nil(js.definition(0, pos_in('nadie();')))
+      assert.are.equal(max, #js._cached_files())
+      assert.is_true(vim.tbl_contains(js._cached_files(), dir .. '/otro.js'))
+    end)
+  end)
+
   it('escribir un .js desde Neovim llama a js.invalidate', function()
     vim.cmd('bwipeout!')
     local path = vim.fn.tempname() .. '.js'
@@ -424,10 +463,9 @@ describe('asp.js cross-file', function()
 
       calls = {}
       assert.are.equal('inc/pie.asp', rel(js.definition(0, pos_in('desdePie();')).uri))
-      for _, c in ipairs(calls) do
-        -- sólo la plantilla de cada include, para el grafo de includes
-        assert.are.equal('aspclassic', c.lang)
-      end
+      -- Nada: tampoco las plantillas de los includes, cuyas directivas
+      -- para el grafo salen de la caché de asp.includes.
+      assert.are.same({}, calls)
     end)
     vim.treesitter.get_string_parser = get_string_parser
     assert.is_true(ok, err)
