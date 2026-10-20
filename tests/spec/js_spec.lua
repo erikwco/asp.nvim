@@ -103,9 +103,11 @@ describe('asp.js', function()
     assert.are.equal(line_of('var duplicados'), def_line('x => x * 2', 'x * 2'))
   end)
 
-  it('un property_identifier (obj.metodo, obj.prop) devuelve nil', function()
+  it('un property_identifier no tiene definición y devuelve referencias vacías', function()
     assert.is_nil(js.definition(0, pos_in('carrito.agregar(contador)', 'agregar')))
     assert.is_nil(js.definition(0, pos_in('var contador = opciones.inicio', 'inicio')))
+    assert.are.same({}, js.references(0, pos_in('carrito.agregar(contador)', 'agregar')))
+    assert.are.same({}, js.references(0, pos_in('var contador = opciones.inicio', 'inicio')))
   end)
 
   it('cursor en VBScript: js.definition devuelve nil y la capa VBScript sigue resolviendo', function()
@@ -329,7 +331,7 @@ describe('asp.js casos borde', function()
       '</script>',
     })
     assert.is_nil(js.definition(0, pos_in('function a', 'unknown')))
-    assert.is_nil(js.references(0, pos_in('function a', 'unknown')))
+    assert.are.same({}, js.references(0, pos_in('function a', 'unknown')))
   end)
 
   it('references no crece con el número de declaraciones homónimas', function()
