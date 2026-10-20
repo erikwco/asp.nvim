@@ -88,12 +88,10 @@ los separadores `\` a `/`. El destino debe existir y ser un archivo;
 si no existe, la consulta devuelve `nil` sin agregar diagnósticos.
 Se descartan `http://`, `https://`, `//`, `mailto:` y `javascript:`.
 
-`gf` y `C-w f` usan `includeexpr` para resolver el nombre que Neovim extrae
-con `isfname`. El ftplugin configura la expresión solo si está vacía y
-conserva cualquier `includeexpr` previo del usuario. Al configurarla,
-agrega `\` a `isfname` para admitir rutas como `..\includes\helpers.asp`
-también en Unix. Neovim aplica la expresión cuando su búsqueda normal
-no encuentra el archivo. `:find` no evalúa `includeexpr`;
+`gf` y `C-w f` usan `includeexpr` para resolver el nombre que Neovim extrae.
+El ftplugin configura la expresión solo si está vacía y conserva cualquier
+`includeexpr` previo del usuario. Neovim aplica la expresión cuando su
+búsqueda normal no encuentra el archivo. `:find` no evalúa `includeexpr`;
 para usar el resolver explícitamente:
 
 ```lua
@@ -126,9 +124,9 @@ if path then vim.cmd.find(vim.fn.fnameescape(path)) end
 - Las rutas relativas dentro de un `.inc` o una página incluida se
   resuelven contra el archivo que contiene la ruta, no contra la página
   que pidió el navegador. Es un límite de diseño del resolver compartido.
-- `isfname` es una opción global de Neovim. El añadido de `\` afecta a
-  otros buffers y permanece tras ejecutar `undo_ftplugin`; `isfname<`
-  no restaura un valor anterior de esa opción global.
+- `gf` y `C-w f` solo reconocen rutas con `/` como separador. Neovim corta
+  el nombre en `\` en Unix. `C-]` y `vim.lsp.buf.definition()` sí normalizan
+  `\` a `/`.
 - Varios bloques `<%= %>` en una misma línea (p. ej.
   `<td><%=a%></td><td><%=b%></td>`) se fusionan en una sola región por la
   injection combinada de VBScript (necesaria para que construcciones

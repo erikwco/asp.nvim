@@ -81,10 +81,9 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       `https://`, `//`, `mailto:` y `javascript:`.
 
   gf y CTRL-W f ~
-      Resuelven mediante 'includeexpr' el nombre que Neovim extrae con
-      'isfname'. El ftplugin configura la expresión solo si está vacía y
-      respeta la expresión previa del usuario. Al configurarla, agrega
-      `\` a 'isfname' para admitir `..\includes\helpers.asp` también en Unix.
+      Resuelven mediante 'includeexpr' el nombre que Neovim extrae.
+      El ftplugin configura la expresión solo si está vacía y respeta
+      la expresión previa del usuario.
       Neovim la evalúa cuando su búsqueda normal no encuentra el archivo.
       |:find| no evalúa 'includeexpr'; se puede resolver explícitamente: >lua
         local pages = require('asp.pages')
@@ -133,9 +132,9 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       del archivo que contiene la ruta, no de la página que pidió el
       navegador. Es un límite de diseño del resolver compartido.
 
-      'isfname' es global. El añadido de `\` afecta a otros buffers y
-      permanece tras ejecutar undo_ftplugin; `isfname<` no restaura un
-      valor anterior de esa opción global.
+      `gf` y `C-w f` solo reconocen rutas con `/` como separador. Neovim
+      corta el nombre en `\` en Unix. `C-]` y `vim.lsp.buf.definition()`
+      sí normalizan `\` a `/`.
 
       Varios `<%= %>` en una misma línea (p. ej. `<%=a%><%=b%>`) se
       fusionan por la injection combinada de VBScript (necesaria para

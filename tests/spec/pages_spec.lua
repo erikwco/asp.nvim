@@ -1,7 +1,6 @@
 local FIX = vim.fn.fnamemodify('tests/fixtures/proyecto', ':p'):gsub('/$', '')
 local SOURCE = FIX .. '/paginas/inicio.asp'
 local TARGET = FIX .. '/paginas/otra.asp'
-local original_isfname = vim.o.isfname
 
 local regression_cases = {
   { 'JS simple dentro de atributo doble', [[<a onclick="location.href='otra.asp'">]] },
@@ -42,7 +41,6 @@ describe('asp.pages', function()
 
   after_each(function()
     vim.cmd('bwipeout!')
-    vim.o.isfname = original_isfname
   end)
 
   local cases = {
@@ -178,10 +176,9 @@ describe('asp.pages', function()
     assert.are.equal(FIX .. '/includes/helpers.asp', pages.includeexpr('/includes/helpers.asp'))
     assert.are.equal('inexistente.asp', pages.includeexpr('inexistente.asp'))
     local expr = vim.bo.includeexpr
-    local isfname, undo = vim.o.isfname, vim.b.undo_ftplugin
+    local undo = vim.b.undo_ftplugin
     vim.cmd('runtime! ftplugin/asp.lua')
     assert.are.equal(expr, vim.bo.includeexpr)
-    assert.are.equal(isfname, vim.o.isfname)
     assert.are.equal(undo, vim.b.undo_ftplugin)
   end)
 
@@ -193,11 +190,9 @@ describe('asp.pages', function()
     assert.are.equal('otra.asp', result)
   end)
 
-  it('undo_ftplugin restaura includeexpr sin cambiar el isfname global', function()
-    local isfname = vim.o.isfname
+  it('undo_ftplugin restaura includeexpr', function()
     vim.cmd(vim.b.undo_ftplugin)
     assert.are.equal(vim.go.includeexpr, vim.bo.includeexpr)
-    assert.are.equal(isfname, vim.o.isfname)
   end)
 
   it('el ftplugin respeta un includeexpr del usuario', function()
@@ -213,8 +208,8 @@ describe('asp.pages', function()
     assert.are.equal(FIX .. '/includes/helpers.asp', vim.api.nvim_buf_get_name(0))
   end)
 
-  it('gf abre rutas con barras invertidas', function()
-    vim.api.nvim_buf_set_lines(0, 0, -1, false, { [[<a href="..\includes\helpers.asp">Ir</a>]] })
+  it('gf abre rutas relativas con / como separador', function()
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, { [[<a href="../includes/helpers.asp">Ir</a>]] })
     vim.bo.modified = false
     local pos = pos_of('includes')
     vim.api.nvim_win_set_cursor(0, { pos.line + 1, pos.character })
@@ -252,7 +247,6 @@ describe('asp-ls páginas', function()
 
   after_each(function()
     vim.cmd('bwipeout!')
-    vim.o.isfname = original_isfname
   end)
 
   local function definition_at(text)
