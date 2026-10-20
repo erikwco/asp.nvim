@@ -321,6 +321,48 @@ describe('asp.js cross-file', function()
     assert.is_true(ok, err)
   end)
 
+  it('la caché de archivos de disco tiene tope LRU y olvida los borrados', function()
+    local max = js._FILE_CACHE_MAX
+    local files = { ['pagina.asp'] = { '', '<script>', 'nadie();', '</script>' } }
+    for i = 1, max + 2 do
+      files['f' .. i .. '.js'] = { 'function f' .. i .. '() {}' }
+    end
+    in_project(files, function(dir)
+      -- Carga f<desde>..f<hasta> en ese orden: `nadie` no se declara en
+      -- ningún archivo, así que definition los recorre todos.
+      local function load(from, to)
+        local tags = {}
+        for i = from, to do
+          table.insert(tags, '<script src="f' .. i .. '.js"></script>')
+        end
+        vim.api.nvim_buf_set_lines(0, 0, 1, false, { table.concat(tags) })
+        assert.is_nil(js.definition(0, pos_in('nadie();')))
+      end
+      local function cached(i)
+        return vim.tbl_contains(js._cached_files(), dir .. '/f' .. i .. '.js')
+      end
+
+      load(1, max) -- llena la caché: lo de los tests anteriores sale
+      assert.are.equal(max, #js._cached_files())
+      load(1, 1) -- f1 pasa a ser la más reciente
+      load(max + 1, max + 1) -- sale la usada hace más tiempo: f2, no f1
+      assert.are.equal(max, #js._cached_files())
+      assert.is_true(cached(1))
+      assert.is_false(cached(2))
+      assert.is_true(cached(max + 1))
+
+      -- Un archivo borrado sale en la siguiente consulta, la cargue o no
+      -- la página.
+      os.remove(dir .. '/f1.js')
+      load(1, 1)
+      assert.is_false(cached(1))
+      os.remove(dir .. '/f3.js')
+      load(max + 2, max + 2)
+      assert.is_false(cached(3))
+      assert.is_true(cached(max + 2))
+    end)
+  end)
+
   it('escribir un .js desde Neovim llama a js.invalidate', function()
     vim.cmd('bwipeout!')
     local path = vim.fn.tempname() .. '.js'

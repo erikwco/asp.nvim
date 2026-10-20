@@ -191,7 +191,9 @@ JavaScript de cliente de los bloques <script> del archivo actual:
     references reúne todas esas declaraciones y sus usos.
   - Los archivos externos se leen de disco y se cachean por mtime: sólo
     se parsean html (confinado a la plantilla) y javascript, nunca
-    VBScript ni CSS.
+    VBScript ni CSS. La caché guarda hasta 64 archivos y, al llenarse,
+    descarta el usado hace más tiempo; un archivo borrado sale de ella
+    en la siguiente consulta entre archivos.
 
 Límites:
 

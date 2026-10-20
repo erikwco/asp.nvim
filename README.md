@@ -130,6 +130,10 @@ if path then vim.cmd.find(vim.fn.fnameescape(path)) end
 > VBScript ni CSS) y se cachea por mtime. Con 20 includes de 250
 > funciones JS cada uno, la primera definición cross-file tarda ~150 ms
 > y las siguientes ~8 ms (casi todo es recorrer el grafo de includes).
+> La caché guarda hasta 64 archivos (descarta el usado hace más tiempo) y
+> olvida los borrados en la siguiente consulta; si el conjunto de una
+> página pasa de 64 archivos, la caché deja de servirle y cada consulta los
+> vuelve a leer y parsear.
 
 ## Limitaciones conocidas
 

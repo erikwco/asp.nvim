@@ -586,13 +586,50 @@ local function build_file(content, kind)
   return detach(data)
 end
 
+-- Tope de archivos de disco en file_cache; al pasarlo se expulsa el usado
+-- hace más tiempo (LRU). Cada entrada guarda el rango de cada ocurrencia
+-- JS del archivo (un .js de 250 funciones ocupa ~1,2 MiB de Lua), y sin
+-- tope la caché crecía con cada archivo consultado en la sesión. 64 cubre
+-- con holgura el conjunto de una página (sus `<script src>` y su grafo de
+-- includes). Si una página lo supera, como cada consulta recorre el
+-- conjunto en el mismo orden, cada archivo se expulsa antes de volver a
+-- usarse: la caché deja de servirle y todo se relee de disco.
+local FILE_CACHE_MAX = 64
+
+-- ruta → {stamp, used, js?, page?}; `used` es el valor de `clock` en la
+-- última consulta de la entrada.
 local file_cache = {}
+local clock = 0
 
 ---Clave de caché de un archivo: mtime y tamaño (el tamaño cubre los
 ---sistemas de archivos con mtime de un segundo).
 local function stamp_of(path)
   local st = vim.uv.fs_stat(path)
   return st and (st.mtime.sec .. ':' .. st.mtime.nsec .. ':' .. st.size) or nil
+end
+
+---Guarda `hit` en file_cache y, si se pasa de FILE_CACHE_MAX, expulsa la
+---entrada usada hace más tiempo.
+---@param path string
+---@param hit table
+local function remember(path, hit)
+  file_cache[path] = hit
+  local count, lru = 0, nil
+  for p, e in pairs(file_cache) do
+    count = count + 1
+    if not lru or e.used < file_cache[lru].used then lru = p end
+  end
+  if count > FILE_CACHE_MAX then file_cache[lru] = nil end
+end
+
+---Quita de file_cache los archivos que ya no existen. El resolver de rutas
+---descarta un archivo borrado antes de que llegue a file_data, así que su
+---entrada no se revalida nunca: sin esto quedaría hasta que la expulse el
+---LRU. Cuesta un fs_stat por entrada, en cada recorrido de each_external.
+local function prune()
+  for p in pairs(file_cache) do
+    if not vim.uv.fs_stat(p) then file_cache[p] = nil end
+  end
 end
 
 ---Datos de `path` cacheados por mtime, o nil si no se puede leer o
@@ -602,11 +639,18 @@ end
 ---@return table|nil
 local function file_data(path, kind)
   local stamp = stamp_of(path)
-  if not stamp then return nil end
+  if not stamp then
+    -- Borrado o inaccesible: su entrada ya no sirve.
+    file_cache[path] = nil
+    return nil
+  end
+  clock = clock + 1
   local hit = file_cache[path]
-  if not hit or hit.stamp ~= stamp then
-    hit = { stamp = stamp }
-    file_cache[path] = hit
+  if hit and hit.stamp == stamp then
+    hit.used = clock
+  else
+    hit = { stamp = stamp, used = clock }
+    remember(path, hit)
   end
   if hit[kind] == nil then
     local ok, data = pcall(function()
@@ -627,6 +671,12 @@ end
 ---@param abs_path string
 function M.invalidate(abs_path)
   file_cache[vim.fs.normalize(abs_path)] = nil
+end
+
+-- Para los tests: el tope y las rutas de file_cache.
+M._FILE_CACHE_MAX = FILE_CACHE_MAX
+function M._cached_files()
+  return vim.tbl_keys(file_cache)
 end
 
 local cache = {}
@@ -725,6 +775,7 @@ end
 ---@param visit fun(uri: string, ext: table): any
 ---@return any
 local function each_external(bufnr, data, visit)
+  prune()
   local pages = require('asp.pages')
   local seen = {}
   local function from_src(src, from)
