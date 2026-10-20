@@ -98,6 +98,20 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       Todas las referencias de un símbolo en el buffer y el grafo.
       Los símbolos locales se limitan a su propio scope.
 
+      Dentro de un literal de página, `vim.lsp.buf.references()` lista
+      los enlaces y directivas <!--#include --> que apuntan a ese archivo
+      en todo el proyecto. Fuera de un símbolo o literal, en un .asp o
+      .inc, busca quién usa el archivo abierto. Ordena por archivo, línea
+      y columna. Un literal irresoluble devuelve una lista vacía.
+
+      Recorre los archivos guardados .asp, .inc, .htm, .html y .js bajo
+      la raíz virtual. Omite build, node_modules y carpetas ocultas,
+      incluida .git. Resuelve cada ruta contra el archivo que la contiene.
+      Las directivas respetan file o virtual; virtual sin barra inicial
+      también parte de la raíz. Lee texto sin tree-sitter y cachea por
+      mtime y raíz virtual. Guardar un archivo invalida su entrada.
+      No incluye los cambios sin guardar en los archivos que lo usan.
+
   documentSymbol ~
       Outline del archivo, con los miembros de clase anidados. Las
       funciones y clases globales de JavaScript van al final, con
@@ -117,6 +131,24 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
   diagnósticos ~
       Los includes que no resuelven se marcan con un warning en su
       línea; los ciclos de includes se reportan.
+
+  rendimiento ~
+      En un buffer grande con muchos bloques <script>, la primera consulta
+      LSP puede tardar segundos mientras tree-sitter parsea sus capas.
+      Los símbolos de archivos incluidos se leen desde disco con un parser
+      limitado a VBScript, sin parsear sus capas HTML, JS o CSS.
+
+      La primera búsqueda de usos de una página lee todo el proyecto y
+      puede tardar segundos en sitios grandes. Las siguientes recorren
+      las carpetas y comprueban mtimes, pero solo releen archivos cambiados.
+      El barrido de páginas no necesita parsers. Una medición local con
+      Neovim 0.12.6 y Apple M4 Pro, sobre 500 archivos y 19.960 referencias,
+      dio 316 ms en la primera consulta y 60 ms en la siguiente. La caché
+      de páginas estaba vacía; los archivos podían estar en la caché del
+      sistema operativo. Para repetirla desde la raíz del repo: >
+        nvim --headless -u NONE --cmd 'set rtp+=.' \
+          -l tests/bench/pages_references.lua
+<
 
   limitaciones conocidas ~
       La detección toma las comillas más cercanas a cada lado del cursor

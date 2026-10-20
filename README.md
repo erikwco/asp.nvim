@@ -80,6 +80,11 @@ Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`:
   Admite `.asp`, `.inc`, `.htm`, `.html`, `.js` y `.css`, sin
   distinguir mayúsculas en la extensión. Ignora querystring, fragmento y
   espacios exteriores, así que `"otra.asp?id=" & id` también resuelve.
+- **Usos de una página**: `vim.lsp.buf.references()` dentro de un literal
+  lista los enlaces y directivas `<!--#include -->` que apuntan a ese archivo
+  en todo el proyecto. Fuera de un símbolo o literal, en un `.asp` o `.inc`,
+  busca quién usa el archivo abierto. Los resultados se ordenan por archivo,
+  línea y columna. Un literal irresoluble devuelve una lista vacía.
 - **Símbolos del documento**: `vim.lsp.buf.document_symbol()` u outline de
   tu plugin favorito (aerial, Telescope `lsp_document_symbols`, ...). Las
   funciones y clases JS globales aparecen al final, con detail
@@ -103,6 +108,15 @@ Las demás son relativas al directorio del archivo actual. Se normalizan
 los separadores `\` a `/`. El destino debe existir y ser un archivo;
 si no existe, la consulta devuelve `nil` sin agregar diagnósticos.
 Se descartan `http://`, `https://`, `//`, `mailto:` y `javascript:`.
+
+La búsqueda de usos recorre los archivos guardados `.asp`, `.inc`, `.htm`,
+`.html` y `.js` bajo la raíz virtual. Omite `build`, `node_modules` y las
+carpetas ocultas, incluida `.git`. Lee texto sin tree-sitter y resuelve cada
+ruta contra el archivo que la contiene. Las directivas respetan `file` o
+`virtual`, también cuando `virtual` no lleva `/` inicial. La caché por archivo
+usa el mtime y la raíz virtual; guardar un archivo invalida su entrada.
+Los cambios sin guardar en los archivos que referencian al destino no se
+incluyen en la lista.
 
 `gf` y `C-w f` usan `includeexpr` para resolver el nombre que Neovim extrae.
 El ftplugin configura la expresión solo si está vacía y conserva cualquier
@@ -134,6 +148,16 @@ if path then vim.cmd.find(vim.fn.fnameescape(path)) end
 > olvida los borrados en la siguiente consulta; si el conjunto de una
 > página pasa de 64 archivos, la caché deja de servirle y cada consulta los
 > vuelve a leer y parsear.
+>
+> La primera búsqueda de usos de una página recorre y lee el proyecto entero,
+> y puede tardar segundos en un sitio grande. Las siguientes consultas vuelven
+> a recorrer las carpetas y comprobar mtimes, pero solo releen los archivos
+> que cambiaron. Ese barrido no necesita parsers y también incluye enlaces HTML
+> y JS. En una medición local con Neovim 0.12.6 y Apple M4 Pro, 500 archivos
+> y 19.960 referencias tardaron 316 ms en la primera consulta y 60 ms en la
+> siguiente. La caché de páginas empezó vacía; los archivos recién creados
+> podían estar en la caché del sistema operativo. Para repetir la medición:
+> `nvim --headless -u NONE --cmd 'set rtp+=.' -l tests/bench/pages_references.lua`.
 
 ## Limitaciones conocidas
 
