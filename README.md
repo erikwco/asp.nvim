@@ -57,6 +57,13 @@ Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`:
 - **Ir a definición**: `C-]` (vía tagfunc) o `vim.lsp.buf.definition()` —
   Functions, Subs, Classes, variables y constantes del archivo actual,
   case-insensitive, con precedencia local → página.
+- **Abrir una página o recurso**: la misma consulta dentro de un literal
+  entre comillas simples o dobles abre el archivo en su primera línea.
+  Funciona en VBScript (`Response.Redirect "otra.asp"`), atributos HTML
+  (`href`, `action`, `src`) y strings de JavaScript, sin depender de sus
+  parsers. Admite `.asp`, `.inc`, `.htm`, `.html`, `.js` y `.css`, sin
+  distinguir mayúsculas en la extensión. Ignora querystring, fragmento y
+  espacios exteriores, así que `"otra.asp?id=" & id` también resuelve.
 - **Símbolos del documento**: `vim.lsp.buf.document_symbol()` u outline de
   tu plugin favorito (aerial, Telescope `lsp_document_symbols`, ...).
 - **Hover**: documentación de los objetos intrínsecos de ASP
@@ -73,6 +80,24 @@ Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`:
   (`web.config` o `.git`) y puede fijarse con
   `require('asp').setup({ virtual_root = '/ruta/al/sitio' })`.
 
+Las rutas de páginas que empiezan con `/` usan esa misma raíz virtual.
+Las demás son relativas al directorio del archivo actual. Se normalizan
+los separadores `\` a `/`. El destino debe existir y ser un archivo;
+si no existe, la consulta devuelve `nil` sin agregar diagnósticos.
+Se descartan `http://`, `https://`, `//`, `mailto:` y `javascript:`.
+
+`gf` y `C-w f` también resuelven rutas virtuales mediante `includeexpr`,
+que el ftplugin configura solo si está vacío. Se conserva cualquier
+`includeexpr` previo del usuario. Neovim aplica esta expresión cuando su
+búsqueda normal no encuentra el archivo. `:find` no evalúa `includeexpr`;
+para usar el resolver explícitamente:
+
+```lua
+local pages = require('asp.pages')
+local path = pages.resolve('/includes/helpers.asp', vim.api.nvim_buf_get_name(0))
+if path then vim.cmd.find(vim.fn.fnameescape(path)) end
+```
+
 > **Nota de rendimiento:** para los archivos INCLUDED/indexados (grafo de
 > includes, `workspace/symbol`), la Fase 4 ya optimizó esto: solo se
 > parsea la capa VBScript desde disco (milisegundos, incluso en archivos
@@ -84,6 +109,11 @@ Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`:
 
 ## Limitaciones conocidas
 
+- La navegación de páginas lee literales cerrados en una sola línea.
+  No evalúa expresiones ni URLs construidas en runtime, como
+  `"pagina_" & id & ".asp"` o `"<%= destino %>"`. La detección es por texto,
+  sin interpretar comentarios ni decodificar escapes de URL o de lenguaje.
+  Los literales sí se detectan aunque haya varios `<%= %>` en esa línea.
 - Varios bloques `<%= %>` en una misma línea (p. ej.
   `<td><%=a%></td><td><%=b%></td>`) se fusionan en una sola región por la
   injection combinada de VBScript (necesaria para que construcciones
