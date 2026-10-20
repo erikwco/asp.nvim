@@ -34,8 +34,16 @@ vim.o.swapfile = false -- sin prompt de swap que se coma los keystrokes en las d
 vim.o.number = true
 vim.o.signcolumn = 'yes'
 vim.o.laststatus = 0
+vim.o.statusline = "%{fnamemodify(bufname('%'), ':.')}%m%=%l:%c"
 vim.o.cmdheight = 1
 vim.o.mouse = ''
+if vim.fn.exists('+winborder') == 1 then
+  vim.o.winborder = 'rounded'
+else
+  vim.lsp.handlers['textDocument/hover'] = vim.lsp.with(
+    vim.lsp.handlers['textDocument/hover'], { border = 'rounded' }
+  )
+end
 
 require('asp').setup({ virtual_root = repo .. '/demo/app' })
 

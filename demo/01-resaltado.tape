@@ -12,7 +12,7 @@ Set TypingSpeed 60ms
 Hide
 Type "nvim -u demo/init.lua demo/app/default.asp"
 Enter
-Sleep 2500ms
+Sleep 5s
 Show
 
 # El VBScript (<% %>), el HTML y el JavaScript de <script> se resaltan
