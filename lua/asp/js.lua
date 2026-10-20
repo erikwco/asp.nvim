@@ -711,16 +711,22 @@ end
 -- hace más tiempo (LRU). Cada entrada guarda el rango de cada ocurrencia
 -- JS del archivo (un .js de 250 funciones ocupa ~1,2 MiB de Lua), y sin
 -- tope la caché crecía con cada archivo consultado en la sesión. 64 cubre
--- con holgura el conjunto de una página (sus `<script src>` y su grafo de
--- includes). Si una página lo supera, como cada consulta recorre el
--- conjunto en el mismo orden, cada archivo se expulsa antes de volver a
--- usarse: la caché deja de servirle y todo se relee de disco.
+-- el conjunto de casi cualquier página (sus `<script src>` y su grafo de
+-- includes); el de una página más grande no se expulsa (ver query_start).
 local FILE_CACHE_MAX = 64
 
 -- ruta → {stamp, used, js?, page?}; `used` es el valor de `clock` en la
 -- última consulta de la entrada.
 local file_cache = {}
 local clock = 0
+-- Valor de `clock` al empezar la consulta en curso de each_external: las
+-- entradas usadas desde entonces son del conjunto de esa consulta y
+-- remember no las expulsa. Con un tope fijo, una página de más de
+-- FILE_CACHE_MAX archivos expulsaba cada uno antes de volver a usarlo
+-- (cada consulta recorre el conjunto en el mismo orden) y todo se releía
+-- de disco. El tope efectivo es el mayor entre FILE_CACHE_MAX y el
+-- tamaño del conjunto.
+local query_start = 0
 
 ---Clave de caché de un archivo: mtime y tamaño (el tamaño cubre los
 ---sistemas de archivos con mtime de un segundo).
@@ -729,18 +735,24 @@ local function stamp_of(path)
   return st and (st.mtime.sec .. ':' .. st.mtime.nsec .. ':' .. st.size) or nil
 end
 
----Guarda `hit` en file_cache y, si se pasa de FILE_CACHE_MAX, expulsa la
----entrada usada hace más tiempo.
+---Guarda `hit` en file_cache y, mientras se pase de FILE_CACHE_MAX,
+---expulsa la entrada usada hace más tiempo que no sea de la consulta en
+---curso. Tras una página grande, la consulta siguiente vuelve al tope.
 ---@param path string
 ---@param hit table
 local function remember(path, hit)
   file_cache[path] = hit
-  local count, lru = 0, nil
-  for p, e in pairs(file_cache) do
-    count = count + 1
-    if not lru or e.used < file_cache[lru].used then lru = p end
+  local count = 0
+  for _ in pairs(file_cache) do count = count + 1 end
+  while count > FILE_CACHE_MAX do
+    local lru
+    for p, e in pairs(file_cache) do
+      if e.used < query_start and (not lru or e.used < file_cache[lru].used) then lru = p end
+    end
+    if not lru then return end
+    file_cache[lru] = nil
+    count = count - 1
   end
-  if count > FILE_CACHE_MAX then file_cache[lru] = nil end
 end
 
 ---Quita de file_cache los archivos que ya no existen. El resolver de rutas
@@ -900,6 +912,7 @@ end
 ---@return any
 local function each_external(bufnr, data, visit)
   prune()
+  query_start = clock + 1
   local pages = require('asp.pages')
   local seen = {}
   local function from_src(src, from)
