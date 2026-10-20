@@ -60,8 +60,8 @@ describe('asp.health.check', function()
   end)
 
   it('recomienda instalar los parsers ausentes', function()
-    vim.treesitter.language.add = function(lang)
-      error('no parser for ' .. lang .. ' language, see :help treesitter-parsers', 0)
+    vim.treesitter.language.add = function()
+      return original_add('asp_parser_inexistente')
     end
     require('asp.health').check()
     for lang, level in pairs(parsers) do

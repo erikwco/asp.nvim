@@ -224,14 +224,14 @@ function M.references(bufnr, position)
       local dir = dirs[next_dir]
       next_dir = next_dir + 1
       for name, kind in vim.fs.dir(dir) do
-        local path = dir .. '/' .. name
-        -- En 0.10 scandir puede omitir el tipo. Hay que recuperarlo antes
-        -- de decidir si descender; lstat conserva los symlinks como links.
-        if kind == nil then
-          local stat = vim.uv.fs_lstat(path)
-          kind = stat and stat.type
-        end
         if name:sub(1, 1) ~= '.' then
+          local path = dir .. '/' .. name
+          -- En 0.10 scandir puede omitir el tipo. Hay que recuperarlo antes
+          -- de decidir si descender; lstat conserva los symlinks como links.
+          if kind == nil then
+            local stat = vim.uv.fs_lstat(path)
+            kind = stat and stat.type
+          end
           if kind == 'directory' and name ~= 'node_modules' and name ~= 'build' then
             table.insert(dirs, path)
           elseif kind == 'file' and SOURCE_EXTENSIONS[name:lower():match('%.(%w+)$')] then

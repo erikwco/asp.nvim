@@ -32,6 +32,27 @@ servidor, HTML y JavaScript de cliente conviven en un mismo archivo .asp:
     `javascript` también alimenta la navegación JS (|asp-javascript|);
     sin él esa capa queda inerte y `:checkhealth asp` lo advierte.
 
+Resolver errores de ABI en Neovim 0.10 ~
+
+Neovim 0.10 solo carga parsers con ABI 13 o 14. Si un parser está
+instalado pero no carga, `:checkhealth asp` muestra el error de Neovim.
+Para `ABI version mismatch`, hay estas alternativas:
+
+  - Fijá `branch = 'master'` en la configuración de nvim-treesitter y
+    reinstalá con `:TSInstall! html javascript css`. Esa rama fija
+    versiones de los tres parsers con ABI 14, compatibles también
+    con Neovim 0.11+.
+  - Si los compilás por tu cuenta, regenerá las fuentes con
+    `tree-sitter generate --abi 14` antes de compilarlas.
+  - Pasá a Neovim 0.11+ para cargar ABI 15. La rama `main` de
+    nvim-treesitter exige Neovim 0.12 y compila parsers con ABI 15.
+
+Neovim 0.10 y 0.12 comparten `stdpath('data')/site/parser` por defecto.
+Actualizar parsers desde 0.12 puede instalar ABI 15 y romper su carga
+en 0.10. Para separar las instalaciones, usá otro NVIM_APPNAME, por
+ejemplo `NVIM_APPNAME=nvim-010 nvim`. Ese nombre también separa la
+configuración y los datos del editor.
+
 ==============================================================================
 3. Instalación                                              *asp-instalacion*
 
