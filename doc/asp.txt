@@ -165,18 +165,27 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
         local group = vim.api.nvim_create_augroup('asp_document_highlight', {
           clear = true,
         })
-        vim.api.nvim_create_autocmd('CursorHold', {
+        vim.api.nvim_create_autocmd('LspAttach', {
           group = group,
-          pattern = '*.asp',
-          callback = vim.lsp.buf.document_highlight,
-        })
-        local clear = { 'CursorMoved', 'InsertEnter', 'BufLeave' }
-        vim.api.nvim_create_autocmd(clear, {
-          group = group,
-          pattern = '*.asp',
-          callback = vim.lsp.buf.clear_references,
+          callback = function(args)
+            local client = vim.lsp.get_client_by_id(args.data.client_id)
+            if not client or client.name ~= 'asp-ls' then return end
+            vim.api.nvim_clear_autocmds({ group = group, buffer = args.buf })
+            vim.api.nvim_create_autocmd('CursorHold', {
+              group = group,
+              buffer = args.buf,
+              callback = vim.lsp.buf.document_highlight,
+            })
+            local clear = { 'CursorMoved', 'InsertEnter', 'BufLeave' }
+            vim.api.nvim_create_autocmd(clear, {
+              group = group,
+              buffer = args.buf,
+              callback = vim.lsp.buf.clear_references,
+            })
+          end,
         })
 <
+      Se aplica también a buffers .inc y extensiones en mayúsculas.
   documentSymbol ~
       Outline del archivo, con los miembros de clase anidados. Las
       funciones y clases globales de JavaScript van al final, con
@@ -375,7 +384,7 @@ El plugin (Lua, gramática aspclassic, queries) es MIT. El directorio
 ==============================================================================
 7. Cambios                                                       *asp-cambios*
 
-0.5.0 → 0.6.0 ~
+0.5.3 → 0.6.0 ~
 
   - Navegación JavaScript en <script>, archivos .js e includes, con scopes
     locales y globales compartidos por la página.
@@ -387,6 +396,8 @@ El plugin (Lua, gramática aspclassic, queries) es MIT. El directorio
     y nightly sobre Linux y macOS.
   - Cachés de archivos JS y de candidatos para usos de páginas, con
     invalidación al guardar y depuración de archivos borrados.
+  - Caché de directivas de includes por mtime y tamaño, con tope de
+    512 archivos o el conjunto de la consulta si es mayor.
   - Demos regeneradas y un cuarto GIF de navegación JS y páginas.
 
  vim:tw=78:ts=8:ft=help:norl:

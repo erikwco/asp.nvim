@@ -87,6 +87,16 @@ que fijó Erik. Cada ítem es un PR (o una serie corta) con revisión cruzada
    y JS; revisión de rendimiento de la primera consulta en buffers enormes
    (parseo diferido de capas que no se usan).
 
+## Heredado del resolver
+
+- Dentro de un método de clase, un miembro `Private total` pierde contra
+  un `Dim total` de página. Revisar la precedencia entre miembros y página.
+- En un buffer sin nombre, el URI `file://` resuelve a otro buffer y los
+  handlers devuelven vacío. Definir cómo identificar estos buffers antes
+  de ampliar la navegación a archivos sin guardar.
+
+Estos casos quedan para el roadmap y no se corrigen en la release 0.6.
+
 ## Fuera de alcance
 
 Windows (sigue como backlog aparte), JScript de servidor, formateo de

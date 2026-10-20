@@ -183,9 +183,8 @@ Se quita el BOM UTF-8 y se convierte de latin1 si el texto no es UTF-8 válido.
 
 Los nombres JS sin binding, como `document`, `alert` o `.title`, devuelven
 una lista de referencias vacía. Los literales de página dentro de JS sí
-consultan los usos del destino. Fuera de un nombre o literal de página,
-incluso entre dos strings que no son rutas, se buscan los usos del archivo
-abierto. Las referencias de símbolos VBScript conservan la precedencia.
+consultan los usos del destino. Las referencias de símbolos VBScript
+conservan la precedencia.
 
 ### Símbolos, hover y completion
 
@@ -213,59 +212,72 @@ entrar en Insert o salir del buffer:
 
 ```lua
 local group = vim.api.nvim_create_augroup('asp_document_highlight', { clear = true })
-vim.api.nvim_create_autocmd('CursorHold', {
+vim.api.nvim_create_autocmd('LspAttach', {
   group = group,
-  pattern = '*.asp',
-  callback = vim.lsp.buf.document_highlight,
-})
-vim.api.nvim_create_autocmd({ 'CursorMoved', 'InsertEnter', 'BufLeave' }, {
-  group = group,
-  pattern = '*.asp',
-  callback = vim.lsp.buf.clear_references,
+  callback = function(args)
+    local client = vim.lsp.get_client_by_id(args.data.client_id)
+    if not client or client.name ~= 'asp-ls' then return end
+    vim.api.nvim_clear_autocmds({ group = group, buffer = args.buf })
+    vim.api.nvim_create_autocmd('CursorHold', {
+      group = group,
+      buffer = args.buf,
+      callback = vim.lsp.buf.document_highlight,
+    })
+    vim.api.nvim_create_autocmd({ 'CursorMoved', 'InsertEnter', 'BufLeave' }, {
+      group = group,
+      buffer = args.buf,
+      callback = vim.lsp.buf.clear_references,
+    })
+  end,
 })
 ```
 
-> **Nota de rendimiento:** para los archivos INCLUDED/indexados (grafo de
-> includes, `workspace/symbol`), la Fase 4 ya optimizó esto: solo se
-> parsea la capa VBScript desde disco (milisegundos, incluso en archivos
-> enormes), sin tocar html/js/css/regex. Esa optimización no cubre el
-> buffer que tienes ABIERTO: en páginas muy grandes con muchos bloques
-> `<script>` (miles de líneas), la *primera* consulta LSP tras abrir el
-> archivo puede tardar varios segundos mientras tree-sitter parsea todas
-> sus capas; las consultas siguientes sobre ese buffer son instantáneas.
->
-> El JavaScript de los `<script src>` y de los includes se lee desde disco
-> con la misma técnica (sólo html confinado y javascript, nunca
-> VBScript ni CSS) y se cachea por mtime. Con 20 includes de 250
-> funciones JS cada uno, la primera definición cross-file tarda ~150 ms
-> y las siguientes ~0,5 ms. Al terminar cada consulta, la caché vuelve a
-> 64 archivos descartando los usados hace más tiempo, salvo los que usó
-> esa consulta: si fueron más de 64, los conserva todos. Olvida los
-> borrados en la siguiente consulta.
->
-> El grafo de includes cachea las directivas de cada archivo por mtime y
-> tamaño, con el mismo criterio y un tope de 512 archivos: al terminar
-> cada consulta vuelve a 512, salvo que esa consulta haya recorrido más,
-> y entonces conserva todos los suyos. El destino de cada include se
-> resuelve en cada consulta, así que crear o borrar un archivo incluido
-> no requiere invalidar nada. En caliente, una definición cross-file con
-> 100 includes tarda ~1,8 ms en JS y ~1,7 ms en VBScript, frente a 115 y
-> 17 ms antes. [Mediciones](tests/bench/includes_graph.md).
->
-> La primera búsqueda de usos de una página recorre y lee el sitio entero,
-> y puede tardar segundos. Las siguientes comprueban mtime y tamaño y solo
-> releen archivos cambiados. Si se recorren al menos 2.000 archivos o la
-> consulta tarda un segundo, se emite un único aviso INFO con la cantidad
-> de archivos y el uso de caché en las siguientes consultas.
->
-> En Neovim 0.12.6 sobre Apple M4 Pro, 5.000 fuentes de unos 20 KB más el
-> destino y cinco JS minificados tardaron 3.334 ms en la primera consulta y
-> 70 ms con caché, frente a 6.546 y 127 ms antes de estas correcciones.
-> Son medianas de cinco pares alternados, con 5.000 referencias verificadas
-> en cada consulta. Los archivos recién creados podían estar en la caché
-> del sistema operativo. [Mediciones y límites](tests/bench/pages_references.md).
-> Para repetir el caso con validación de rangos y lecturas:
-> `nvim --headless -u NONE --cmd 'set rtp+=.' -l tests/bench/pages_references.lua`.
+El ejemplo se registra cuando se adjunta `asp-ls`, también en `.inc` y
+extensiones en mayúsculas.
+
+### Rendimiento
+
+Las consultas VBScript sobre archivos de disco, como includes y símbolos
+del proyecto, parsean sólo VBScript. En el buffer que tenés abierto,
+tree-sitter también procesa las capas HTML, JavaScript, CSS y regex. En
+páginas muy grandes con muchos bloques `<script>`, la primera consulta
+puede tardar varios segundos. Las siguientes reutilizan los árboles,
+aunque el costo de recorrer símbolos y ocurrencias crece con el archivo.
+
+El resaltado recorre sólo las ocurrencias del buffer. Si la declaración
+está allí, tampoco consulta archivos externos para clasificarla. Cuando
+falta, busca la definición en includes o scripts externos para distinguir
+un uso de un nombre sin declaración.
+[Mediciones del resaltado frente a referencias](tests/bench/document_highlight.md).
+
+El JavaScript de los `<script src>` y de los includes se lee desde disco
+con parsers de HTML y JavaScript confinados a sus regiones. La caché usa
+mtime y tamaño. Al terminar cada consulta vuelve a 64 archivos, descartando
+los usados hace más tiempo, salvo los que usó esa consulta: si fueron más
+de 64, los conserva todos. Olvida los borrados en la siguiente consulta.
+
+El grafo de includes cachea las directivas de cada archivo por mtime y
+tamaño, con el mismo criterio y un tope de 512 archivos. El destino de
+cada include se resuelve en cada consulta, así que crear o borrar un
+archivo incluido no requiere invalidar nada. En caliente, una definición
+cross-file con 100 includes tarda ~1,8 ms en JS y ~1,7 ms en VBScript,
+frente a 115 y 17 ms antes de agregar esta caché.
+[Mediciones](tests/bench/includes_graph.md).
+
+La primera búsqueda de usos de una página recorre y lee el sitio entero,
+y puede tardar segundos. Las siguientes comprueban mtime y tamaño y sólo
+releen archivos cambiados. Si se recorren al menos 2.000 archivos o la
+consulta tarda un segundo, se emite un único aviso INFO con la cantidad
+de archivos y el uso de caché en las siguientes consultas.
+
+En Neovim 0.12.6 sobre Apple M4 Pro, 5.000 fuentes de unos 20 KB más el
+destino y cinco JS minificados tardaron 3.334 ms en la primera consulta y
+70 ms con caché, frente a 6.546 y 127 ms antes de optimizar el barrido.
+Son medianas de cinco pares alternados, con 5.000 referencias verificadas
+en cada consulta. Los archivos recién creados podían estar en la caché
+del sistema operativo. [Mediciones y límites](tests/bench/pages_references.md).
+Para repetir el caso con validación de rangos y lecturas:
+`nvim --headless -u NONE --cmd 'set rtp+=.' -l tests/bench/pages_references.lua`.
 
 ## Limitaciones conocidas
 
@@ -321,10 +333,6 @@ vim.api.nvim_create_autocmd({ 'CursorMoved', 'InsertEnter', 'BufLeave' }, {
   onclick=...>"`) ni un `href` cuyo prefijo `javascript:` viene de un
   `<%= %>`.
 
-## Verificación
-
-`:checkhealth asp`
-
 ## Licencias
 
 - El plugin (código Lua, gramática aspclassic, queries): **MIT**.
@@ -348,7 +356,8 @@ La versión 0.6.0 incluye:
 - Búsqueda de usos de páginas en todo el sitio.
 - Navegación JavaScript en el archivo, en `.js` e includes, en manejadores
   `on*` y en URLs `javascript:`.
-- Hover y completion de los objetos intrínsecos de ASP.
+- Hover de los objetos intrínsecos de ASP y de las firmas de tus funciones
+  y subs de VBScript. Completion de miembros intrínsecos y símbolos del proyecto.
 - Diagnósticos de includes y búsqueda de símbolos.
 - `documentHighlight` para las ocurrencias VBScript y JS del buffer actual.
 - CI en Neovim 0.10.4, estable y nightly, sobre Linux y macOS.
