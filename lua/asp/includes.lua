@@ -70,11 +70,11 @@ function M.candidate_for(item, from_abs, root)
   return norm(vim.fs.dirname(from_abs) .. '/' .. item.path_text)
 end
 
--- Tope de archivos en file_cache; al pasarlo se expulsa el usado hace más
--- tiempo (LRU). Cada entrada es sólo la lista de directivas de un archivo
--- (unos pocos items de cinco campos), así que 512 cuestan poco y cubren
--- el grafo de muchas páginas a la vez; el tope sólo evita que la caché
--- crezca con cada archivo visitado en una sesión larga.
+-- Tope de archivos en file_cache al terminar cada consulta (ver trim).
+-- Cada entrada es sólo la lista de directivas de un archivo (unos pocos
+-- items de cinco campos), así que 512 cuestan poco y cubren el grafo de
+-- muchas páginas a la vez; el tope sólo evita que la caché crezca con
+-- cada archivo visitado en una sesión larga.
 local FILE_CACHE_MAX = 512
 
 -- ruta normalizada → {stamp, used, items}. `items` son las directivas SIN
@@ -85,13 +85,6 @@ local FILE_CACHE_MAX = 512
 local file_cache = {}
 local cached = 0
 local clock = 0
--- Valor de `clock` al empezar la consulta en curso (graph, buffer_graph o
--- un includes_of suelto): las entradas usadas desde entonces son de esa
--- consulta y no se expulsan. Si no, un grafo de más de FILE_CACHE_MAX
--- archivos se recorrería en el mismo orden en cada consulta y cada archivo
--- saldría antes de volver a usarse: todo se releería de disco. El tope
--- efectivo es el mayor entre FILE_CACHE_MAX y el tamaño del grafo.
-local walk_start = 0
 
 local function forget(path)
   if file_cache[path] then
@@ -107,25 +100,32 @@ local function stamp_of(path)
   return st and (st.mtime.sec .. ':' .. st.mtime.nsec .. ':' .. st.size) or nil
 end
 
-local function remember(path, entry)
-  if not file_cache[path] then cached = cached + 1 end
-  file_cache[path] = entry
-  while cached > FILE_CACHE_MAX do
-    local lru
-    for p, e in pairs(file_cache) do
-      if e.used < walk_start and (not lru or e.used < file_cache[lru].used) then lru = p end
-    end
-    if not lru then return end
-    forget(lru)
+---Cierra una consulta (graph, buffer_graph o un includes_of suelto) que
+---empezó con `clock` en `start`: expulsa las entradas usadas hace más
+---tiempo hasta volver a FILE_CACHE_MAX, pero nunca una que usó esa
+---consulta. El tope efectivo es el mayor entre FILE_CACHE_MAX y los
+---archivos de la consulta: con un tope fijo, un grafo más grande se
+---recorrería en el mismo orden en cada consulta y cada archivo saldría
+---antes de volver a usarse, así que todo se releería de disco. Se recorta
+---al terminar y no al guardar cada entrada para que también vuelva al tope
+---una consulta que sólo encuentra entradas cacheadas, y para hacerlo en
+---una sola pasada.
+---@param start integer
+local function trim(start)
+  if cached <= FILE_CACHE_MAX then return end
+  local old = {}
+  for p, e in pairs(file_cache) do
+    if e.used < start then table.insert(old, p) end
   end
+  table.sort(old, function(a, b) return file_cache[a].used < file_cache[b].used end)
+  local excess = cached - FILE_CACHE_MAX
+  for i = 1, math.min(excess, #old) do forget(old[i]) end
 end
 
--- Abre una consulta: lo que se use desde ahora no se expulsa de file_cache
--- (ver walk_start). Devuelve el memo de raíces virtuales de la consulta
--- (ver resolved_includes).
+-- Abre una consulta: devuelve el valor de `clock` con el que empieza (para
+-- trim al cerrarla) y su memo de raíces virtuales (ver resolved_includes).
 local function begin_walk()
-  walk_start = clock + 1
-  return {}
+  return clock + 1, {}
 end
 
 ---Directivas de un archivo de disco, sin resolver, cacheadas por mtime y
@@ -152,7 +152,8 @@ local function directives_of(path)
   f:close()
   local parser = vim.treesitter.get_string_parser(content, 'aspclassic')
   local items = extract(parser:parse()[1]:root(), content)
-  remember(path, { stamp = stamp, used = clock, items = items })
+  if not hit then cached = cached + 1 end
+  file_cache[path] = { stamp = stamp, used = clock, items = items }
   return items
 end
 
@@ -224,7 +225,10 @@ end
 ---@param bufnr integer|nil buffer cuyo contenido usar en lugar del disco
 ---@return table[] lista {kind, path_text, resolved, lnum, col, end_col}
 function M.includes_of(abs_path, bufnr)
-  return resolved_includes(abs_path and norm(abs_path), bufnr, begin_walk())
+  local start, roots = begin_walk()
+  local items = resolved_includes(abs_path and norm(abs_path), bufnr, roots)
+  trim(start)
+  return items
 end
 
 -- Declaración adelantada: walk_from_disk y process_items se llaman entre sí
@@ -293,10 +297,11 @@ function M.graph(abs_path)
   local g = { order = {}, unresolved = {}, cycles = {} }
   local visited = { [abs_path] = true }
   local on_stack = { [abs_path] = true }
-  local roots = begin_walk()
+  local start, roots = begin_walk()
   local items = resolved_includes(abs_path, nil, roots)
   process_items(items, abs_path, visited, on_stack, g, roots)
   on_stack[abs_path] = nil
+  trim(start)
   return g
 end
 
@@ -308,10 +313,11 @@ function M.buffer_graph(bufnr)
   local g = { order = {}, unresolved = {}, cycles = {} }
   local visited = { [abs] = true }
   local on_stack = { [abs] = true }
-  local roots = begin_walk()
+  local start, roots = begin_walk()
   local items = resolved_includes(nil, bufnr, roots)
   process_items(items, abs, visited, on_stack, g, roots)
   on_stack[abs] = nil
+  trim(start)
   return g
 end
 
