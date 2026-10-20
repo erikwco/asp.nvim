@@ -20,6 +20,9 @@ describe('asp-ls regresiones de resaltado', function()
       local client = vim.lsp.get_clients({ bufnr = bufnr, name = 'asp-ls' })[1]
       return client and client.initialized
     end))
+    local ready = false
+    vim.schedule(function() ready = true end)
+    assert.is_true(vim.wait(2000, function() return ready end))
   end
 
   local function params(line, character)

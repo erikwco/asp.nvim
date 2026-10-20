@@ -968,7 +968,8 @@ local function definition(bufnr, position)
   end)
 end
 
-local function references(bufnr, position)
+local function references(bufnr, position, opts)
+  opts = opts or {}
   local data = get_data(bufnr)
   if not data then return nil end
   local occ, property = occurrence_at(data, position)
@@ -989,7 +990,7 @@ local function references(bufnr, position)
   local binding = resolve(data, occ)
   if binding and not binding.global then
     collect(vim.uri_from_bufnr(bufnr), data, function(r) return r == binding end)
-    return out
+    return out, location(vim.uri_from_bufnr(bufnr), binding)
   end
 
   -- En el navegador el scope global de la página es uno solo: los globales
@@ -998,20 +999,22 @@ local function references(bufnr, position)
   -- declaraciones por prioridad; references las reúne todas.
   local files = { { uri = vim.uri_from_bufnr(bufnr), data = data } }
   local declared = binding ~= nil
-  each_external(bufnr, data, function(uri, ext)
-    table.insert(files, { uri = uri, data = ext })
-    declared = declared or global_binding(ext, name) ~= nil
-  end)
+  if not opts.buffer_only then
+    each_external(bufnr, data, function(uri, ext)
+      table.insert(files, { uri = uri, data = ext })
+      declared = declared or global_binding(ext, name) ~= nil
+    end)
+  end
   -- Sin declaración en la página ni en sus archivos externos (`document`,
   -- `alert`, un global implícito): {} y no nil. El usuario pidió las
   -- referencias de un nombre JS; una lista vacía (truthy en Lua) corta la
   -- cadena de asp.lsp para que asp.pages no responda con los usos de la
   -- página como si fueran referencias de ese identificador.
-  if not declared then return {} end
+  if not declared and not opts.buffer_only then return {} end
   for _, f in ipairs(files) do
     collect(f.uri, f.data, function(r) return r == nil or r.global end)
   end
-  return out
+  return out, binding and location(vim.uri_from_bufnr(bufnr), binding) or nil
 end
 
 local function document_symbols(bufnr)
@@ -1064,8 +1067,8 @@ end
 -- handlers de asp.lsp encadenan capas con `or` y jamás deben lanzar.
 local function safe(fn, bufnr, ...)
   bufnr = bufnr == 0 and vim.api.nvim_get_current_buf() or bufnr
-  local ok, res = pcall(fn, bufnr, ...)
-  if ok then return res end
+  local ok, res, binding = pcall(fn, bufnr, ...)
+  if ok then return res, binding end
   return nil
 end
 
@@ -1095,11 +1098,15 @@ end
 ---misma declaración que el identificador JS bajo `position`, incluida la
 ---declaración. Un global es uno solo para toda la página: reúne las
 ---declaraciones homónimas de todos esos archivos y sus usos.
+---Con buffer_only no consulta externos: devuelve candidatos del buffer
+---aunque falte una declaración. El llamador debe resolverla antes de usarlos.
 ---@param bufnr integer
 ---@param position table {line, character}
+---@param opts? table {buffer_only?: boolean}
 ---@return table[]|nil Location[]
-function M.references(bufnr, position)
-  return safe(references, bufnr, position)
+---@return table|nil binding Location de la declaración en el buffer
+function M.references(bufnr, position, opts)
+  return safe(references, bufnr, position, opts)
 end
 
 ---Funciones y clases JS globales (con sus métodos) para el outline, con

@@ -49,9 +49,27 @@ M.handlers['textDocument/documentHighlight'] = function(params)
     local bufnr = vim.uri_to_bufnr(uri)
     local pos = params.position
     local symbols, js = require('asp.symbols'), require('asp.js')
-    local refs = nonempty(symbols.references(bufnr, pos)) or js.references(bufnr, pos) or {}
-    if #refs == 0 then return {} end
-    local definition = symbols.definition(bufnr, pos) or js.definition(bufnr, pos)
+    local refs, binding = symbols.references(bufnr, pos, { buffer_only = true })
+    local definition
+    if #refs > 0 then
+      if binding then
+        local s = binding.selection
+        definition = {
+          uri = uri,
+          range = {
+            start = { line = s[1], character = s[2] },
+            ['end'] = { line = s[3], character = s[4] },
+          },
+        }
+      else
+        definition = symbols.definition(bufnr, pos)
+      end
+    else
+      refs, definition = js.references(bufnr, pos, { buffer_only = true })
+      if not refs or #refs == 0 then return {} end
+      definition = definition or js.definition(bufnr, pos)
+      if not definition then return {} end
+    end
     local kinds = vim.lsp.protocol.DocumentHighlightKind
     local highlights = {}
     for _, ref in ipairs(refs) do
@@ -87,10 +105,17 @@ end
 
 local function server(dispatchers)
   local closing = false
+  local request_id = 0
   return {
-    request = function(method, params, callback)
+    request = function(method, params, callback, notify_reply_callback)
+      request_id = request_id + 1
+      local id = request_id
+      local function respond(err, result)
+        if notify_reply_callback then notify_reply_callback(id) end
+        callback(err, result, id)
+      end
       if method == 'initialize' then
-        callback(nil, {
+        respond(nil, {
           capabilities = {
             documentSymbolProvider = true,
             definitionProvider = true,
@@ -104,7 +129,7 @@ local function server(dispatchers)
           serverInfo = { name = 'asp-ls', version = '0.6.0' },
         })
       elseif method == 'shutdown' then
-        callback(nil, nil)
+        respond(nil, nil)
       elseif M.handlers[method] then
         local ok, result = pcall(M.handlers[method], params)
         -- Respuesta diferida (como un servidor LSP real, que contesta async
@@ -114,15 +139,15 @@ local function server(dispatchers)
         -- callback al siguiente tick del event loop, fuera de ese contexto.
         vim.schedule(function()
           if ok then
-            callback(nil, result)
+            respond(nil, result)
           else
-            callback({ code = -32603, message = tostring(result) }, nil)
+            respond({ code = -32603, message = tostring(result) }, nil)
           end
         end)
       else
-        callback(nil, nil)
+        respond(nil, nil)
       end
-      return true, 1
+      return true, id
     end,
     notify = function(method, _params)
       if method == 'exit' then
