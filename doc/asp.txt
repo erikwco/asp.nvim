@@ -70,6 +70,7 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       archivo referenciado en su primera línea. Admite `.asp`, `.inc`,
       `.htm`, `.html`, `.js` y `.css` sin distinguir mayúsculas en la
       extensión. Funciona en VBScript, atributos HTML y strings JS.
+      Incluye comillas anidadas en atributos y enlaces en Response.Write.
       Recorta desde el primer `?` o `#` y los espacios exteriores.
       Por ejemplo, `Response.Redirect "otra.asp?id=" & id` resuelve.
 
@@ -80,8 +81,10 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       `https://`, `//`, `mailto:` y `javascript:`.
 
   gf y CTRL-W f ~
-      Usan la misma resolución mediante 'includeexpr'. El ftplugin solo
-      la configura si está vacía y respeta la expresión previa del usuario.
+      Resuelven mediante 'includeexpr' el nombre que Neovim extrae con
+      'isfname'. El ftplugin configura la expresión solo si está vacía y
+      respeta la expresión previa del usuario. Al configurarla, agrega
+      `\` a 'isfname' para admitir `..\includes\helpers.asp` también en Unix.
       Neovim la evalúa cuando su búsqueda normal no encuentra el archivo.
       |:find| no evalúa 'includeexpr'; se puede resolver explícitamente: >lua
         local pages = require('asp.pages')
@@ -112,11 +115,27 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       línea; los ciclos de includes se reportan.
 
   limitaciones conocidas ~
-      Las páginas se detectan por texto dentro de un literal cerrado en
-      una sola línea, sin interpretar comentarios ni decodificar escapes
-      de URL o de lenguaje. No se evalúan expresiones ni URLs construidas
-      en runtime, como `"pagina_" & id & ".asp"` o `"<%= destino %>"`.
+      La detección toma las comillas más cercanas a cada lado del cursor
+      en una sola línea y exige que sean del mismo tipo. No interpreta
+      comentarios ni decodifica escapes de URL o de lenguaje. No evalúa
+      expresiones ni URLs construidas en runtime, como
+      `"pagina_" & id & ".asp"` o `"<%= destino %>"`.
       Los literales sí se detectan con varios `<%= %>` en una misma línea.
+
+      Con el cursor exactamente sobre una comilla, la definición LSP
+      devuelve `nil`. `gf` puede abrir la página desde la comilla inicial.
+
+      En sistemas sensibles a mayúsculas, `"Otra.asp"` no encuentra
+      `otra.asp` y devuelve `nil`. IIS no distingue mayúsculas en los
+      nombres de archivo.
+
+      Las rutas relativas dentro de un .inc o una página incluida parten
+      del archivo que contiene la ruta, no de la página que pidió el
+      navegador. Es un límite de diseño del resolver compartido.
+
+      'isfname' es global. El añadido de `\` afecta a otros buffers y
+      permanece tras ejecutar undo_ftplugin; `isfname<` no restaura un
+      valor anterior de esa opción global.
 
       Varios `<%= %>` en una misma línea (p. ej. `<%=a%><%=b%>`) se
       fusionan por la injection combinada de VBScript (necesaria para

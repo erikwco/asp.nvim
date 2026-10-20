@@ -61,7 +61,9 @@ Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`:
   entre comillas simples o dobles abre el archivo en su primera línea.
   Funciona en VBScript (`Response.Redirect "otra.asp"`), atributos HTML
   (`href`, `action`, `src`) y strings de JavaScript, sin depender de sus
-  parsers. Admite `.asp`, `.inc`, `.htm`, `.html`, `.js` y `.css`, sin
+  parsers. Incluye comillas anidadas, como
+  `<a onclick="location.href='otra.asp'">` y enlaces en `Response.Write`.
+  Admite `.asp`, `.inc`, `.htm`, `.html`, `.js` y `.css`, sin
   distinguir mayúsculas en la extensión. Ignora querystring, fragmento y
   espacios exteriores, así que `"otra.asp?id=" & id` también resuelve.
 - **Símbolos del documento**: `vim.lsp.buf.document_symbol()` u outline de
@@ -86,10 +88,12 @@ los separadores `\` a `/`. El destino debe existir y ser un archivo;
 si no existe, la consulta devuelve `nil` sin agregar diagnósticos.
 Se descartan `http://`, `https://`, `//`, `mailto:` y `javascript:`.
 
-`gf` y `C-w f` también resuelven rutas virtuales mediante `includeexpr`,
-que el ftplugin configura solo si está vacío. Se conserva cualquier
-`includeexpr` previo del usuario. Neovim aplica esta expresión cuando su
-búsqueda normal no encuentra el archivo. `:find` no evalúa `includeexpr`;
+`gf` y `C-w f` usan `includeexpr` para resolver el nombre que Neovim extrae
+con `isfname`. El ftplugin configura la expresión solo si está vacía y
+conserva cualquier `includeexpr` previo del usuario. Al configurarla,
+agrega `\` a `isfname` para admitir rutas como `..\includes\helpers.asp`
+también en Unix. Neovim aplica la expresión cuando su búsqueda normal
+no encuentra el archivo. `:find` no evalúa `includeexpr`;
 para usar el resolver explícitamente:
 
 ```lua
@@ -109,11 +113,22 @@ if path then vim.cmd.find(vim.fn.fnameescape(path)) end
 
 ## Limitaciones conocidas
 
-- La navegación de páginas lee literales cerrados en una sola línea.
+- La navegación de páginas toma las comillas más cercanas a cada lado del
+  cursor en una sola línea y exige que sean del mismo tipo.
   No evalúa expresiones ni URLs construidas en runtime, como
   `"pagina_" & id & ".asp"` o `"<%= destino %>"`. La detección es por texto,
   sin interpretar comentarios ni decodificar escapes de URL o de lenguaje.
   Los literales sí se detectan aunque haya varios `<%= %>` en esa línea.
+- Con el cursor exactamente sobre una comilla, la definición LSP devuelve
+  `nil`. `gf` puede abrir la página desde la comilla inicial.
+- En sistemas sensibles a mayúsculas, `"Otra.asp"` no encuentra `otra.asp`
+  y devuelve `nil`. IIS no distingue mayúsculas en los nombres de archivo.
+- Las rutas relativas dentro de un `.inc` o una página incluida se
+  resuelven contra el archivo que contiene la ruta, no contra la página
+  que pidió el navegador. Es un límite de diseño del resolver compartido.
+- `isfname` es una opción global de Neovim. El añadido de `\` afecta a
+  otros buffers y permanece tras ejecutar `undo_ftplugin`; `isfname<`
+  no restaura un valor anterior de esa opción global.
 - Varios bloques `<%= %>` en una misma línea (p. ej.
   `<td><%=a%></td><td><%=b%></td>`) se fusionan en una sola región por la
   injection combinada de VBScript (necesaria para que construcciones

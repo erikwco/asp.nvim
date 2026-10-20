@@ -26,27 +26,11 @@ end
 -- Leer la línea evita depender de las tres gramáticas y de las regiones
 -- VBScript fusionadas cuando hay varios <%= %> en una misma línea.
 local function literal_at(line, col)
-  local i = 1
-  while i <= #line do
-    local start = line:find('["\']', i)
-    if not start then return nil end
-    local quote = line:sub(start, start)
-    i = start + 1
-    while i <= #line do
-      local char, next_char = line:sub(i, i), line:sub(i + 1, i + 1)
-      -- Sin saltar escapes JS y comillas dobles de VBScript, una comilla
-      -- interior convertiría el resto de la línea en falsos literales.
-      if (char == '\\' and (next_char == quote or next_char == '\\'))
-        or (char == quote and next_char == quote) then
-        i = i + 2
-      elseif char == quote then
-        if col > start and col < i then return line:sub(start + 1, i - 1) end
-        i = i + 1
-        break
-      else
-        i = i + 1
-      end
-    end
+  if line:sub(col, col):match('["\']') then return nil end
+  local left = line:sub(1, col - 1):match('.*()["\']')
+  local right = line:find('["\']', col)
+  if left and right and line:sub(left, left) == line:sub(right, right) then
+    return line:sub(left + 1, right - 1)
   end
 end
 
@@ -72,13 +56,13 @@ function M.definition(bufnr, position)
 end
 
 ---@param text string
----@return string|nil
+---@return string
 function M.includeexpr(text)
   local ok, result = pcall(function()
     -- Conservar el texto deja que gf use 'path' si no es una página local.
     return M.resolve(text, vim.api.nvim_buf_get_name(0)) or text
   end)
-  return ok and result or nil
+  return ok and result or text
 end
 
 return M
