@@ -47,6 +47,19 @@ local function in_project(files, fn)
   assert(ok, err)
 end
 
+-- Corre fn() contando los io.open; devuelve el resultado y la cuenta.
+local function counting_opens(fn)
+  local open, opens = io.open, 0
+  io.open = function(...)
+    opens = opens + 1
+    return open(...)
+  end
+  local ok, res = pcall(fn)
+  io.open = open
+  assert(ok, res)
+  return res, opens
+end
+
 -- 'archivo:línea' de cada Location, en orden.
 local function where(locs)
   local got = {}
@@ -383,14 +396,7 @@ describe('asp.js cross-file', function()
       assert.is_nil(js.definition(0, pos_in('nadie();')))
       assert.are.equal(2 * half, #js._cached_files())
 
-      local open, opens = io.open, 0
-      io.open = function(...)
-        opens = opens + 1
-        return open(...)
-      end
-      local ok, res = pcall(js.definition, 0, pos_in('nadie();'))
-      io.open = open
-      assert.is_true(ok, res)
+      local res, opens = counting_opens(function() return js.definition(0, pos_in('nadie();')) end)
       assert.is_nil(res)
       assert.are.equal(0, opens)
 
@@ -401,6 +407,61 @@ describe('asp.js cross-file', function()
       assert.is_nil(js.definition(0, pos_in('nadie();')))
       assert.are.equal(max, #js._cached_files())
       assert.is_true(vim.tbl_contains(js._cached_files(), dir .. '/otro.js'))
+    end)
+  end)
+
+  it('tras una página grande, una consulta que sólo acierta vuelve al tope sin leer disco', function()
+    local max = js._FILE_CACHE_MAX
+    local half = math.ceil((max + 6) / 2)
+    local files, page, subset = {}, {}, {}
+    for i = 1, half do
+      files['s' .. i .. '.js'] = { 'function s' .. i .. '() {}' }
+      files['i' .. i .. '.inc'] = { '<script>', 'function i' .. i .. '() {}', '</script>' }
+      local tags = {
+        '<script src="s' .. i .. '.js"></script>',
+        '<!--#include file="i' .. i .. '.inc" -->',
+      }
+      vim.list_extend(page, tags)
+      -- Diez de los mismos archivos.
+      if i <= 5 then vim.list_extend(subset, tags) end
+    end
+    local script = { '<script>', 'nadie();', 's1();', '</script>' }
+    vim.list_extend(page, script)
+    vim.list_extend(subset, script)
+    files['pagina.asp'] = page
+    in_project(files, function(dir)
+      local function cached(name)
+        return vim.tbl_contains(js._cached_files(), dir .. '/' .. name)
+      end
+      local function def_counting(text)
+        return counting_opens(function() return js.definition(0, pos_in(text)) end)
+      end
+
+      -- `nadie` no se declara en ningún archivo: definition los recorre todos.
+      assert.is_nil(js.definition(0, pos_in('nadie();')))
+      assert.are.equal(2 * half, #js._cached_files())
+
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, subset)
+      local res, opens = def_counting('nadie();')
+      assert.is_nil(res)
+      assert.are.equal(0, opens)
+      assert.are.equal(max, #js._cached_files())
+      for i = 1, 5 do
+        assert.is_true(cached('s' .. i .. '.js'), i)
+        assert.is_true(cached('i' .. i .. '.inc'), i)
+      end
+
+      -- También recorta un recorrido que corta en el primer match:
+      -- definition de s1 se detiene en s1.js, el primer externo.
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, page)
+      assert.is_nil(js.definition(0, pos_in('nadie();')))
+      assert.are.equal(2 * half, #js._cached_files())
+      local loc
+      loc, opens = def_counting('s1();')
+      assert.are.equal('s1.js', rel(loc.uri))
+      assert.are.equal(0, opens)
+      assert.are.equal(max, #js._cached_files())
+      assert.is_true(cached('s1.js'))
     end)
   end)
 

@@ -222,6 +222,44 @@ describe('asp.includes', function()
     end)
   end)
 
+  it('tras un grafo grande, una consulta que sólo acierta vuelve al tope sin leer disco', function()
+    local max = includes._FILE_CACHE_MAX
+    local n = max + 88 -- 600 includes con el tope de 512
+    local files, page = {}, {}
+    for i = 1, n do
+      files['f' .. i .. '.inc'] = {}
+      table.insert(page, ('<!--#include file="f%d.inc" -->'):format(i))
+    end
+    -- graph(f1.inc) recorre f1 y f2: un subconjunto del grafo grande.
+    files['f1.inc'] = { '<!--#include file="f2.inc" -->' }
+    files['grande.asp'] = page
+    in_temp(files, function(dir)
+      local f1 = dir .. '/f1.inc'
+      local buf = vim.api.nvim_create_buf(false, true)
+      vim.api.nvim_buf_set_name(buf, f1)
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, files['f1.inc'])
+      local queries = {
+        includes_of = function() return includes.includes_of(f1) end,
+        graph = function() return includes.graph(f1) end,
+        buffer_graph = function() return includes.buffer_graph(buf) end,
+      }
+      local ok, err = pcall(function()
+        for name, query in pairs(queries) do
+          includes.graph(dir .. '/grande.asp')
+          assert.are.equal(n + 1, #includes._cached_files(), name)
+          local _, opens = counting_opens(query)
+          assert.are.equal(0, opens, name)
+          assert.are.equal(max, #includes._cached_files(), name)
+          -- Lo que usó la consulta sigue en la caché.
+          _, opens = counting_opens(query)
+          assert.are.equal(0, opens, name)
+        end
+      end)
+      vim.api.nvim_buf_delete(buf, { force = true })
+      assert(ok, err)
+    end)
+  end)
+
   it('escribir un include desde Neovim llama a includes.invalidate', function()
     local path = vim.fn.tempname() .. '.inc'
     local seen
