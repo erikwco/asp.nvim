@@ -37,7 +37,9 @@ Hover con la doc de los intrínsecos y completion de sus miembros:
   nvim-treesitter: `:TSInstall html javascript css`): asp.nvim no los
   compila para no pisar los que instale el usuario. `html` es necesario
   para el resaltado de las regiones HTML; `javascript`/`css` para el
-  código de cliente dentro de `<script>`/`<style>`.
+  código de cliente dentro de `<script>`/`<style>`. `javascript` además
+  habilita ir a definición/referencias en los `<script>` (sin él esa capa
+  queda inerte y `:checkhealth asp` lo advierte).
 
 ## Instalación (lazy.nvim)
 
@@ -57,6 +59,13 @@ Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`:
 - **Ir a definición**: `C-]` (vía tagfunc) o `vim.lsp.buf.definition()` —
   Functions, Subs, Classes, variables y constantes del archivo actual,
   case-insensitive, con precedencia local → página.
+- **JavaScript de cliente**: definición y referencias también dentro de los
+  `<script>` del archivo: funciones, clases, métodos, `var`/`let`/`const`
+  y parámetros, case-sensitive, con scope por función y un scope global
+  compartido por todos los `<script>` de la página. Se ignoran
+  `<script runat="server">`, los `type` que no son JavaScript
+  (`text/template`, ...) y `<script language="VBScript">`; un `<%= %>`
+  dentro del JS se trata como un valor opaco. Ver `:help asp-javascript`.
 - **Abrir una página o recurso**: la misma consulta dentro de un literal
   entre comillas simples o dobles abre el archivo en su primera línea.
   Funciona en VBScript (`Response.Redirect "otra.asp"`), atributos HTML
@@ -67,7 +76,9 @@ Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`:
   distinguir mayúsculas en la extensión. Ignora querystring, fragmento y
   espacios exteriores, así que `"otra.asp?id=" & id` también resuelve.
 - **Símbolos del documento**: `vim.lsp.buf.document_symbol()` u outline de
-  tu plugin favorito (aerial, Telescope `lsp_document_symbols`, ...).
+  tu plugin favorito (aerial, Telescope `lsp_document_symbols`, ...). Las
+  funciones y clases JS globales aparecen al final, con detail
+  `javascript`.
 - **Hover**: documentación de los objetos intrínsecos de ASP
   (`Response`, `Request`, `Server`, `Session`, `Application`) y firma de
   tus propias funciones/subs.
@@ -134,6 +145,12 @@ if path then vim.cmd.find(vim.fn.fnameescape(path)) end
   como resultado, hover/definición/referencias no resuelven identificadores
   dentro de esos bloques adyacentes. Poné cada `<%= %>` en su propia línea
   para navegación LSP completa.
+- JavaScript: sólo el archivo actual (no sigue `<script src>` ni includes);
+  `let`/`const` se tratan como `var` (scope de función, no de bloque); las
+  propiedades (`obj.metodo`, `this.x`, jQuery `$`) no se resuelven; no se
+  recogen como declaración los nombres desestructurados, los parámetros
+  con default o rest, el de `catch (e)` ni la variable de
+  `for (const x of xs)`. Sin hover ni completion para JS.
 
 ## Verificación
 
@@ -167,6 +184,10 @@ necesita `cc`). Si editás una `grammars/*/grammar.js`, regenerá y commiteá:
 make generate   # requiere Node.js; usa tree-sitter-cli 0.25.10, ABI 14
 make test       # corpus + suite plenary
 ```
+
+`make test` necesita red la primera vez: clona plenary.nvim,
+tree-sitter-html y tree-sitter-javascript en `build/` y compila
+`parser/html.so` y `parser/javascript.so` sólo para la suite.
 
 El CI falla si el `parser.c` versionado quedó desactualizado respecto a su
 `grammar.js`.
