@@ -188,6 +188,8 @@ make test       # corpus + suite plenary
 `make test` necesita red la primera vez: clona plenary.nvim,
 tree-sitter-html y tree-sitter-javascript en `build/` y compila
 `parser/html.so` y `parser/javascript.so` sólo para la suite.
+tree-sitter-javascript va pineado al tag `v0.23.1` (ABI 14): su rama
+principal genera ABI 15, que Neovim 0.10 no carga.
 
 El CI falla si el `parser.c` versionado quedó desactualizado respecto a su
 `grammar.js`.

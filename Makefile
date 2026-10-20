@@ -11,8 +11,15 @@ CFLAGS ?= -Os -fPIC -shared
 # en build/ (sólo para la suite: al usuario se los provee nvim-treesitter):
 # html para las regiones HTML y los <script>, javascript para la capa de
 # navegación JS (asp.js) dentro de esos <script>.
+#
+# tree-sitter-javascript va pineado a un tag con ABI 14: la rama principal
+# genera ABI 15, que Neovim 0.10 (el mínimo soportado) no carga, y además
+# no es reproducible. El directorio lleva el tag en el nombre, así que
+# cambiar TS_JS_REF clona de nuevo y recompila parser/javascript.so.
 TS_CLI ?= npx -y tree-sitter-cli@0.25.10
 TS_ABI ?= 14
+TS_JS_REF ?= v0.23.1
+TS_JS_DIR := build/tree-sitter-javascript-$(TS_JS_REF)
 
 PARSERS := parser/aspclassic.so parser/vbscript.so
 
@@ -40,8 +47,8 @@ build/plenary.nvim: | build
 build/tree-sitter-html: | build
 	git clone --depth 1 https://github.com/tree-sitter/tree-sitter-html $@
 
-build/tree-sitter-javascript: | build
-	git clone --depth 1 https://github.com/tree-sitter/tree-sitter-javascript $@
+$(TS_JS_DIR)/src/parser.c: | build
+	git -c advice.detachedHead=false clone --depth 1 --branch $(TS_JS_REF) https://github.com/tree-sitter/tree-sitter-javascript $(TS_JS_DIR)
 
 parser/aspclassic.so: grammars/aspclassic/src/parser.c | parser
 	$(CC) $(CFLAGS) -Igrammars/aspclassic/src grammars/aspclassic/src/*.c -o $@
@@ -53,8 +60,8 @@ parser/html.so: | build/tree-sitter-html parser
 	$(CC) $(CFLAGS) -Ibuild/tree-sitter-html/src build/tree-sitter-html/src/*.c -o $@
 
 # src/*.c incluye el scanner.c externo de la gramática.
-parser/javascript.so: | build/tree-sitter-javascript parser
-	$(CC) $(CFLAGS) -Ibuild/tree-sitter-javascript/src build/tree-sitter-javascript/src/*.c -o $@
+parser/javascript.so: $(TS_JS_DIR)/src/parser.c | parser
+	$(CC) $(CFLAGS) -I$(TS_JS_DIR)/src $(TS_JS_DIR)/src/*.c -o $@
 
 test: parsers-test build/plenary.nvim
 	$(NVIM) --headless -u tests/minimal_init.lua \
