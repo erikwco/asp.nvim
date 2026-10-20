@@ -43,6 +43,32 @@ M.handlers['textDocument/references'] = function(params)
     or {}
 end
 
+M.handlers['textDocument/documentHighlight'] = function(params)
+  local ok, result = pcall(function()
+    local uri = params.textDocument.uri
+    local bufnr = vim.uri_to_bufnr(uri)
+    local pos = params.position
+    local symbols, js = require('asp.symbols'), require('asp.js')
+    local refs = nonempty(symbols.references(bufnr, pos)) or js.references(bufnr, pos) or {}
+    if #refs == 0 then return {} end
+    local definition = symbols.definition(bufnr, pos) or js.definition(bufnr, pos)
+    local kinds = vim.lsp.protocol.DocumentHighlightKind
+    local highlights = {}
+    for _, ref in ipairs(refs) do
+      if ref.uri == uri then
+        local kind = kinds.Text
+        if definition then
+          local declaration = definition.uri == uri and vim.deep_equal(definition.range, ref.range)
+          kind = declaration and kinds.Write or kinds.Read
+        end
+        table.insert(highlights, { range = ref.range, kind = kind })
+      end
+    end
+    return highlights
+  end)
+  return ok and result or {}
+end
+
 M.handlers['workspace/symbol'] = function(params)
   local client = vim.lsp.get_clients({ name = 'asp-ls' })[1]
   local root = client and client.config.root_dir or vim.fn.getcwd()
@@ -69,6 +95,7 @@ local function server(dispatchers)
             documentSymbolProvider = true,
             definitionProvider = true,
             referencesProvider = true,
+            documentHighlightProvider = true,
             workspaceSymbolProvider = true,
             hoverProvider = true,
             completionProvider = { triggerCharacters = { '.' } },
