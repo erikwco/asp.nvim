@@ -1,6 +1,18 @@
 local FIX = vim.fn.fnamemodify('tests/fixtures/proyecto', ':p'):gsub('/$', '')
 local SOURCE = FIX .. '/paginas/inicio.asp'
 local TARGET = FIX .. '/paginas/otra.asp'
+local original_isfname = vim.o.isfname
+
+local regression_cases = {
+  { 'JS simple dentro de atributo doble', [[<a onclick="location.href='otra.asp'">]] },
+  { 'JS doble dentro de atributo simple', [[<a onclick='window.open("otra.asp")'>]] },
+  { 'HTML con comillas duplicadas en Response.Write', [[<% Response.Write "<a href=""otra.asp"">Ir</a>" %>]] },
+  { 'HTML con comillas simples en Response.Write', [[<% Response.Write "<a href='otra.asp'>Ir</a>" %>]] },
+  { 'Redirect después de una barra invertida', [[<% r = Replace(x, "/", "\") : Response.Redirect "otra.asp" %>]] },
+  { 'href después de una ruta VBScript', [[<% base = "C:\sitio\" %><a href="otra.asp">x</a>]] },
+  { 'href después de un apóstrofo HTML', [[<td>O'Brien</td><td><a href="otra.asp">ver</a></td>]] },
+  { 'href después de un comentario VBScript', [[<% x = 1 ' comentario %><a href="otra.asp">x</a>]] },
+}
 
 local function pos_of(text)
   for i, line in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do
@@ -28,7 +40,10 @@ describe('asp.pages', function()
     pages = require('asp.pages')
   end)
 
-  after_each(function() vim.cmd('bwipeout!') end)
+  after_each(function()
+    vim.cmd('bwipeout!')
+    vim.o.isfname = original_isfname
+  end)
 
   local cases = {
     { 'Response.Redirect dentro de VBScript', 'otra.asp" %>', TARGET },
@@ -46,6 +61,23 @@ describe('asp.pages', function()
     end)
   end
 
+  for _, case in ipairs(regression_cases) do
+    it('resuelve ' .. case[1], function()
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, { case[2] })
+      local pos = pos_of('otra.asp')
+      for offset = 0, #'otra.asp' - 1 do
+        assert.are.same(location(TARGET), pages.definition(0, {
+          line = pos.line, character = pos.character + offset,
+        }))
+      end
+      for _, offset in ipairs({ -1, #'otra.asp' }) do
+        assert.is_nil(pages.definition(0, {
+          line = pos.line, character = pos.character + offset,
+        }))
+      end
+    end)
+  end
+
   it('descarta URLs externas y archivos inexistentes', function()
     assert.is_nil(pages.definition(0, pos_of('http://example.com')))
     assert.is_nil(pages.definition(0, pos_of('inexistente.asp')))
@@ -60,7 +92,7 @@ describe('asp.pages', function()
     assert.is_nil(pages.definition(0, opening))
   end)
 
-  it('distingue strings vecinos, comillas escapadas y columnas UTF-8', function()
+  it('distingue strings vecinos, comillas interiores y columnas UTF-8', function()
     local lines = {
       [[<a title="It's otra.asp" href='otra.asp'>Ir</a>]],
       [[<script>const texto = "dijo \"otra.asp\""; const url = 'otra.asp';</script>]],
@@ -73,7 +105,14 @@ describe('asp.pages', function()
       assert.are.same(location(TARGET), pages.definition(0, { line = i - 1, character = col }))
     end
     assert.is_nil(pages.definition(0, { line = 1, character = assert(lines[2]:find('otra.asp', 1, true)) }))
-    assert.is_nil(pages.definition(0, { line = 2, character = assert(lines[3]:find('otra.asp', 1, true)) }))
+    assert.are.same(location(TARGET), pages.definition(0, {
+      line = 2, character = assert(lines[3]:find('otra.asp', 1, true)),
+    }))
+  end)
+
+  it('devuelve nil si las comillas más cercanas son distintas', function()
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, { [[<a href="otra.asp'>Ir</a>]] })
+    assert.is_nil(pages.definition(0, pos_of('otra.asp')))
   end)
 
   it('tolera entradas inválidas y strings sin cerrar', function()
@@ -139,8 +178,26 @@ describe('asp.pages', function()
     assert.are.equal(FIX .. '/includes/helpers.asp', pages.includeexpr('/includes/helpers.asp'))
     assert.are.equal('inexistente.asp', pages.includeexpr('inexistente.asp'))
     local expr = vim.bo.includeexpr
+    local isfname, undo = vim.o.isfname, vim.b.undo_ftplugin
     vim.cmd('runtime! ftplugin/asp.lua')
     assert.are.equal(expr, vim.bo.includeexpr)
+    assert.are.equal(isfname, vim.o.isfname)
+    assert.are.equal(undo, vim.b.undo_ftplugin)
+  end)
+
+  it('includeexpr conserva el texto si falla la resolución', function()
+    local resolve = pages.resolve
+    pages.resolve = function() error('fallo de resolución simulado') end
+    local result = pages.includeexpr('otra.asp')
+    pages.resolve = resolve
+    assert.are.equal('otra.asp', result)
+  end)
+
+  it('undo_ftplugin restaura includeexpr sin cambiar el isfname global', function()
+    local isfname = vim.o.isfname
+    vim.cmd(vim.b.undo_ftplugin)
+    assert.are.equal(vim.go.includeexpr, vim.bo.includeexpr)
+    assert.are.equal(isfname, vim.o.isfname)
   end)
 
   it('el ftplugin respeta un includeexpr del usuario', function()
@@ -154,6 +211,22 @@ describe('asp.pages', function()
     vim.api.nvim_win_set_cursor(0, { pos.line + 1, pos.character })
     vim.cmd('normal! gf')
     assert.are.equal(FIX .. '/includes/helpers.asp', vim.api.nvim_buf_get_name(0))
+  end)
+
+  it('gf abre rutas con barras invertidas', function()
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, { [[<a href="..\includes\helpers.asp">Ir</a>]] })
+    vim.bo.modified = false
+    local pos = pos_of('includes')
+    vim.api.nvim_win_set_cursor(0, { pos.line + 1, pos.character })
+    vim.cmd('normal! gf')
+    assert.are.equal(FIX .. '/includes/helpers.asp', vim.api.nvim_buf_get_name(0))
+  end)
+
+  it('gf abre una página desde la comilla inicial', function()
+    local pos = pos_of('otra.asp">Otra')
+    vim.api.nvim_win_set_cursor(0, { pos.line + 1, pos.character - 1 })
+    vim.cmd('normal! gf')
+    assert.are.equal(TARGET, vim.api.nvim_buf_get_name(0))
   end)
 
   it('C-w f abre la ruta virtual en otra ventana', function()
@@ -177,7 +250,10 @@ describe('asp-ls páginas', function()
     end))
   end)
 
-  after_each(function() vim.cmd('bwipeout!') end)
+  after_each(function()
+    vim.cmd('bwipeout!')
+    vim.o.isfname = original_isfname
+  end)
 
   local function definition_at(text)
     local response = vim.lsp.buf_request_sync(0, 'textDocument/definition', {
@@ -202,5 +278,21 @@ describe('asp-ls páginas', function()
     assert.are.same(location(TARGET), definition_at('otra.asp">Otra'))
     assert.are.same(location(TARGET), definition_at("otra.asp';"))
     assert.are.same(location(FIX .. '/paginas/lib/app.js'), definition_at('lib/app.js" %>'))
+  end)
+
+  it('definition resuelve los ocho casos de comillas anidadas y desbalanceadas', function()
+    for _, case in ipairs(regression_cases) do
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, { case[2] })
+      assert.are.same(location(TARGET), definition_at('otra.asp'))
+    end
+  end)
+
+  it('definition devuelve nil sobre las comillas del literal', function()
+    for _, line in ipairs({ [[<a href="otra.asp">Ir</a>]], [[<a href='otra.asp'>Ir</a>]] }) do
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, { line })
+      local quote = line:match('["\']')
+      assert.is_nil(definition_at(quote .. 'otra.asp'))
+      assert.is_nil(definition_at(quote .. '>Ir'))
+    end
   end)
 end)
