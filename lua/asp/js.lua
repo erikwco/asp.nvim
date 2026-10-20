@@ -1,10 +1,10 @@
 -- Capa JavaScript de cliente de asp-ls: definición y referencias de los
--- identificadores de los bloques <script> del buffer y de sus manejadores
--- de evento inline (`onclick="..."`, ver handler_regions), con el mismo
--- contrato que asp.symbols (Location / lista de Location / nil). El scope
--- global de la página se extiende con las declaraciones globales de los
--- `.js` de sus `<script src>` y del JS de las páginas incluidas (ver
--- each_external).
+-- identificadores de los bloques <script> del buffer, de sus manejadores
+-- de evento inline (`onclick="..."`) y de sus URLs `javascript:` (ver
+-- handler_regions), con el mismo contrato que asp.symbols (Location /
+-- lista de Location / nil). El scope global de la página se extiende con
+-- las declaraciones globales de los `.js` de sus `<script src>` y del JS
+-- de las páginas incluidas (ver each_external).
 --
 -- Dos decisiones de diseño, ambas por determinismo:
 --
@@ -268,11 +268,13 @@ local function script_regions(html, source, blocks)
   return regions, srcs
 end
 
----Regiones de los manejadores de evento inline: el valor de todo atributo
----`on*` de cualquier elemento (`onclick`, `ONCHANGE`, ...) y el de un
----`href` con URL `javascript:`, desde después del prefijo. El navegador
----compila cada uno como el cuerpo de una función aparte: cada uno es su
----propia región, como cada <script>, y su propio scope (ver index_js).
+---Regiones del JS de los atributos: el valor de todo atributo `on*` de
+---cualquier elemento (`onclick`, `ONCHANGE`, ...) y el de un `href` con
+---URL `javascript:`, desde después del prefijo. Cada uno es su propia
+---región, como cada <script>, pero no corren igual en el navegador: un
+---manejador `on*` es el cuerpo de una función aparte, con su propio scope
+---(ver index_js); una URL `javascript:` es un script global, y sus `var` y
+---funciones son de la página: su región lleva `url`.
 ---
 ---El rango del `attribute_value` se ensancha sobre los bloques ASP pegados
 ---a sus bordes: el parser html no los ve, así que en
@@ -288,7 +290,7 @@ end
 ---@param html vim.treesitter.LanguageTree capa html, ya parseada
 ---@param source integer|string bufnr o texto del archivo
 ---@param blocks table[] de asp_blocks
----@return Range6[] handlers en orden del documento
+---@return table[] handlers {range: Range6, url?: true} en orden del documento
 local function handler_regions(html, source, blocks)
   local starts, ends = {}, {}
   for _, b in ipairs(blocks) do
@@ -323,11 +325,13 @@ local function handler_regions(html, source, blocks)
           local b = starts[r[6]]
           r[4], r[5], r[6] = b[4], b[5], b[6]
         end
-        if r[3] < r[6] then table.insert(handlers, r) end
+        if r[3] < r[6] then
+          table.insert(handlers, { range = r, url = attr == 'href' or nil })
+        end
       end
     end
   end
-  table.sort(handlers, function(a, b) return a[3] < b[3] end)
+  table.sort(handlers, function(a, b) return a.range[3] < b.range[3] end)
   return handlers
 end
 
@@ -420,14 +424,16 @@ end
 ---funciones en un <script>, references se volvía cuadrático.
 ---
 ---Cada scope recibe una clave entera, su posición en el orden del
----documento; 0 es el global, compartido por todos los <script> y
----manejadores de la página. Las declaraciones se indexan por (clave,
----nombre); en cada clave gana la primera del documento (un `var x`
----redeclarado es la misma variable).
+---documento; 0 es el global, compartido por todos los <script>,
+---manejadores y URLs `javascript:` de la página. Las declaraciones se
+---indexan por (clave, nombre); en cada clave gana la primera del documento
+---(un `var x` redeclarado es la misma variable), salvo que sea de una URL
+---`javascript:`: la de un <script> le gana aunque venga después, porque el
+---<script> corre al cargar la página y la URL recién al hacer clic.
 ---@param data table
 ---@param scopes table[] {node, sb, eb, handler?} de las capturas @scope y
 ---  de los manejadores de evento
----@param items table[] {node, sb, method} de @id/@method, en orden
+---@param items table[] {node, sb, method, url?} de @id/@method, en orden
 local function index(data, scopes, items)
   table.sort(scopes, function(a, b)
     if a.sb ~= b.sb then return a.sb < b.sb end
@@ -485,9 +491,11 @@ local function index(data, scopes, items)
           decl = decl,
           scope = s and s.node,
           global = key == 0,
+          url = it.url,
           slot = slots[key],
         }
-        e.slot[name] = e.slot[name] or e
+        local first = e.slot[name]
+        if not first or (first.url and not e.url) then e.slot[name] = e end
         table.insert(data.decls, e)
         occ.decl = e
       end
@@ -526,7 +534,7 @@ end
 ---@param source string texto de js_source (o un .js entero)
 ---@param regions Range6[][]|nil nil: todo el texto (un .js)
 ---@param blocks table[] de asp_blocks ({} en un .js)
----@param handlers Range6[] de handler_regions, también en `regions`
+---@param handlers table[] de handler_regions, también en `regions`
 local function index_js(data, source, regions, blocks, handlers)
   data.source = source
   -- Parser STRING sobre el texto con los bloques ASP neutralizados (ver
@@ -553,27 +561,34 @@ local function index_js(data, source, regions, blocks, handlers)
 
   local q = vim.treesitter.query.parse('javascript', JS_QUERY)
   local scopes, items = {}, {}
-  -- Un manejador es el cuerpo de una función: sus `var` y sus funciones no
-  -- son globales. Se abre como un scope más, sobre el rango de su región,
-  -- con la raíz de su árbol como nodo: esa raíz empieza en el primer token
-  -- de la región (o en su final, si no tiene ninguno), así que basta
-  -- buscar el manejador que la contiene.
-  local h = 1
-  for _, tree in ipairs(data.trees) do
+  -- Un manejador `on*` es el cuerpo de una función: sus `var` y sus
+  -- funciones no son globales. Se abre como un scope más, sobre el rango de
+  -- su región, con la raíz de su árbol como nodo. Una URL `javascript:` no
+  -- abre ninguno: corre en el global; sólo se marcan sus capturas (ver
+  -- index). La raíz de cada árbol empieza en el primer token de su región
+  -- (o en su final, si no tiene ninguno), así que basta buscar la región
+  -- que la contiene.
+  local h, url = 1, {}
+  for i, tree in ipairs(data.trees) do
     local rb = start_byte_of(tree:root())
-    while handlers[h] and handlers[h][6] < rb do h = h + 1 end
-    if handlers[h] and handlers[h][3] <= rb then
-      table.insert(scopes, { node = tree:root(), sb = handlers[h][3], eb = handlers[h][6], handler = true })
+    while handlers[h] and handlers[h].range[6] < rb do h = h + 1 end
+    local r = handlers[h] and handlers[h].range
+    if r and r[3] <= rb then
+      if handlers[h].url then
+        url[i] = true
+      else
+        table.insert(scopes, { node = tree:root(), sb = r[3], eb = r[6], handler = true })
+      end
     end
   end
-  for _, tree in ipairs(data.trees) do
+  for i, tree in ipairs(data.trees) do
     for id, node in q:iter_captures(tree:root(), source) do
       local _, _, sb = node:start()
       local _, _, eb = node:end_()
       if q.captures[id] == 'scope' then
         table.insert(scopes, { node = node, sb = sb, eb = eb })
       elseif not overlaps_asp(blocks, sb, eb) then
-        table.insert(items, { node = node, sb = sb, method = q.captures[id] == 'method' })
+        table.insert(items, { node = node, sb = sb, method = q.captures[id] == 'method', url = url[i] })
       end
     end
   end
@@ -581,8 +596,8 @@ local function index_js(data, source, regions, blocks, handlers)
 end
 
 ---Llena `data` con el JS de una página (el buffer o una incluida): sus
----<script> de JS de cliente y sus manejadores de evento, cada uno en su
----región, en orden del documento.
+---<script> de JS de cliente, sus manejadores de evento y sus URLs
+---`javascript:`, cada uno en su región, en orden del documento.
 ---@param data table de new_data
 ---@param html vim.treesitter.LanguageTree capa html, ya parseada
 ---@param source integer|string bufnr o texto del archivo
@@ -596,7 +611,7 @@ local function index_page(data, html, source, blocks)
   -- y un raw_text en el cuerpo de un <script>, y el ensanche de un
   -- manejador sólo toma bloques ASP pegados a su valor. Ordenadas, sus
   -- árboles dan las capturas en orden del documento, como pide index.
-  for _, r in ipairs(handlers) do table.insert(regions, { r }) end
+  for _, r in ipairs(handlers) do table.insert(regions, { r.range }) end
   table.sort(regions, function(a, b) return a[1][3] < b[1][3] end)
 
   local text = type(source) == 'number'
@@ -842,10 +857,11 @@ end
 ---la página), buscando el nombre en las declaraciones de cada uno y, si
 ---el scope es una function expression con nombre, en ese nombre después.
 ---
----Si `occ` es él mismo el nombre de una declaración, resuelve a la primera
----de su mismo binding: así un `var x` redeclarado resuelve al primero
----(misma variable en JS) y el nombre de una function expression a la
----propia función, aunque un parámetro homónimo la sombree adentro.
+---Si `occ` es él mismo el nombre de una declaración, resuelve a la que
+---gana en su mismo binding (ver index): así un `var x` redeclarado
+---resuelve al primero (misma variable en JS) y el nombre de una function
+---expression a la propia función, aunque un parámetro homónimo la sombree
+---adentro.
 ---@param data table
 ---@param occ table de data.occurrences
 ---@return table|nil entry
@@ -985,11 +1001,13 @@ local function document_symbols(bufnr)
   if not data then return nil end
 
   -- Sólo funciones y clases globales, como el outline de VBScript deja
-  -- fuera los locales; los métodos van anidados en su clase.
+  -- fuera los locales; los métodos van anidados en su clase. Lo que
+  -- declara una URL `javascript:` es global pero vive en un atributo, como
+  -- lo de un manejador: tampoco entra.
   local out, classes = {}, {}
   for _, e in ipairs(data.decls) do
     local global_fn = e.kind == 12 and FUNCTION_DECLARATIONS[e.decl:type()]
-    if not e.member and not e.scope and (global_fn or e.kind == 5) then
+    if not e.member and not e.scope and not e.url and (global_fn or e.kind == 5) then
       local sym = {
         name = e.name,
         kind = e.kind,
@@ -1034,7 +1052,8 @@ local function safe(fn, bufnr, ...)
 end
 
 ---Declaraciones JS del buffer, en orden del documento: {name, kind, node,
----decl, scope} (scope nil = global; los métodos llevan member = true).
+---decl, scope} (scope nil = global; los métodos llevan member = true y las
+---de una URL `javascript:`, url = true).
 ---@param bufnr integer
 ---@return table[]|nil
 function M.collect(bufnr)

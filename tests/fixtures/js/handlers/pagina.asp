@@ -27,6 +27,7 @@ contador++;
 <input type="button" onclick="sinDeclarar(); location.href = 'otra.asp'" value="Otra">
 <input type="button" onclick="var contador = 5; contador++;" value="Local">
 <input type="button" onclick="function delManejador() {} delManejador();" value="Funcion">
+<input type="button" onclick="ayudaAbierta = false" value="Cerrar ayuda">
 <input type="button" onclick="<%= manejador %>" value="Dinamico">
 <input type="text" onkeyup="<%= prefijo %>reinitAsk()">
 <input type="text" onkeydown="<%= prefijo %> borrar(2)">

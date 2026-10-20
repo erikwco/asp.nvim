@@ -117,7 +117,7 @@ describe('asp.js manejadores de evento', function()
       here('JavaScript: reinitAsk'),
       exact('reinitAsk();'),
       'inc/botones.inc:' .. line_in_file('inc/botones.inc', 'onclick="reinitAsk'),
-      -- enlaces.inc no tiene <script> ni atributos on*: sólo una URL javascript:.
+      -- enlaces.inc no tiene <script> ni atributos on*: sólo URLs javascript:.
       'inc/enlaces.inc:' .. line_in_file('inc/enlaces.inc', 'javascript:reinitAsk'),
     }, where(refs))
   end)
@@ -181,6 +181,15 @@ describe('asp.js manejadores de evento', function()
     assert.is_nil(js.references(0, pos_in('JavaScript: reinitAsk', 'JavaScript')))
     -- Con un bloque ASP delante el prefijo no es estático: no es una región.
     assert.is_nil(def('url %>javascript', 'reinitAsk'))
+  end)
+
+  it('lo que declara una URL javascript: de un include es global de la página', function()
+    local loc = def('onclick="ayudaAbierta', 'ayudaAbierta')
+    assert.are.equal('inc/enlaces.inc', rel(loc.uri))
+    assert.are.same({
+      here('onclick="ayudaAbierta'),
+      'inc/enlaces.inc:' .. line_in_file('inc/enlaces.inc', 'var ayudaAbierta'),
+    }, where(js.references(0, pos_in('onclick="ayudaAbierta', 'ayudaAbierta'))))
   end)
 
   it('las entidades HTML del valor no impiden resolver el resto', function()
@@ -259,6 +268,59 @@ describe('asp.js manejadores de evento, casos borde', function()
     assert.are.same({ 3, 5, 6 }, lines)
     -- usar: su declaración y sus cuatro usos, en orden del documento.
     assert.are.equal(5, #js.references(0, pos_in('function usar', 'usar')))
+  end)
+
+  it('una URL javascript: corre en el scope global de la página', function()
+    -- Como en el navegador: sus `var` son de la página, no de un scope
+    -- propio como el de un manejador on*.
+    setup({
+      '<script>var counter=0;</script>',
+      '<a href="javascript:var counter=1; counter++; void(0)">run</a>',
+      '<input onclick="counter++">',
+    })
+    local decl = pos_in('var counter=0', 'counter')
+    local lines = {}
+    for _, r in ipairs(js.references(0, decl)) do
+      table.insert(lines, r.range.start.line)
+    end
+    assert.are.same({ 0, 1, 1, 2 }, lines)
+    -- Desde el enlace, la declaración y el uso van al <script>.
+    assert.are.same(decl, def_pos(nth('javascript:', 'counter', 1)))
+    assert.are.same(decl, def_pos(nth('javascript:', 'counter', 2)))
+    assert.are.same(decl, def_pos(pos_in('onclick=', 'counter')))
+  end)
+
+  it('lo que declara sólo una URL javascript: se ve desde los manejadores y los <script>', function()
+    setup({
+      '<a href="javascript:var abierto = true; function cerrar() { abierto = false; }">x</a>',
+      '<input onclick="cerrar(); abierto"><input onclick="function delBoton() {}">',
+      '<script>function propia() {} cerrar();</script>',
+    })
+    local fn = pos_in('function cerrar', 'cerrar')
+    assert.are.same(fn, def_pos(pos_in('onclick="cerrar', 'cerrar')))
+    assert.are.same(fn, def_pos(pos_in('propia() {} cerrar', 'cerrar')))
+    assert.are.equal(3, #js.references(0, fn))
+    local var = pos_in('var abierto', 'abierto')
+    assert.are.same(var, def_pos(pos_in('onclick="cerrar', 'abierto')))
+    assert.are.equal(3, #js.references(0, var))
+    -- El outline sigue sin listar lo que declaran los manejadores y las URLs.
+    local names = {}
+    for _, s in ipairs(js.document_symbols(0)) do table.insert(names, s.name) end
+    assert.are.same({ 'propia' }, names)
+  end)
+
+  it('la declaración de una URL javascript: no le gana a la de un <script> posterior', function()
+    -- El <script> corre al cargar la página; la URL, recién al hacer clic.
+    setup({
+      '<a href="javascript:var modo = 1; void(0)">x</a>',
+      '<script>var modo = 0;</script>',
+      '<input onclick="modo++">',
+    })
+    local decl = pos_in('var modo = 0', 'modo')
+    assert.are.same(decl, def_pos(pos_in('onclick=', 'modo')))
+    assert.are.same(decl, def_pos(pos_in('var modo = 1', 'modo')))
+    assert.are.same(decl, def_pos(decl))
+    assert.are.equal(3, #js.references(0, decl))
   end)
 
   it('un manejador con JS roto no contamina a los demás', function()
