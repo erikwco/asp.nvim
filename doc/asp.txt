@@ -66,8 +66,8 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
   definition ~
       Ir a la definición de Functions, Subs, Classes, variables y
       constantes, en el archivo actual y a través del grafo de
-      includes. Case-insensitive. En los <script> de cliente, ver
-      |asp-javascript|.
+      includes. Case-insensitive. En los <script> de cliente y sus
+      atributos de evento `on*`, ver |asp-javascript|.
 
       Dentro de un literal entre comillas simples o dobles, abre el
       archivo referenciado en su primera línea. Admite `.asp`, `.inc`,
@@ -213,7 +213,8 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
 JavaScript de cliente ~
 
 definition y references también resuelven los identificadores del
-JavaScript de cliente de los bloques <script> del archivo actual:
+JavaScript de cliente de los bloques <script> del archivo actual, y
+también dentro de los atributos de evento `on*`:
 
   - Declaraciones: `function`, `class`, métodos de clase, `var`/`let`/
     `const`, parámetros (incluido el de `x => ...`) y el nombre de una
@@ -222,9 +223,20 @@ JavaScript de cliente de los bloques <script> del archivo actual:
     JavaScript.
   - Scopes: el de cada función (declaración, expression, arrow o
     método); fuera de toda función, el global, compartido por todos los
-    <script> de la página (como en el navegador). Gana la declaración
-    de la función más interna que envuelve el uso; si no hay, la
-    global.
+    <script> y manejadores de la página (como en el navegador). Gana la
+    declaración de la función más interna que envuelve el uso; si no
+    hay, la global.
+  - Manejadores de evento: el valor de todo atributo `on*` de cualquier
+    elemento (`onclick`, `onchange`, `onsubmit`, `onload`, ..., sin
+    distinguir mayúsculas, con o sin comillas) es JavaScript, igual que
+    el de un `href="javascript:..."` desde después del prefijo. Cada
+    uno se parsea aparte, como cada <script>: un error de sintaxis en
+    uno no afecta a los demás. Como en el navegador, cada manejador es
+    el cuerpo de una función: sus usos resuelven al global de la página
+    y sus `var` son locales a él. Un `<%= %>` pegado al borde del valor
+    cuenta como parte de él (`onkeyup="<%= p %>f()"` no resuelve `f`);
+    un valor que es entero un bloque ASP no es JavaScript.
+    documentSymbol no lista lo que declara un manejador.
   - references devuelve la declaración y todos los usos que resuelven
     a ella (incluida la `x` de `{ x }`); un local no se mezcla con un
     homónimo de otra función. Un nombre sin declaración en la página
@@ -240,8 +252,9 @@ JavaScript de cliente de los bloques <script> del archivo actual:
   - Entre archivos: el scope global de la página suma las
     declaraciones globales de los `.js` de sus `<script src>` (rutas
     relativas o con `/` inicial, como |asp-funcionalidades|) y de los
-    <script> de las páginas incluidas con `<!--#include-->`, junto con
-    los `<script src>` de esos includes (relativos al include). Si el
+    <script> y manejadores `on*` de las páginas incluidas con
+    `<!--#include-->`, junto con los `<script src>` de esos includes
+    (relativos al include). Si el
     buffer no declara el nombre en ninguno de sus scopes, gana el
     primero que lo declare en este orden: los `<script src>` del
     buffer, en orden del documento, y luego los includes en el orden
@@ -272,6 +285,14 @@ Límites:
   - No se recogen como declaración los nombres desestructurados
     (`const { a } = o`), los parámetros con default o rest, el de
     `catch (e)` ni la variable de `for (const x of xs)`.
+  - Manejadores: no se modela el parámetro implícito `event` ni la
+    cadena de scopes del elemento y su formulario (`onclick="submit()"`
+    no resuelve a `form.submit`). No se decodifican las entidades HTML
+    (`&quot;`) ni los `%xx` de una URL `javascript:`: el JS queda con
+    un error de sintaxis donde aparecen y el resto resuelve igual. Un
+    manejador con `language="vbscript"` (IE) se lee igual como JS. No
+    se ven los manejadores que arma VBScript (`Response.Write`) ni un
+    `href` cuyo prefijo `javascript:` viene de un `<%= %>`.
   - Sin hover ni completion para JavaScript.
 
 Salud: >
