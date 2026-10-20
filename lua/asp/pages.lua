@@ -219,14 +219,25 @@ function M.references(bufnr, position)
       if memo[candidate] == nil then memo[candidate] = vim.uv.fs_realpath(candidate) or false end
       return memo[candidate] == target_real
     end
-    local files = {}
-    for name, kind in vim.fs.dir(root, { depth = math.huge, follow = false, skip = function(dir)
-      local name = vim.fs.basename(dir)
-      return name:sub(1, 1) ~= '.' and name ~= 'node_modules' and name ~= 'build'
-    end }) do
-      if kind == 'file' and vim.fs.basename(name):sub(1, 1) ~= '.'
-        and SOURCE_EXTENSIONS[name:lower():match('%.(%w+)$')] then
-        table.insert(files, root .. '/' .. name)
+    local files, dirs, next_dir = {}, { root }, 1
+    while next_dir <= #dirs do
+      local dir = dirs[next_dir]
+      next_dir = next_dir + 1
+      for name, kind in vim.fs.dir(dir) do
+        local path = dir .. '/' .. name
+        -- En 0.10 scandir puede omitir el tipo. Hay que recuperarlo antes
+        -- de decidir si descender; lstat conserva los symlinks como links.
+        if kind == nil then
+          local stat = vim.uv.fs_lstat(path)
+          kind = stat and stat.type
+        end
+        if name:sub(1, 1) ~= '.' then
+          if kind == 'directory' and name ~= 'node_modules' and name ~= 'build' then
+            table.insert(dirs, path)
+          elseif kind == 'file' and SOURCE_EXTENSIONS[name:lower():match('%.(%w+)$')] then
+            table.insert(files, path)
+          end
+        end
       end
     end
     table.sort(files)

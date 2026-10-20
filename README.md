@@ -40,6 +40,9 @@ Hover con la doc de los intrínsecos y completion de sus miembros:
   código de cliente dentro de `<script>`/`<style>`. `javascript` además
   habilita ir a definición/referencias en los `<script>` (sin él esa capa
   queda inerte y `:checkhealth asp` lo advierte).
+  En Neovim 0.10, estos parsers deben usar ABI 13 o 14. Los de ABI 15
+  no cargan, aunque estén instalados; `:checkhealth asp` los reporta
+  como no encontrados.
 
 ## Instalación (lazy.nvim)
 
@@ -257,7 +260,7 @@ if path then vim.cmd.find(vim.fn.fnameescape(path)) end
 
 - `:help asp` — referencia completa dentro de Neovim.
 - `:checkhealth asp` — diagnóstico de parsers y del servidor.
-- CI: la suite corre en Linux y macOS contra Neovim estable y nightly.
+- CI: la suite corre en Linux y macOS contra Neovim 0.10.4, estable y nightly.
   Windows no está en la matriz (el build usa `make`/`cc`/`.so`, Unix-only);
   soporte Windows es backlog, requeriría un path de build separado.
 
@@ -280,6 +283,15 @@ tree-sitter-html y tree-sitter-javascript en `build/` y compila
 `parser/html.so` y `parser/javascript.so` sólo para la suite.
 tree-sitter-javascript va pineado al tag `v0.23.1` (ABI 14): su rama
 principal genera ABI 15, que Neovim 0.10 no carga.
+
+Para probar otro Neovim, pasá su ruta en `NVIM` y aislá el estado:
+
+```bash
+XDG_STATE_HOME="$(mktemp -d)" make test NVIM=/ruta/a/nvim
+```
+
+Esto evita que 0.10 lea un ShaDa escrito por un Neovim más nuevo, que
+puede provocar errores `E576` ajenos al plugin.
 
 El CI falla si el `parser.c` versionado quedó desactualizado respecto a su
 `grammar.js`.

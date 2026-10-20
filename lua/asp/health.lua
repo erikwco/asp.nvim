@@ -1,4 +1,5 @@
 local M = {}
+local ts = require('asp.ts')
 
 function M.check()
   local health = vim.health
@@ -11,15 +12,8 @@ function M.check()
     health.error('asp.nvim requiere Neovim >= 0.10')
   end
 
-  -- vim.treesitter.language.add() no lanza error si el parser no existe:
-  -- devuelve `nil, mensaje` como valores de retorno normales. Un simple
-  -- `pcall(...)` solo detecta excepciones Lua, así que su primer valor
-  -- (`ok`) sería siempre `true` aquí y este chequeo jamás reportaría un
-  -- parser faltante. Por eso miramos también el valor que `language.add`
-  -- realmente retorna.
   for _, lang in ipairs({ 'aspclassic', 'vbscript' }) do
-    local ok, added = pcall(vim.treesitter.language.add, lang)
-    if ok and added then
+    if ts.add(lang) then
       health.ok(('parser %s encontrado'):format(lang))
     else
       health.error(
@@ -33,8 +27,7 @@ function M.check()
     -- html no se compila con `make parsers` (ese target solo produce los
     -- parsers propios del plugin); el usuario debe instalarlo con
     -- nvim-treesitter, igual que javascript/css.
-    local ok, added = pcall(vim.treesitter.language.add, 'html')
-    if ok and added then
+    if ts.add('html') then
       health.ok('parser html encontrado')
     else
       health.error(
@@ -48,8 +41,7 @@ function M.check()
     -- javascript alimenta además la capa de navegación JS (asp.js), que
     -- sin el parser devuelve nil en silencio: este warning es el único
     -- aviso de por qué definition/references no resuelven en <script>.
-    local ok, added = pcall(vim.treesitter.language.add, 'javascript')
-    if ok and added then
+    if ts.add('javascript') then
       health.ok('parser javascript encontrado (resaltado y definición/referencias en <script>, <script src> e includes)')
     else
       health.warn('parser javascript no encontrado', {
@@ -60,8 +52,7 @@ function M.check()
   end
 
   do
-    local ok, added = pcall(vim.treesitter.language.add, 'css')
-    if ok and added then
+    if ts.add('css') then
       health.ok('parser css encontrado (resaltado dentro de <style>)')
     else
       health.warn(
