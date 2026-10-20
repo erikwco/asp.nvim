@@ -2,7 +2,7 @@
 
 Medición local del 20 de octubre de 2026, con Neovim 0.12.6 Release,
 LuaJIT 2.1.1791890110 y Apple M4 Pro de 14 núcleos. La carga del equipo
-rondó 3 a 4 durante la preparación. No se ejecutaron benchmarks en paralelo.
+rondó 3 a 4 durante la preparación. Las consultas de la serie alternada se midieron de forma secuencial.
 
 La consulta con caché vacía bajó de 6.546 a 3.334 ms y la consulta siguiente
 de 127 a 70 ms. Son medianas de cinco pares alternados entre
