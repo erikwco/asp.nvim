@@ -520,12 +520,9 @@ local function new_data()
 end
 
 ---Sin parser javascript la capa queda inerte; :checkhealth asp lo avisa.
----Neovim 0.10 lanza si el parser falta y no devuelve nada si lo carga;
----0.11+ no lanza y devuelve true o nil + mensaje.
 ---@return boolean
 local function has_js_parser()
-  local ok, added = pcall(vim.treesitter.language.add, 'javascript')
-  return ok and not (added == nil and vim.fn.has('nvim-0.11') == 1)
+  return require('asp.ts').add('javascript')
 end
 
 ---Parsea `source` con un parser javascript propio y llena los índices de

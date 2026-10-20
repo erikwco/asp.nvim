@@ -1,3 +1,4 @@
+vim.o.shadafile = 'NONE'
 local root = vim.fn.getcwd()
 vim.opt.runtimepath:prepend(root .. '/build/plenary.nvim')
 vim.opt.runtimepath:prepend(root)

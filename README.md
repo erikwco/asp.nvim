@@ -40,6 +40,29 @@ Hover con la doc de los intrínsecos y completion de sus miembros:
   código de cliente dentro de `<script>`/`<style>`. `javascript` además
   habilita ir a definición/referencias en los `<script>` (sin él esa capa
   queda inerte y `:checkhealth asp` lo advierte).
+  En Neovim 0.10, estos parsers deben usar ABI 13 o 14. Los de ABI 15
+  no cargan, aunque estén instalados; `:checkhealth asp` los reporta
+  como instalados pero con error de carga y muestra el error de Neovim.
+
+### Resolver errores de ABI en Neovim 0.10
+
+La rama [`main` de nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter/tree/main)
+exige Neovim 0.12 y compila parsers con ABI 15. Para usar Neovim 0.10,
+fijá `branch = 'master'` en la configuración de nvim-treesitter y
+reinstalá `html`, `javascript` y `css` con `:TSInstall! html javascript css`.
+La rama `master` fija versiones de esos tres parsers con ABI 14,
+que también cargan en Neovim 0.11+.
+
+Si compilás los parsers por tu cuenta, regenerá sus fuentes con
+`tree-sitter generate --abi 14` antes de compilarlos. Otra opción es
+pasar a Neovim 0.11+ para cargar ABI 15; usar nvim-treesitter `main`
+requiere Neovim 0.12.
+
+Neovim 0.10 y 0.12 comparten `stdpath('data')/site/parser` por defecto.
+Una actualización de parsers desde 0.12 puede dejar archivos ABI 15
+que 0.10 no carga. Para separar las instalaciones, usá otro
+`NVIM_APPNAME`, por ejemplo `NVIM_APPNAME=nvim-010 nvim`; ese nombre
+también separa la configuración y los datos del editor.
 
 ## Instalación (lazy.nvim)
 
@@ -257,7 +280,7 @@ if path then vim.cmd.find(vim.fn.fnameescape(path)) end
 
 - `:help asp` — referencia completa dentro de Neovim.
 - `:checkhealth asp` — diagnóstico de parsers y del servidor.
-- CI: la suite corre en Linux y macOS contra Neovim estable y nightly.
+- CI: la suite corre en Linux y macOS contra Neovim 0.10.4, estable y nightly.
   Windows no está en la matriz (el build usa `make`/`cc`/`.so`, Unix-only);
   soporte Windows es backlog, requeriría un path de build separado.
 
@@ -280,6 +303,15 @@ tree-sitter-html y tree-sitter-javascript en `build/` y compila
 `parser/html.so` y `parser/javascript.so` sólo para la suite.
 tree-sitter-javascript va pineado al tag `v0.23.1` (ABI 14): su rama
 principal genera ABI 15, que Neovim 0.10 no carga.
+
+Para probar otro Neovim, pasá su ruta en `NVIM`:
+
+```bash
+make test NVIM=/ruta/a/nvim
+```
+
+El harness desactiva ShaDa con `vim.o.shadafile = 'NONE'` para que los
+procesos de prueba no lean ni escriban el estado del desarrollador.
 
 El CI falla si el `parser.c` versionado quedó desactualizado respecto a su
 `grammar.js`.

@@ -1,4 +1,5 @@
 local M = {}
+local ts = require('asp.ts')
 
 function M.check()
   local health = vim.health
@@ -11,65 +12,37 @@ function M.check()
     health.error('asp.nvim requiere Neovim >= 0.10')
   end
 
-  -- vim.treesitter.language.add() no lanza error si el parser no existe:
-  -- devuelve `nil, mensaje` como valores de retorno normales. Un simple
-  -- `pcall(...)` solo detecta excepciones Lua, así que su primer valor
-  -- (`ok`) sería siempre `true` aquí y este chequeo jamás reportaría un
-  -- parser faltante. Por eso miramos también el valor que `language.add`
-  -- realmente retorna.
+  local function check_parser(lang, report, install_advice, detail)
+    local added, err = ts.add(lang)
+    if added then
+      health.ok(('parser %s encontrado%s'):format(lang, detail or ''))
+      return
+    end
+    err = tostring(err)
+    if err:lower():find('no parser for', 1, true) then
+      report(('parser %s no encontrado'):format(lang), { install_advice })
+      return
+    end
+    local advice = {}
+    if err:find('ABI version mismatch', 1, true) then
+      advice[1] = 'Neovim 0.10 solo carga ABI 13–14: instalalo con nvim-treesitter rama `master`, '
+        .. 'o compilá con `tree-sitter generate --abi 14`; o pasá a Neovim 0.11+'
+    end
+    report(('parser %s instalado pero no carga: %s'):format(lang, err), advice)
+  end
+
   for _, lang in ipairs({ 'aspclassic', 'vbscript' }) do
-    local ok, added = pcall(vim.treesitter.language.add, lang)
-    if ok and added then
-      health.ok(('parser %s encontrado'):format(lang))
-    else
-      health.error(
-        ('parser %s no encontrado'):format(lang),
-        { 'Ejecuta `make parsers` en el directorio del plugin.' }
-      )
-    end
+    check_parser(lang, health.error, 'Ejecuta `make parsers` en el directorio del plugin.')
   end
 
-  do
-    -- html no se compila con `make parsers` (ese target solo produce los
-    -- parsers propios del plugin); el usuario debe instalarlo con
-    -- nvim-treesitter, igual que javascript/css.
-    local ok, added = pcall(vim.treesitter.language.add, 'html')
-    if ok and added then
-      health.ok('parser html encontrado')
-    else
-      health.error(
-        'parser html no encontrado',
-        { 'Instálalo con nvim-treesitter (`:TSInstall html`).' }
-      )
-    end
-  end
-
-  do
-    -- javascript alimenta además la capa de navegación JS (asp.js), que
-    -- sin el parser devuelve nil en silencio: este warning es el único
-    -- aviso de por qué definition/references no resuelven en <script>.
-    local ok, added = pcall(vim.treesitter.language.add, 'javascript')
-    if ok and added then
-      health.ok('parser javascript encontrado (resaltado y definición/referencias en <script>, <script src> e includes)')
-    else
-      health.warn('parser javascript no encontrado', {
-        'Instálalo con nvim-treesitter (`:TSInstall javascript`) para resaltar el JavaScript '
-          .. 'del cliente y navegar sus definiciones/referencias en los <script>.',
-      })
-    end
-  end
-
-  do
-    local ok, added = pcall(vim.treesitter.language.add, 'css')
-    if ok and added then
-      health.ok('parser css encontrado (resaltado dentro de <style>)')
-    else
-      health.warn(
-        'parser css no encontrado',
-        { 'Instálalo con nvim-treesitter (`:TSInstall css`) para resaltar el CSS del cliente.' }
-      )
-    end
-  end
+  check_parser('html', health.error, 'Instálalo con nvim-treesitter (`:TSInstall html`).')
+  check_parser('javascript', health.warn,
+    'Instálalo con nvim-treesitter (`:TSInstall javascript`) para resaltar el JavaScript '
+      .. 'del cliente y navegar sus definiciones/referencias en los <script>.',
+    ' (resaltado y definición/referencias en <script>, <script src> e includes)')
+  check_parser('css', health.warn,
+    'Instálalo con nvim-treesitter (`:TSInstall css`) para resaltar el CSS del cliente.',
+    ' (resaltado dentro de <style>)')
 
   local asp_clients = vim.lsp.get_clients({ name = 'asp-ls' })
   if #asp_clients > 0 then
