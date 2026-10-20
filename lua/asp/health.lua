@@ -50,7 +50,7 @@ function M.check()
     -- aviso de por qué definition/references no resuelven en <script>.
     local ok, added = pcall(vim.treesitter.language.add, 'javascript')
     if ok and added then
-      health.ok('parser javascript encontrado (resaltado y definición/referencias dentro de <script>)')
+      health.ok('parser javascript encontrado (resaltado y definición/referencias en <script>, <script src> e includes)')
     else
       health.warn('parser javascript no encontrado', {
         'Instálalo con nvim-treesitter (`:TSInstall javascript`) para resaltar el JavaScript '

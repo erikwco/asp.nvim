@@ -25,12 +25,15 @@ vim.api.nvim_create_autocmd('FileType', {
   end,
 })
 
+-- *.js: los `.js` de <script src> que lee asp.js desde disco.
 vim.api.nvim_create_autocmd('BufWritePost', {
-  pattern = { '*.asp', '*.inc' },
+  pattern = { '*.asp', '*.inc', '*.js' },
   group = vim.api.nvim_create_augroup('asp_nvim_writes', { clear = true }),
   callback = function(args)
     pcall(function()
-      require('asp.symbols').invalidate(vim.api.nvim_buf_get_name(args.buf))
+      local name = vim.api.nvim_buf_get_name(args.buf)
+      require('asp.symbols').invalidate(name)
+      require('asp.js').invalidate(name)
       if vim.bo[args.buf].filetype == 'asp' then
         require('asp.diagnostics').refresh(args.buf)
       end
