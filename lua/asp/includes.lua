@@ -56,7 +56,12 @@ local function extract(root_node, source)
   return out
 end
 
-local function resolve_one(item, from_abs)
+---Compartida con asp.pages para que ambas navegaciones usen la misma raíz
+---y comprueben el destino con las mismas reglas.
+---@param item table {kind, path_text} con separadores ya normalizados
+---@param from_abs string
+---@return string|nil
+function M.resolve_one(item, from_abs)
   local candidate
   if item.kind == 'virtual' then
     local root = M.virtual_root_for(from_abs)
@@ -91,7 +96,7 @@ function M.includes_of(abs_path, bufnr)
     end
     local out = extract(root_node, source)
     for _, item in ipairs(out) do
-      item.resolved = resolve_one(item, abs_path)
+      item.resolved = M.resolve_one(item, abs_path)
     end
     return out
   end)

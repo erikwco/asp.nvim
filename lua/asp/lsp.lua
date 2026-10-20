@@ -13,7 +13,9 @@ end
 
 M.handlers['textDocument/definition'] = function(params)
   local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
-  return require('asp.symbols').definition(bufnr, params.position)
+  local pos = params.position
+  return require('asp.symbols').definition(bufnr, pos)
+    or require('asp.pages').definition(bufnr, pos)
 end
 
 M.handlers['textDocument/references'] = function(params)

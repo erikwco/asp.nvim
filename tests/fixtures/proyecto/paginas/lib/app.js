@@ -1,0 +1,1 @@
+const pagina = 'otra.asp';
