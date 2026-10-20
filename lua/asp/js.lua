@@ -104,17 +104,66 @@ local function start_byte_of(node)
   return b
 end
 
+---Intervalos de bytes `{inicio, fin, output}` (fin exclusivo) de los
+---bloques ASP de la plantilla, en orden del documento: todo hijo de la raíz
+---que no es `content`; `output` marca los `<%= %>`. La capa html sólo ve
+---los `content`, así que un nodo html que se cruza con alguno se armó con
+---ASP (ver script_attrs), y en el javascript un identificador que se cruza
+---con alguno es VBScript (ver js_source y overlaps_asp).
+---@param root TSNode raíz de la plantilla aspclassic
+---@return table[] blocks
+local function asp_blocks(root)
+  local blocks = {}
+  for i = 0, root:named_child_count() - 1 do
+    local child = root:named_child(i)
+    if child:type() ~= 'content' then
+      local _, _, sb, _, _, eb = child:range(true)
+      table.insert(blocks, { sb, eb, output = child:type() == 'output_directive' })
+    end
+  end
+  return blocks
+end
+
+---¿El tramo de bytes [sb, eb) se cruza con algún bloque ASP? Los bloques
+---están ordenados y no se solapan, así que basta mirar el último que
+---empieza antes de `eb` (búsqueda binaria).
+---@param blocks table[] de asp_blocks
+---@param sb integer
+---@param eb integer
+---@return boolean
+local function overlaps_asp(blocks, sb, eb)
+  local lo, hi, last = 1, #blocks, nil
+  while lo <= hi do
+    local mid = math.floor((lo + hi) / 2)
+    if blocks[mid][1] < eb then
+      last, lo = mid, mid + 1
+    else
+      hi = mid - 1
+    end
+  end
+  return last ~= nil and blocks[last][2] > sb
+end
+
 ---Atributos del start_tag de un <script>: nombre en minúsculas → valor sin
 ---comillas ni espacios exteriores. Atributo repetido: HTML se queda con el
 ---primero.
+---
+---También devuelve el conjunto de nombres de los atributos que se arman
+---con ASP. Eso se decide sobre el rango del `attribute` completo, no sobre
+---el texto del valor: el parser html no ve los bloques ASP, así que en
+---`src="<%= base %>a.js"` el `attribute_value` interior es sólo `a.js` y
+---parecería estático. Sin comillas el valor sigue hasta el primer blanco o
+---`>`: un bloque pegado a su final (`src=a.js<%= v %>`) también es parte
+---del valor, aunque el `attribute` termine justo donde empieza el bloque.
 ---@param tag TSNode start_tag
 ---@param source integer|string bufnr o texto del archivo
----@return table<string, string>
-local function script_attrs(tag, source)
-  local attrs = {}
+---@param blocks table[] de asp_blocks
+---@return table<string, string> attrs, table<string, true> dynamic
+local function script_attrs(tag, source, blocks)
+  local attrs, dynamic = {}, {}
   for child in tag:iter_children() do
     if child:type() == 'attribute' then
-      local name, value
+      local name, value, quoted
       for part in child:iter_children() do
         local t = part:type()
         if t == 'attribute_name' then
@@ -124,14 +173,19 @@ local function script_attrs(tag, source)
         elseif t == 'quoted_attribute_value' then
           local inner = part:named_child(0)
           value = inner and vim.treesitter.get_node_text(inner, source) or ''
+          quoted = true
         end
       end
       if name and attrs[name] == nil then
         attrs[name] = vim.trim(value or '')
+        local _, _, sb, _, _, eb = child:range(true)
+        if overlaps_asp(blocks, sb, (value and not quoted) and eb + 1 or eb) then
+          dynamic[name] = true
+        end
       end
     end
   end
-  return attrs
+  return attrs, dynamic
 end
 
 ---¿Los atributos son los de un <script> de JavaScript de cliente? Excluye
@@ -154,7 +208,9 @@ end
 
 ---Regiones (una por <script> de JS de cliente) para el parser javascript:
 ---el rango del `raw_text` de cada bloque. También devuelve los `src` de
----esos <script>, en orden del documento y sin resolver.
+---esos <script>, en orden del documento y sin resolver. Un `src` armado
+---con ASP (`<%= base %>a.js`) se resuelve en runtime: no se puede seguir y
+---se omite.
 ---
 ---Una región por <script> (no una sola combinada): un error de sintaxis en
 ---un bloque no altera el parseo de los siguientes, igual que en el
@@ -162,8 +218,9 @@ end
 ---en resolve().
 ---@param html vim.treesitter.LanguageTree capa html, ya parseada
 ---@param source integer|string bufnr o texto del archivo
+---@param blocks table[] de asp_blocks
 ---@return Range6[][] regions, string[] srcs
-local function script_regions(html, source)
+local function script_regions(html, source, blocks)
   local regions, srcs = {}, {}
   local sq = vim.treesitter.query.parse('html', SCRIPT_QUERY)
   local found = {}
@@ -186,14 +243,14 @@ local function script_regions(html, source)
   table.sort(found, function(a, b) return a.sb < b.sb end)
 
   for _, f in ipairs(found) do
-    local attrs = script_attrs(f.tag, source)
+    local attrs, dynamic = script_attrs(f.tag, source, blocks)
     if is_client_js(attrs) then
       for child in f.script:iter_children() do
         if child:type() == 'raw_text' then
           table.insert(regions, { { child:range(true) } })
         end
       end
-      if attrs.src and attrs.src ~= '' then
+      if attrs.src and attrs.src ~= '' and not dynamic.src then
         table.insert(srcs, attrs.src)
       end
     end
@@ -216,54 +273,26 @@ end
 ---  * `<% ... %>` y las directivas → blancos: son sentencias VBScript
 ---    (`<% If x Then %>...<% End If %>`) que no aportan nada al JS.
 ---
----Devuelve también los intervalos de bytes `{inicio, fin}` (fin exclusivo)
----de todos los bloques ASP, en orden del documento: un identificador que se
----cruza con alguno es VBScript, entero (el relleno de un `<%= %>`) o en
----parte (`foo<%= x %>` se parsea como el identificador `foo________`), y se
----descarta (ver overlaps_asp).
+---Un identificador que se cruza con algún bloque es VBScript, entero (el
+---relleno de un `<%= %>`) o en parte (`foo<%= x %>` se parsea como el
+---identificador `foo________`), y se descarta (ver index_js).
 ---
 ---Sirve igual para el buffer (sus líneas unidas con `\n`) y para un archivo
----de disco (su contenido), con la raíz de la plantilla parseada de ese
+---de disco (su contenido), con los bloques de la plantilla parseada de ese
 ---mismo texto.
 ---@param text string
----@param root TSNode raíz de la plantilla aspclassic de `text`
----@return string source, integer[][] blocks
-local function js_source(text, root)
-  local parts, blocks, prev = {}, {}, 0
-  for i = 0, root:named_child_count() - 1 do
-    local child = root:named_child(i)
-    if child:type() ~= 'content' then
-      local _, _, sb, _, _, eb = child:range(true)
-      local piece = text:sub(sb + 1, eb)
-      local fill = child:type() == 'output_directive' and '_' or ' '
-      table.insert(blocks, { sb, eb })
-      table.insert(parts, text:sub(prev + 1, sb))
-      table.insert(parts, (piece:gsub('[^\n]', fill)))
-      prev = eb
-    end
+---@param blocks table[] de asp_blocks sobre `text`
+---@return string source
+local function js_source(text, blocks)
+  local parts, prev = {}, 0
+  for _, b in ipairs(blocks) do
+    local sb, eb = b[1], b[2]
+    table.insert(parts, text:sub(prev + 1, sb))
+    table.insert(parts, (text:sub(sb + 1, eb):gsub('[^\n]', b.output and '_' or ' ')))
+    prev = eb
   end
   table.insert(parts, text:sub(prev + 1))
-  return table.concat(parts), blocks
-end
-
----¿El tramo de bytes [sb, eb) se cruza con algún bloque ASP? Los bloques
----están ordenados y no se solapan, así que basta mirar el último que
----empieza antes de `eb` (búsqueda binaria).
----@param blocks integer[][] de js_source
----@param sb integer
----@param eb integer
----@return boolean
-local function overlaps_asp(blocks, sb, eb)
-  local lo, hi, last = 1, #blocks, nil
-  while lo <= hi do
-    local mid = math.floor((lo + hi) / 2)
-    if blocks[mid][1] < eb then
-      last, lo = mid, mid + 1
-    else
-      hi = mid - 1
-    end
-  end
-  return last ~= nil and blocks[last][2] > sb
+  return table.concat(parts)
 end
 
 ---Clasifica un `identifier` como nombre de declaración. Devuelve kind, el
@@ -420,7 +449,7 @@ end
 ---@param data table de new_data
 ---@param source string texto de js_source (o un .js entero)
 ---@param regions Range6[][]|nil nil: todo el texto (un .js)
----@param blocks integer[][] bloques ASP de js_source ({} en un .js)
+---@param blocks table[] de asp_blocks ({} en un .js)
 local function index_js(data, source, regions, blocks)
   data.source = source
   -- Parser STRING sobre el texto con los bloques ASP neutralizados (ver
@@ -474,13 +503,13 @@ local function build(bufnr)
 
   local data = new_data()
   if not html then return data end
+  local blocks = asp_blocks(root)
   local regions
-  regions, data.srcs = script_regions(html, bufnr)
+  regions, data.srcs = script_regions(html, bufnr, blocks)
   if #regions == 0 then return data end
 
   local text = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), '\n')
-  local source, blocks = js_source(text, root)
-  index_js(data, source, regions, blocks)
+  index_js(data, js_source(text, blocks), regions, blocks)
   return data
 end
 
@@ -548,12 +577,12 @@ local function build_file(content, kind)
   })
   hp:set_included_regions({ content_nodes })
   hp:parse(true)
+  local blocks = asp_blocks(troot)
   local regions
-  regions, data.srcs = script_regions(hp, content)
+  regions, data.srcs = script_regions(hp, content, blocks)
   if #regions == 0 then return data end
 
-  local source, blocks = js_source(content, troot)
-  index_js(data, source, regions, blocks)
+  index_js(data, js_source(content, blocks), regions, blocks)
   return detach(data)
 end
 
@@ -699,8 +728,6 @@ local function each_external(bufnr, data, visit)
   local pages = require('asp.pages')
   local seen = {}
   local function from_src(src, from)
-    -- Un src con `<%= %>` se arma en runtime: no se puede seguir.
-    if src:find('<%', 1, true) then return nil end
     local path = pages.resolve(src, from)
     if not path or not path:lower():match('%.js$') or seen[path] then return nil end
     seen[path] = true

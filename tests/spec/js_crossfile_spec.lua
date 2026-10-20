@@ -30,6 +30,32 @@ local function rel(uri)
   return path:match('crossfile/(.*)$') or path:match('[^/]+$')
 end
 
+-- Crea `files` (nombre → líneas) en un directorio temporal, abre su
+-- pagina.asp y corre fn(dir); siempre borra el buffer y el directorio.
+local function in_project(files, fn)
+  vim.cmd('bwipeout!')
+  local dir = vim.fn.tempname()
+  vim.fn.mkdir(dir, 'p')
+  dir = vim.uv.fs_realpath(dir)
+  for name, lines in pairs(files) do
+    vim.fn.writefile(lines, dir .. '/' .. name)
+  end
+  vim.cmd.edit(dir .. '/pagina.asp')
+  local ok, err = pcall(fn, dir)
+  vim.cmd('bwipeout!')
+  vim.fn.delete(dir, 'rf')
+  assert(ok, err)
+end
+
+-- 'archivo:línea' de cada Location, en orden.
+local function where(locs)
+  local got = {}
+  for _, r in ipairs(locs) do
+    table.insert(got, ('%s:%d'):format(rel(r.uri), r.range.start.line))
+  end
+  return got
+end
+
 describe('asp.js cross-file', function()
   local js = require('asp.js')
 
@@ -100,6 +126,57 @@ describe('asp.js cross-file', function()
       local rok, refs = pcall(js.references, 0, pos_in(text))
       assert.is_true(rok)
       assert.is_nil(refs)
+    end
+  end)
+
+  it('un src armado con ASP no carga el archivo de su parte estática', function()
+    -- a.js existe, pero esos src los arma el servidor: `soloDinamico` está
+    -- sólo detrás de ellos. El parser html no ve el bloque ASP, así que el
+    -- valor interior del atributo es sólo la parte estática (`a.js`).
+    local srcs = {
+      '"<%= base %>a.js"', -- prefijo
+      '"a.js<%= sufijo %>"', -- sufijo
+      '"a<%= medio %>.js"',
+      "'<%= base %>a.js'",
+      '<%= base %>a.js', -- sin comillas
+      'a.js<%= sufijo %>',
+    }
+    local function check(page_line, inc_line)
+      in_project({
+        ['a.js'] = { 'function soloDinamico() {}' },
+        ['a.inc'] = { inc_line or '' },
+        ['pagina.asp'] = {
+          '<!--#include file="a.inc" -->',
+          page_line or '',
+          '<script>',
+          'soloDinamico();',
+          '</script>',
+        },
+      }, function()
+        local label = page_line or inc_line
+        assert.is_nil(js.definition(0, pos_in('soloDinamico();')), label)
+        assert.is_nil(js.references(0, pos_in('soloDinamico();')), label)
+      end)
+    end
+    for _, src in ipairs(srcs) do
+      local tag = '<script src=' .. src .. '></script>'
+      check(tag, nil)
+      check(nil, tag)
+    end
+
+    -- Control: un bloque ASP fuera del valor no lo vuelve dinámico.
+    for _, tag in ipairs({
+      '<script src="a.js"></script>',
+      '<script src="a.js"<%= atributos %>></script>',
+      '<script src=a.js <%= atributos %>></script>',
+    }) do
+      in_project({
+        ['a.js'] = { 'function soloDinamico() {}' },
+        ['pagina.asp'] = { tag, '<script>', 'soloDinamico();', '</script>' },
+      }, function()
+        local loc = js.definition(0, pos_in('soloDinamico();'))
+        assert.are.equal('a.js', loc and rel(loc.uri), tag)
+      end)
     end
   end)
 
