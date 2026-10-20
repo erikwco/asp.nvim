@@ -1,5 +1,5 @@
 <%
-' Sin <script>: sólo manejadores que llaman a funciones de la página.
+' Sin bloques de JS: sólo manejadores que llaman a funciones de la página.
 Dim activo
 activo = True
 %>
