@@ -397,8 +397,9 @@ describe('asp.js cross-file', function()
     local get_string_parser = vim.treesitter.get_string_parser
     local calls = {}
     vim.treesitter.get_string_parser = function(str, lang, opts)
-      table.insert(calls, { lang = lang, injections = opts and opts.injections })
-      return get_string_parser(str, lang, opts)
+      local tree = get_string_parser(str, lang, opts)
+      table.insert(calls, { lang = lang, injections = opts and opts.injections, tree = tree })
+      return tree
     end
     local ok, err = pcall(function()
       assert.are.equal('inc/pie.asp', rel(js.definition(0, pos_in('desdePie();')).uri))
@@ -409,6 +410,11 @@ describe('asp.js cross-file', function()
           -- sin las inyecciones html → javascript/css
           assert.are.same({ html = '' }, c.injections)
         end
+        -- Las capas inyectadas (vbscript de la plantilla, css o js del
+        -- html) las crea LanguageTree:parse por dentro, sin pasar por
+        -- get_string_parser: sólo se ven como hijos del árbol que las
+        -- inyecta.
+        assert.are.same({}, vim.tbl_keys(c.tree:children()), c.lang)
       end
       assert.is_true(langs.html and langs.javascript)
       assert.is_nil(langs.vbscript)
