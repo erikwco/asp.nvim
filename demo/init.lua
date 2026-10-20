@@ -7,6 +7,7 @@
 
 local repo = vim.fn.fnamemodify(vim.fn.expand('<sfile>:p'), ':h:h')
 vim.opt.runtimepath:prepend(repo)
+vim.o.shadafile = 'NONE'
 
 -- Añadir el directorio con los parsers html/javascript/css del usuario.
 local data = vim.fn.stdpath('data')
@@ -34,6 +35,9 @@ vim.o.number = true
 vim.o.signcolumn = 'yes'
 vim.o.laststatus = 0
 vim.o.cmdheight = 1
+vim.o.mouse = ''
+
+require('asp').setup({ virtual_root = repo .. '/demo/app' })
 
 -- Atajos LSP para las demos (equivalentes a los de LazyVim).
 vim.api.nvim_create_autocmd('LspAttach', {

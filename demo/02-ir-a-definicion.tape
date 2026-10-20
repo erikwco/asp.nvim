@@ -21,8 +21,8 @@ Type "/FormatearMoneda(conTasas"
 Enter
 Sleep 2s
 
-# ...y saltamos a su definición (LazyVim: gd), que vive en otro archivo.
-Type "gd"
+# ...y saltamos a su definición, que vive en otro archivo.
+Ctrl+]
 Sleep 3s
 
 # El cursor aterriza en Function FormatearMoneda en includes/helpers.asp;

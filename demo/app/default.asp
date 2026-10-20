@@ -20,12 +20,14 @@
   <p>Base: <%= FormatearMoneda(precio) %></p>
   <p class="total">Total con IVA: <%= etiqueta %></p>
 
+  <script src="js/pedido.js"></script>
   <script type="text/javascript">
     function confirmar() {
       var ok = window.confirm("Confirmar el pedido?");
-      if (ok) { document.forms[0].submit(); }
+      if (ok) { abrirDetalle(); }
     }
   </script>
   <button onclick="confirmar()">Pagar</button>
+  <a href="otra.asp">Ver detalle</a>
 </body>
 </html>
