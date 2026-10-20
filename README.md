@@ -80,6 +80,12 @@ Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`:
   Admite `.asp`, `.inc`, `.htm`, `.html`, `.js` y `.css`, sin
   distinguir mayúsculas en la extensión. Ignora querystring, fragmento y
   espacios exteriores, así que `"otra.asp?id=" & id` también resuelve.
+- **Usos de una página**: `vim.lsp.buf.references()` dentro de un literal
+  lista los enlaces y directivas `<!--#include -->` que apuntan a ese archivo
+  en todo el proyecto. Fuera de un símbolo o literal de página, en un `.asp`
+  o `.inc`, busca quién usa el archivo abierto. Los resultados se ordenan por
+  archivo, línea y columna. Un literal de página irresoluble devuelve una
+  lista vacía.
 - **Símbolos del documento**: `vim.lsp.buf.document_symbol()` u outline de
   tu plugin favorito (aerial, Telescope `lsp_document_symbols`, ...). Las
   funciones y clases JS globales aparecen al final, con detail
@@ -103,6 +109,31 @@ Las demás son relativas al directorio del archivo actual. Se normalizan
 los separadores `\` a `/`. El destino debe existir y ser un archivo;
 si no existe, la consulta devuelve `nil` sin agregar diagnósticos.
 Se descartan `http://`, `https://`, `//`, `mailto:` y `javascript:`.
+
+La búsqueda de usos recorre los archivos guardados `.asp`, `.inc`, `.htm`,
+`.html` y `.js`. La raíz del barrido es `setup({ virtual_root = ... })` si
+está fijada; si no, el `web.config` más externo hacia arriba desde el archivo;
+si no hay ninguno, el `.git` más cercano. Un `admin/web.config` anidado no
+oculta los enlaces desde otras carpetas del sitio. La resolución de rutas
+`/virtual` conserva el `web.config` más cercano al archivo que contiene el
+enlace, igual que los includes.
+
+El barrido usa la ruta real de la raíz. Omite `build`, `node_modules` y las
+carpetas ocultas, incluida `.git`, antes de descender. No sigue symlinks de
+archivos ni de directorios dentro del sitio. Lee texto sin tree-sitter y
+resuelve cada ruta contra el archivo que la contiene. Las directivas
+respetan `file` o `virtual`, también cuando `virtual` no lleva `/` inicial.
+La caché guarda candidatos normalizados por archivo, mtime, tamaño y raíz
+virtual. Crear un destino después del primer barrido no requiere invalidarla.
+Guardar una fuente invalida su entrada y cada barrido purga las fuentes
+desaparecidas bajo esa raíz. Los cambios sin guardar no se incluyen.
+Se quita el BOM UTF-8 y se convierte de latin1 si el texto no es UTF-8 válido.
+
+Los nombres JS sin binding, como `document`, `alert` o `.title`, devuelven
+una lista de referencias vacía. Los literales de página dentro de JS sí
+consultan los usos del destino. Fuera de un nombre o literal de página,
+incluso entre dos strings que no son rutas, se buscan los usos del archivo
+abierto. Las referencias de símbolos VBScript conservan la precedencia.
 
 `gf` y `C-w f` usan `includeexpr` para resolver el nombre que Neovim extrae.
 El ftplugin configura la expresión solo si está vacía y conserva cualquier
@@ -134,6 +165,21 @@ if path then vim.cmd.find(vim.fn.fnameescape(path)) end
 > olvida los borrados en la siguiente consulta; si el conjunto de una
 > página pasa de 64 archivos, la caché deja de servirle y cada consulta los
 > vuelve a leer y parsear.
+>
+> La primera búsqueda de usos de una página recorre y lee el sitio entero,
+> y puede tardar segundos. Las siguientes comprueban mtime y tamaño y solo
+> releen archivos cambiados. Si se recorren al menos 2.000 archivos o la
+> consulta tarda un segundo, se emite un único aviso INFO con la cantidad
+> de archivos y el uso de caché en las siguientes consultas.
+>
+> En Neovim 0.12.6 sobre Apple M4 Pro, 5.000 fuentes de unos 20 KB más el
+> destino y cinco JS minificados tardaron 3.334 ms en la primera consulta y
+> 70 ms con caché, frente a 6.546 y 127 ms antes de estas correcciones.
+> Son medianas de cinco pares alternados, con 5.000 referencias verificadas
+> en cada consulta. Los archivos recién creados podían estar en la caché
+> del sistema operativo. [Mediciones y límites](tests/bench/pages_references.md).
+> Para repetir el caso con validación de rangos y lecturas:
+> `nvim --headless -u NONE --cmd 'set rtp+=.' -l tests/bench/pages_references.lua`.
 
 ## Limitaciones conocidas
 
@@ -145,8 +191,14 @@ if path then vim.cmd.find(vim.fn.fnameescape(path)) end
   Los literales sí se detectan aunque haya varios `<%= %>` en esa línea.
 - Con el cursor exactamente sobre una comilla, la definición LSP devuelve
   `nil`. `gf` puede abrir la página desde la comilla inicial.
-- En sistemas sensibles a mayúsculas, `"Otra.asp"` no encuentra `otra.asp`
-  y devuelve `nil`. IIS no distingue mayúsculas en los nombres de archivo.
+- La comparación respeta el filesystem. En APFS sin distinción de mayúsculas,
+  `"Otra.asp"` y `"otra.asp"` reúnen los mismos usos. En un filesystem sensible
+  a mayúsculas son destinos distintos. La comparación usa la ruta real tras
+  filtrar por el nombre base en minúsculas; no reúne aliases por symlink con
+  nombres base diferentes ni hard links. Una raíz por symlink sí funciona.
+- Las directivas `<!--#INCLUDE FILE=...-->` en mayúsculas no las reconoce la
+  gramática actual. El barrido puede detectar su texto como un literal, pero
+  no garantiza la semántica `file` o `virtual` de esas directivas.
 - Las rutas relativas dentro de un `.inc` o una página incluida se
   resuelven contra el archivo que contiene la ruta, no contra la página
   que pidió el navegador. Es un límite de diseño del resolver compartido.

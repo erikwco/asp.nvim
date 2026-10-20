@@ -25,15 +25,21 @@ vim.api.nvim_create_autocmd('FileType', {
   end,
 })
 
--- *.js: los `.js` de <script src> que lee asp.js desde disco.
+-- Patrones case-insensitive (IIS no distingue mayúsculas). *.js: los `.js`
+-- de <script src> que lee asp.js desde disco; .htm/.html: fuentes del
+-- barrido de usos de página (asp.pages).
 vim.api.nvim_create_autocmd('BufWritePost', {
-  pattern = { '*.asp', '*.inc', '*.js' },
+  pattern = {
+    '*.[aA][sS][pP]', '*.[iI][nN][cC]', '*.[hH][tT][mM]',
+    '*.[hH][tT][mM][lL]', '*.[jJ][sS]',
+  },
   group = vim.api.nvim_create_augroup('asp_nvim_writes', { clear = true }),
   callback = function(args)
     pcall(function()
-      local name = vim.api.nvim_buf_get_name(args.buf)
-      require('asp.symbols').invalidate(name)
-      require('asp.js').invalidate(name)
+      local path = vim.api.nvim_buf_get_name(args.buf)
+      require('asp.pages').invalidate(path)
+      require('asp.symbols').invalidate(path)
+      require('asp.js').invalidate(path)
       if vim.bo[args.buf].filetype == 'asp' then
         require('asp.diagnostics').refresh(args.buf)
       end

@@ -125,7 +125,9 @@ describe('asp.js cross-file', function()
       assert.is_nil(loc)
       local rok, refs = pcall(js.references, 0, pos_in(text))
       assert.is_true(rok)
-      assert.is_nil(refs)
+      -- Nombre JS sin binding: {} y no nil, para que asp.pages no responda
+      -- con los usos de la página (ver asp.js.references).
+      assert.are.same({}, refs)
     end
   end)
 
@@ -155,7 +157,7 @@ describe('asp.js cross-file', function()
       }, function()
         local label = page_line or inc_line
         assert.is_nil(js.definition(0, pos_in('soloDinamico();')), label)
-        assert.is_nil(js.references(0, pos_in('soloDinamico();')), label)
+        assert.are.same({}, js.references(0, pos_in('soloDinamico();')), label)
       end)
     end
     for _, src in ipairs(srcs) do

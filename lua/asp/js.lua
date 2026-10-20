@@ -709,6 +709,7 @@ end
 ---@param data table
 ---@param position table {line, character} (utf-8, 0-indexed como LSP)
 ---@return table|nil occurrence {name, node, scope, decl?}
+---@return boolean|nil nombre de propiedad sin binding
 local function occurrence_at(data, position)
   for _, tree in ipairs(data.trees) do
     local root = tree:root()
@@ -720,6 +721,7 @@ local function occurrence_at(data, position)
         -- Sin entrada si se cruza con un bloque ASP (ver build).
         return data.at[start_byte_of(node)]
       end
+      if node and node:type() == 'property_identifier' then return nil, true end
       return nil
     end
   end
@@ -826,7 +828,8 @@ end
 local function references(bufnr, position)
   local data = get_data(bufnr)
   if not data then return nil end
-  local occ = occurrence_at(data, position)
+  local occ, property = occurrence_at(data, position)
+  if property then return {} end
   if not occ then return nil end
   local name = occ.name
 
@@ -857,8 +860,11 @@ local function references(bufnr, position)
     declared = declared or global_binding(ext, name) ~= nil
   end)
   -- Sin declaración en la página ni en sus archivos externos (`document`,
-  -- `alert`, un global implícito): nil, como definition.
-  if not declared then return nil end
+  -- `alert`, un global implícito): {} y no nil. El usuario pidió las
+  -- referencias de un nombre JS; una lista vacía (truthy en Lua) corta la
+  -- cadena de asp.lsp para que asp.pages no responda con los usos de la
+  -- página como si fueran referencias de ese identificador.
+  if not declared then return {} end
   for _, f in ipairs(files) do
     collect(f.uri, f.data, function(r) return r == nil or r.global end)
   end
