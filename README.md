@@ -65,16 +65,19 @@ Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`:
   elemento, sin distinguir mayúsculas) y URLs `href="javascript:..."`:
   funciones, clases, métodos, `var`/`let`/`const` y parámetros,
   case-sensitive, con scope por función y un scope global compartido por
-  todos los `<script>` y manejadores de la página. Se ignoran
+  todos los `<script>`, manejadores y URLs `javascript:` de la página:
+  cada manejador `on*` es el cuerpo de una función (sus `var` son
+  locales a él) y cada URL `javascript:`, un script global (sus `var` y
+  funciones son de la página). Se ignoran
   `<script runat="server">`, los `type` que no son JavaScript
   (`text/template`, ...) y `<script language="VBScript">`; un `<%= %>`
   dentro del JS se trata como un valor opaco. El scope global de la
   página incluye además las funciones, clases y variables globales de
-  los `.js` de sus `<script src>` y de los `<script>` de las páginas
-  incluidas con `<!--#include-->` (y de los `<script src>` de esos
-  includes): `C-]` abre la declaración en ese archivo y references
-  reúne los usos de todos, también los de los manejadores de esas
-  páginas. Ver `:help asp-javascript`.
+  los `.js` de sus `<script src>` y de los `<script>` y URLs
+  `javascript:` de las páginas incluidas con `<!--#include-->` (y de los
+  `<script src>` de esos includes): `C-]` abre la declaración en ese
+  archivo y references reúne los usos de todos, también los de los
+  manejadores de esas páginas. Ver `:help asp-javascript`.
 - **Abrir una página o recurso**: la misma consulta dentro de un literal
   entre comillas simples o dobles abre el archivo en su primera línea.
   Funciona en VBScript (`Response.Redirect "otra.asp"`), atributos HTML
@@ -229,9 +232,8 @@ if path then vim.cmd.find(vim.fn.fnameescape(path)) end
   resuelven; no se recogen como declaración los nombres desestructurados,
   los parámetros con default o rest, el de `catch (e)` ni la variable de
   `for (const x of xs)`. Sin hover ni completion para JS.
-- JavaScript en manejadores `on*`: cada uno es el cuerpo de una función
-  aparte (sus `var` son locales a él), pero no se modela el parámetro
-  implícito `event` ni la cadena de scopes del elemento y su formulario
+- JavaScript en manejadores `on*`: no se modela el parámetro implícito
+  `event` ni la cadena de scopes del elemento y su formulario
   (`onclick="submit()"` no resuelve a `form.submit`). No se decodifican
   las entidades HTML (`&quot;`) ni los `%xx` de una URL `javascript:`:
   ahí el JS queda con un error de sintaxis y el resto resuelve igual.

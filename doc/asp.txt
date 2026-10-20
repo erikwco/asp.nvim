@@ -214,7 +214,8 @@ JavaScript de cliente ~
 
 definition y references también resuelven los identificadores del
 JavaScript de cliente de los bloques <script> del archivo actual, y
-también dentro de los atributos de evento `on*`:
+también dentro de los atributos de evento `on*` y de las URLs
+`javascript:`:
 
   - Declaraciones: `function`, `class`, métodos de clase, `var`/`let`/
     `const`, parámetros (incluido el de `x => ...`) y el nombre de una
@@ -223,20 +224,26 @@ también dentro de los atributos de evento `on*`:
     JavaScript.
   - Scopes: el de cada función (declaración, expression, arrow o
     método); fuera de toda función, el global, compartido por todos los
-    <script> y manejadores de la página (como en el navegador). Gana la
-    declaración de la función más interna que envuelve el uso; si no
-    hay, la global.
-  - Manejadores de evento: el valor de todo atributo `on*` de cualquier
-    elemento (`onclick`, `onchange`, `onsubmit`, `onload`, ..., sin
-    distinguir mayúsculas, con o sin comillas) es JavaScript, igual que
-    el de un `href="javascript:..."` desde después del prefijo. Cada
-    uno se parsea aparte, como cada <script>: un error de sintaxis en
-    uno no afecta a los demás. Como en el navegador, cada manejador es
-    el cuerpo de una función: sus usos resuelven al global de la página
-    y sus `var` son locales a él. Un `<%= %>` pegado al borde del valor
-    cuenta como parte de él (`onkeyup="<%= p %>f()"` no resuelve `f`);
-    un valor que es entero un bloque ASP no es JavaScript.
-    documentSymbol no lista lo que declara un manejador.
+    <script>, manejadores y URLs `javascript:` de la página (como en el
+    navegador). Gana la declaración de la función más interna que
+    envuelve el uso; si no hay, la global.
+  - Manejadores de evento y URLs `javascript:`: el valor de todo
+    atributo `on*` de cualquier elemento (`onclick`, `onchange`,
+    `onsubmit`, `onload`, ..., sin distinguir mayúsculas, con o sin
+    comillas) es JavaScript, igual que el de un `href="javascript:..."`
+    desde después del prefijo. Cada uno se parsea aparte, como cada
+    <script>: un error de sintaxis en uno no afecta a los demás. Como en
+    el navegador, cada manejador `on*` es el cuerpo de una función: sus
+    usos resuelven al global de la página y sus `var` son locales a él.
+    Una URL `javascript:`, en cambio, corre como un script global: sus
+    `var` y funciones son de la página y se ven desde los <script> y los
+    manejadores. Si un <script> declara el mismo nombre, definition va
+    al del <script> aunque el enlace esté antes (el <script> corre al
+    cargar la página; la URL, al hacer clic). Un `<%= %>` pegado al
+    borde del valor cuenta como parte de él (`onkeyup="<%= p %>f()"` no
+    resuelve `f`); un valor que es entero un bloque ASP no es
+    JavaScript. documentSymbol no lista lo que declara un manejador ni
+    una URL `javascript:`.
   - references devuelve la declaración y todos los usos que resuelven
     a ella (incluida la `x` de `{ x }`); un local no se mezcla con un
     homónimo de otra función. Un nombre sin declaración en la página
@@ -252,14 +259,14 @@ también dentro de los atributos de evento `on*`:
   - Entre archivos: el scope global de la página suma las
     declaraciones globales de los `.js` de sus `<script src>` (rutas
     relativas o con `/` inicial, como |asp-funcionalidades|) y de los
-    <script> y manejadores `on*` de las páginas incluidas con
+    <script> y URLs `javascript:` de las páginas incluidas con
     `<!--#include-->`, junto con los `<script src>` de esos includes
-    (relativos al include). Si el
-    buffer no declara el nombre en ninguno de sus scopes, gana el
-    primero que lo declare en este orden: los `<script src>` del
-    buffer, en orden del documento, y luego los includes en el orden
-    del grafo (su JS inline antes que sus `<script src>`). Los locales
-    de otro archivo no son visibles desde la página.
+    (relativos al include). Si el buffer no declara el nombre en
+    ninguno de sus scopes, gana el primero que lo declare en este
+    orden: los `<script src>` del buffer, en orden del documento, y
+    luego los includes en el orden del grafo (su JS inline antes que
+    sus `<script src>`). Los locales de otro archivo, también los de
+    sus manejadores `on*`, no son visibles desde la página.
   - references reúne los usos del buffer y de esos archivos que
     resuelven a la misma declaración; en cada archivo sus propios
     locales sombrean igual que en el buffer. Como en el navegador, el
