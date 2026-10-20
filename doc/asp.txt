@@ -100,17 +100,34 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
 
       Dentro de un literal de página, `vim.lsp.buf.references()` lista
       los enlaces y directivas <!--#include --> que apuntan a ese archivo
-      en todo el proyecto. Fuera de un símbolo o literal, en un .asp o
-      .inc, busca quién usa el archivo abierto. Ordena por archivo, línea
-      y columna. Un literal irresoluble devuelve una lista vacía.
+      en todo el proyecto. Fuera de un símbolo o literal de página, en un
+      .asp o .inc, busca quién usa el archivo abierto. Ordena por archivo,
+      línea y columna. Un literal de página irresoluble da una lista vacía.
 
-      Recorre los archivos guardados .asp, .inc, .htm, .html y .js bajo
-      la raíz virtual. Omite build, node_modules y carpetas ocultas,
-      incluida .git. Resuelve cada ruta contra el archivo que la contiene.
-      Las directivas respetan file o virtual; virtual sin barra inicial
-      también parte de la raíz. Lee texto sin tree-sitter y cachea por
-      mtime y raíz virtual. Guardar un archivo invalida su entrada.
-      No incluye los cambios sin guardar en los archivos que lo usan.
+      Recorre los archivos guardados .asp, .inc, .htm, .html y .js.
+      La raíz del barrido es virtual_root si está fijada. Si no, usa el
+      web.config más externo hacia arriba desde el archivo o, si no hay
+      ninguno, el .git más cercano. Un admin/web.config anidado no oculta
+      enlaces desde otras carpetas. La resolución de /virtual conserva
+      el web.config más cercano a cada fuente, igual que los includes.
+
+      Usa la ruta real de la raíz y omite build, node_modules y carpetas
+      ocultas, incluida .git, antes de descender. No sigue symlinks de
+      archivos ni de directorios dentro del sitio. Resuelve cada ruta
+      contra el archivo que la contiene. Las directivas respetan file
+      o virtual; virtual sin barra inicial también parte de la raíz.
+      Lee texto sin tree-sitter y guarda candidatos normalizados por
+      mtime, tamaño y raíz virtual. Crear un destino después del primer
+      barrido no requiere invalidar la caché. Guardar una fuente invalida
+      su entrada. Cada barrido purga las fuentes desaparecidas bajo su
+      raíz. No incluye cambios sin guardar. Quita el BOM UTF-8 y convierte
+      de latin1 si el texto no es UTF-8 válido.
+
+      Un nombre JS sin binding, como document, alert o .title, devuelve
+      una lista vacía. Un literal de página en JS consulta los usos del
+      destino. Fuera de un nombre o literal de página, incluso entre dos
+      strings que no son rutas, busca quién usa el archivo abierto.
+      Los símbolos VBScript conservan la precedencia.
 
   documentSymbol ~
       Outline del archivo, con los miembros de clase anidados. Las
@@ -138,14 +155,20 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       Los símbolos de archivos incluidos se leen desde disco con un parser
       limitado a VBScript, sin parsear sus capas HTML, JS o CSS.
 
-      La primera búsqueda de usos de una página lee todo el proyecto y
-      puede tardar segundos en sitios grandes. Las siguientes recorren
-      las carpetas y comprueban mtimes, pero solo releen archivos cambiados.
-      El barrido de páginas no necesita parsers. Una medición local con
-      Neovim 0.12.6 y Apple M4 Pro, sobre 500 archivos y 19.960 referencias,
-      dio 316 ms en la primera consulta y 60 ms en la siguiente. La caché
-      de páginas estaba vacía; los archivos podían estar en la caché del
-      sistema operativo. Para repetirla desde la raíz del repo: >
+      La primera búsqueda de usos de una página lee todo el sitio y puede
+      tardar segundos. Las siguientes comprueban mtime y tamaño y solo
+      releen archivos cambiados. Al recorrer al menos 2.000 archivos o
+      tardar un segundo, emite un único aviso INFO con la cantidad de
+      archivos y el uso de caché en las siguientes consultas.
+
+      En Neovim 0.12.6 sobre Apple M4 Pro, 5.000 fuentes de unos 20 KB,
+      más el destino y cinco JS minificados, dieron 3.334 ms en frío y
+      70 ms con caché, frente a 6.546 y 127 ms antes de las correcciones.
+      Son medianas de cinco pares alternados, con 5.000 referencias por
+      consulta. La caché de páginas estaba vacía en la primera consulta;
+      los archivos podían estar en la caché del sistema operativo.
+      Detalles en tests/bench/pages_references.md. Para repetir el caso
+      con validación de rangos y lecturas desde la raíz del repo: >
         nvim --headless -u NONE --cmd 'set rtp+=.' \
           -l tests/bench/pages_references.lua
 <
@@ -161,9 +184,16 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       Con el cursor exactamente sobre una comilla, la definición LSP
       devuelve `nil`. `gf` puede abrir la página desde la comilla inicial.
 
-      En sistemas sensibles a mayúsculas, `"Otra.asp"` no encuentra
-      `otra.asp` y devuelve `nil`. IIS no distingue mayúsculas en los
-      nombres de archivo.
+      La comparación respeta el filesystem. En APFS sin distinción de
+      mayúsculas, "Otra.asp" y "otra.asp" reúnen los mismos usos. En un
+      filesystem sensible a mayúsculas son destinos distintos. Compara
+      rutas reales tras filtrar por el nombre base en minúsculas. No
+      reúne aliases por symlink con nombres base diferentes ni hard links.
+      Una raíz por symlink sí funciona.
+
+      La gramática no reconoce <!--#INCLUDE FILE=...--> en mayúsculas.
+      El barrido puede detectar su texto como un literal, pero no garantiza
+      la semántica file o virtual de esas directivas.
 
       Las rutas relativas dentro de un .inc o una página incluida parten
       del archivo que contiene la ruta, no de la página que pidió el
@@ -198,7 +228,9 @@ JavaScript de cliente de los bloques <script> del archivo actual:
   - references devuelve la declaración y todos los usos que resuelven
     a ella (incluida la `x` de `{ x }`); un local no se mezcla con un
     homónimo de otra función. Un nombre sin declaración en la página
-    (`document`, `alert`, ...) no tiene definición ni referencias.
+    (`document`, `alert`, ...) no tiene definición y devuelve una lista
+    vacía de referencias, sin caer en los usos de la página. Las
+    propiedades como obj.title también devuelven una lista vacía.
   - Se ignoran `<script runat="server">` (JScript de servidor), los
     `type` que no son JavaScript (`text/template`, ...) y el VBScript
     de cliente (`<script language="VBScript">`).
