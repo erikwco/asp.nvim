@@ -20,6 +20,7 @@ describe('asp-ls', function()
     assert.are.equal('utf-8', client.offset_encoding)
     assert.is_true(client.server_capabilities.documentSymbolProvider)
     assert.is_true(client.server_capabilities.definitionProvider)
+    assert.is_true(client.server_capabilities.documentHighlightProvider)
   end)
 
   local function request(method, params)
@@ -124,6 +125,121 @@ describe('asp-ls', function()
       assert.are.equal(pos.line, loc.range.start.line, 'llamada ' .. i .. ' de 5')
       assert.are.equal(pos.character, loc.range.start.character, 'llamada ' .. i .. ' de 5')
     end
+  end)
+end)
+
+describe('asp-ls documentHighlight', function()
+  after_each(function() vim.cmd('bwipeout!') end)
+
+  local function open(path, lines)
+    vim.cmd.edit('tests/fixtures/' .. path)
+    if lines then vim.api.nvim_buf_set_lines(0, 0, -1, false, lines) end
+    assert.is_true(vim.wait(2000, function()
+      local client = vim.lsp.get_clients({ bufnr = 0, name = 'asp-ls' })[1]
+      return client and client.initialized
+    end))
+  end
+
+  local function highlights(line, character)
+    local resp = vim.lsp.buf_request_sync(0, 'textDocument/documentHighlight', {
+      textDocument = vim.lsp.util.make_text_document_params(),
+      position = { line = line, character = character },
+    }, 3000)
+    assert.is_not_nil(resp)
+    for _, r in pairs(resp) do
+      assert.is_nil(r.err)
+      return r.result
+    end
+    error('asp-ls no respondió a documentHighlight')
+  end
+
+  local function highlight(line, character, name, kind)
+    return {
+      range = {
+        start = { line = line, character = character },
+        ['end'] = { line = line, character = character + #name },
+      },
+      kind = kind,
+    }
+  end
+
+  it('resalta la declaración VBScript como Write y los usos como Read sin distinguir mayúsculas', function()
+    open('proyecto/scratch_highlight.asp', {
+      '<%', 'Dim total', 'total = 2', 'Response.Write TOTAL', '%>',
+    })
+    assert.are.same({
+      highlight(1, 4, 'total', 3),
+      highlight(2, 0, 'total', 2),
+      highlight(3, 15, 'TOTAL', 2),
+    }, highlights(3, 17))
+  end)
+
+  it('confina los locales VBScript al scope de su declaración', function()
+    open('proyecto/locales.asp')
+    assert.are.same({
+      highlight(2, 6, 'contador', 3),
+      highlight(3, 2, 'contador', 2),
+      highlight(4, 12, 'contador', 2),
+    }, highlights(3, 3))
+  end)
+
+  it('resalta una función JS global desde su onclick y desde su uso en script', function()
+    open('proyecto/scratch_highlight.asp', {
+      '<script>',
+      'function pagar() {}',
+      'pagar();',
+      '</script>',
+      '<button onclick="pagar()">Pagar</button>',
+    })
+    local expected = {
+      highlight(1, 9, 'pagar', 3),
+      highlight(2, 0, 'pagar', 2),
+      highlight(4, 17, 'pagar', 2),
+    }
+    assert.are.same(expected, highlights(4, 18))
+    assert.are.same(expected, highlights(2, 1))
+    assert.are.same(expected, highlights(1, 10))
+  end)
+
+  it('excluye las referencias VBScript de otros archivos', function()
+    open('proyecto/default.asp')
+    assert.are.same({ highlight(9, 14, 'FormatearMoneda', 2) }, highlights(9, 15))
+  end)
+
+  it('excluye las referencias JS externas y los locales homónimos', function()
+    open('js/crossfile/pagina.asp')
+    assert.are.same({ highlight(15, 0, 'desdeSrc', 2) }, highlights(15, 1))
+  end)
+
+  it('usa Text cuando VBScript no tiene una declaración resuelta', function()
+    open('proyecto/scratch_highlight.asp', {
+      '<%', 'sinDeclarar = 1', 'Response.Write sinDeclarar', '%>',
+    })
+    assert.are.same({
+      highlight(1, 0, 'sinDeclarar', 1),
+      highlight(2, 15, 'sinDeclarar', 1),
+    }, highlights(1, 1))
+  end)
+
+  it('devuelve una lista vacía fuera de un símbolo y sobre un JS sin binding', function()
+    open('proyecto/scratch_highlight.asp', {
+      '<html>', '<script>sinDeclarar();</script>', '</html>',
+    })
+    assert.are.same({}, highlights(0, 0))
+    assert.are.same({}, highlights(1, 10))
+  end)
+
+  it('no resalta usos de página ni desde un literal ni desde el archivo abierto', function()
+    open('proyecto/paginas/inicio.asp')
+    assert.are.same({}, highlights(1, 10))
+    vim.cmd('bwipeout!')
+    open('proyecto/paginas/otra.asp')
+    assert.are.same({}, highlights(0, 0))
+  end)
+
+  it('no lanza ni devuelve un error LSP ante una posición inválida', function()
+    open('proyecto/default.asp')
+    assert.are.same({}, highlights(-1, -1))
   end)
 end)
 

@@ -24,6 +24,11 @@ Hover con la doc de los intrínsecos y completion de sus miembros:
 
 ![Hover y completion de intrínsecos](demo/03-hover-completion.gif)
 
+Navegación desde un `onclick` a su función JS, apertura de páginas y
+búsqueda de sus usos:
+
+![JavaScript y páginas](demo/04-js-y-paginas.gif)
+
 > Los GIFs se generan con [vhs](https://github.com/charmbracelet/vhs) desde
 > `demo/*.tape` — ver [`demo/README.md`](demo/README.md).
 
@@ -77,68 +82,85 @@ también separa la configuración y los datos del editor.
 
 ## Navegación y ayuda al código
 
-Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`:
+Al abrir un `.asp` se adjunta el servidor in-process `asp-ls`. Usá `C-]`
+a través de `tagfunc` o `vim.lsp.buf.definition()` para ir a definición,
+y `vim.lsp.buf.references()` para listar referencias.
 
-- **Ir a definición**: `C-]` (vía tagfunc) o `vim.lsp.buf.definition()` —
-  Functions, Subs, Classes, variables y constantes del archivo actual,
-  case-insensitive, con precedencia local → página.
-- **JavaScript de cliente**: definición y referencias también dentro de los
-  `<script>` del archivo y de sus atributos de evento `on*`
-  (`onclick="reinitAsk();"`, `onchange`, `onsubmit`, ... en cualquier
-  elemento, sin distinguir mayúsculas) y URLs `href="javascript:..."`:
-  funciones, clases, métodos, `var`/`let`/`const` y parámetros,
-  case-sensitive, con scope por función y un scope global compartido por
-  todos los `<script>`, manejadores y URLs `javascript:` de la página:
-  cada manejador `on*` es el cuerpo de una función (sus `var` son
-  locales a él) y cada URL `javascript:`, un script global (sus `var` y
-  funciones son de la página). Se ignoran
-  `<script runat="server">`, los `type` que no son JavaScript
-  (`text/template`, ...) y `<script language="VBScript">`; un `<%= %>`
-  dentro del JS se trata como un valor opaco. El scope global de la
-  página incluye además las funciones, clases y variables globales de
-  los `.js` de sus `<script src>` y de los `<script>` y URLs
-  `javascript:` de las páginas incluidas con `<!--#include-->` (y de los
-  `<script src>` de esos includes): `C-]` abre la declaración en ese
-  archivo y references reúne los usos de todos, también los de los
-  manejadores de esas páginas. Ver `:help asp-javascript`.
-- **Abrir una página o recurso**: la misma consulta dentro de un literal
-  entre comillas simples o dobles abre el archivo en su primera línea.
-  Funciona en VBScript (`Response.Redirect "otra.asp"`), atributos HTML
-  (`href`, `action`, `src`) y strings de JavaScript, sin depender de sus
-  parsers. Incluye comillas anidadas, como
-  `<a onclick="location.href='otra.asp'">` y enlaces en `Response.Write`.
-  Admite `.asp`, `.inc`, `.htm`, `.html`, `.js` y `.css`, sin
-  distinguir mayúsculas en la extensión. Ignora querystring, fragmento y
-  espacios exteriores, así que `"otra.asp?id=" & id` también resuelve.
-- **Usos de una página**: `vim.lsp.buf.references()` dentro de un literal
-  lista los enlaces y directivas `<!--#include -->` que apuntan a ese archivo
-  en todo el proyecto. Fuera de un símbolo o literal de página, en un `.asp`
-  o `.inc`, busca quién usa el archivo abierto. Los resultados se ordenan por
-  archivo, línea y columna. Un literal de página irresoluble devuelve una
-  lista vacía.
-- **Símbolos del documento**: `vim.lsp.buf.document_symbol()` u outline de
-  tu plugin favorito (aerial, Telescope `lsp_document_symbols`, ...). Las
-  funciones y clases JS globales aparecen al final, con detail
-  `javascript`.
-- **Hover**: documentación de los objetos intrínsecos de ASP
-  (`Response`, `Request`, `Server`, `Session`, `Application`) y firma de
-  tus propias funciones/subs.
-- **Completion**: miembros de los intrínsecos tras `Objeto.` (con
-  `triggerCharacters` en `.`) y los símbolos del proyecto.
+### VBScript e includes
 
-- **Cross-file**: definición y referencias siguen los
-  `<!--#include file/virtual="..."-->` (recursivo, ciclos tolerados);
-  `vim.lsp.buf.workspace_symbol()` busca en todo el proyecto.
-- **Diagnósticos**: los includes que no resuelven se marcan con un
-  warning en su línea. La raíz de los includes `virtual=` se autodetecta
-  (`web.config` o `.git`) y puede fijarse con
-  `require('asp').setup({ virtual_root = '/ruta/al/sitio' })`.
+La navegación resuelve Functions, Subs, Classes, variables y constantes
+sin distinguir mayúsculas, con precedencia local → página. Las referencias
+de un símbolo local se limitan a su scope.
+
+Definición y referencias siguen los `<!--#include file/virtual="..."-->`
+de forma recursiva y toleran ciclos. Los includes que no resuelven se
+marcan con un warning en su línea. La raíz de los includes `virtual=` se
+autodetecta mediante `web.config` o `.git` y puede fijarse con
+`require('asp').setup({ virtual_root = '/ruta/al/sitio' })`.
+
+### JavaScript de cliente
+
+Definición y referencias resuelven funciones, clases, métodos,
+`var`/`let`/`const` y parámetros dentro de los `<script>` del archivo.
+También funcionan en atributos de evento `on*`, como
+`onclick="reinitAsk();"`, `onchange` y `onsubmit`, y en URLs
+`href="javascript:..."`. Los atributos se reconocen en cualquier elemento,
+sin distinguir mayúsculas; los nombres JS sí son case-sensitive.
+
+Cada función tiene su scope. Los `<script>`, manejadores y URLs
+`javascript:` comparten el scope global de la página. Cada manejador `on*`
+es el cuerpo de una función, con sus `var` locales. Cada URL `javascript:`
+es un script global, cuyas variables y funciones pertenecen a la página.
+
+Ese global suma las funciones, clases y variables globales de los `.js`
+de sus `<script src>`, y de los `<script>` y URLs `javascript:` de las
+páginas incluidas con `<!--#include-->`. También incluye los `<script src>`
+de esos includes. `C-]` abre la declaración en el archivo correspondiente
+y `vim.lsp.buf.references()` reúne sus usos, incluidos los manejadores de
+esas páginas. Ver `:help asp-javascript`.
+
+Se ignoran `<script runat="server">`, los `type` que no son JavaScript,
+como `text/template`, y `<script language="VBScript">`. Un `<%= %>` dentro
+del JS se trata como un valor opaco.
+
+### Páginas y recursos
+
+La consulta de definición dentro de un literal entre comillas simples o
+dobles abre el archivo en su primera línea. Funciona en VBScript
+(`Response.Redirect "otra.asp"`), atributos HTML (`href`, `action`, `src`)
+y strings de JavaScript, sin depender de sus parsers. Incluye comillas
+anidadas, como `<a onclick="location.href='otra.asp'">`, y enlaces en
+`Response.Write`.
+
+Admite `.asp`, `.inc`, `.htm`, `.html`, `.js` y `.css`, sin distinguir
+mayúsculas en la extensión. Ignora querystring, fragmento y espacios
+exteriores, así que `"otra.asp?id=" & id` también resuelve.
 
 Las rutas de páginas que empiezan con `/` usan esa misma raíz virtual.
 Las demás son relativas al directorio del archivo actual. Se normalizan
 los separadores `\` a `/`. El destino debe existir y ser un archivo;
 si no existe, la consulta devuelve `nil` sin agregar diagnósticos.
 Se descartan `http://`, `https://`, `//`, `mailto:` y `javascript:`.
+
+`gf` y `C-w f` usan `includeexpr` para resolver el nombre que Neovim extrae.
+El ftplugin configura la expresión solo si está vacía y conserva cualquier
+`includeexpr` previo del usuario. Neovim aplica la expresión cuando su
+búsqueda normal no encuentra el archivo. `:find` no evalúa `includeexpr`;
+para usar el resolver explícitamente:
+
+```lua
+local pages = require('asp.pages')
+local path = pages.resolve('/includes/helpers.asp', vim.api.nvim_buf_get_name(0))
+if path then vim.cmd.find(vim.fn.fnameescape(path)) end
+```
+
+#### Usos de una página
+
+`vim.lsp.buf.references()` dentro de un literal lista los enlaces y
+directivas `<!--#include -->` que apuntan a ese archivo en todo el proyecto.
+Fuera de un símbolo o literal de página, en un `.asp` o `.inc`, busca quién
+usa el archivo abierto. Los resultados se ordenan por archivo, línea y
+columna. Un literal de página irresoluble devuelve una lista vacía.
 
 La búsqueda de usos recorre los archivos guardados `.asp`, `.inc`, `.htm`,
 `.html` y `.js`. La raíz del barrido es `setup({ virtual_root = ... })` si
@@ -161,63 +183,101 @@ Se quita el BOM UTF-8 y se convierte de latin1 si el texto no es UTF-8 válido.
 
 Los nombres JS sin binding, como `document`, `alert` o `.title`, devuelven
 una lista de referencias vacía. Los literales de página dentro de JS sí
-consultan los usos del destino. Fuera de un nombre o literal de página,
-incluso entre dos strings que no son rutas, se buscan los usos del archivo
-abierto. Las referencias de símbolos VBScript conservan la precedencia.
+consultan los usos del destino. Las referencias de símbolos VBScript
+conservan la precedencia.
 
-`gf` y `C-w f` usan `includeexpr` para resolver el nombre que Neovim extrae.
-El ftplugin configura la expresión solo si está vacía y conserva cualquier
-`includeexpr` previo del usuario. Neovim aplica la expresión cuando su
-búsqueda normal no encuentra el archivo. `:find` no evalúa `includeexpr`;
-para usar el resolver explícitamente:
+### Símbolos, hover y completion
+
+- `vim.lsp.buf.document_symbol()` muestra el outline del archivo, también
+  disponible desde aerial o Telescope `lsp_document_symbols`. Las funciones
+  y clases JS globales aparecen al final, con detail `javascript`.
+- `vim.lsp.buf.workspace_symbol()` busca símbolos VBScript en todo el proyecto.
+- Hover muestra la documentación de los intrínsecos de ASP (`Response`,
+  `Request`, `Server`, `Session`, `Application`) y la firma de tus funciones
+  y subs de VBScript.
+- Completion ofrece miembros de los intrínsecos tras `Objeto.` con
+  `triggerCharacters` en `.`, además de los símbolos VBScript del proyecto.
+
+### Resaltar ocurrencias del símbolo
+
+`textDocument/documentHighlight` devuelve las ocurrencias de VBScript o
+JavaScript en el buffer actual, respetando el scope de las referencias.
+La declaración se marca como Write y los usos como Read; si no se resuelve
+una declaración, se usa Text. No incluye los enlaces a páginas ni las
+ocurrencias de otros archivos.
+
+Podés activarlo desde tu plugin de LSP o con `vim.lsp.buf.document_highlight()`
+en `CursorHold`. Este ejemplo limpia el resaltado al mover el cursor,
+entrar en Insert o salir del buffer:
 
 ```lua
-local pages = require('asp.pages')
-local path = pages.resolve('/includes/helpers.asp', vim.api.nvim_buf_get_name(0))
-if path then vim.cmd.find(vim.fn.fnameescape(path)) end
+local group = vim.api.nvim_create_augroup('asp_document_highlight', { clear = true })
+vim.api.nvim_create_autocmd('LspAttach', {
+  group = group,
+  callback = function(args)
+    local client = vim.lsp.get_client_by_id(args.data.client_id)
+    if not client or client.name ~= 'asp-ls' then return end
+    vim.api.nvim_clear_autocmds({ group = group, buffer = args.buf })
+    vim.api.nvim_create_autocmd('CursorHold', {
+      group = group,
+      buffer = args.buf,
+      callback = vim.lsp.buf.document_highlight,
+    })
+    vim.api.nvim_create_autocmd({ 'CursorMoved', 'InsertEnter', 'BufLeave' }, {
+      group = group,
+      buffer = args.buf,
+      callback = vim.lsp.buf.clear_references,
+    })
+  end,
+})
 ```
 
-> **Nota de rendimiento:** para los archivos INCLUDED/indexados (grafo de
-> includes, `workspace/symbol`), la Fase 4 ya optimizó esto: solo se
-> parsea la capa VBScript desde disco (milisegundos, incluso en archivos
-> enormes), sin tocar html/js/css/regex. Esa optimización no cubre el
-> buffer que tienes ABIERTO: en páginas muy grandes con muchos bloques
-> `<script>` (miles de líneas), la *primera* consulta LSP tras abrir el
-> archivo puede tardar varios segundos mientras tree-sitter parsea todas
-> sus capas; las consultas siguientes sobre ese buffer son instantáneas.
->
-> El JavaScript de los `<script src>` y de los includes se lee desde disco
-> con la misma técnica (sólo html confinado y javascript, nunca
-> VBScript ni CSS) y se cachea por mtime. Con 20 includes de 250
-> funciones JS cada uno, la primera definición cross-file tarda ~150 ms
-> y las siguientes ~0,5 ms. Al terminar cada consulta, la caché vuelve a
-> 64 archivos descartando los usados hace más tiempo, salvo los que usó
-> esa consulta: si fueron más de 64, los conserva todos. Olvida los
-> borrados en la siguiente consulta.
->
-> El grafo de includes cachea las directivas de cada archivo por mtime y
-> tamaño, con el mismo criterio y un tope de 512 archivos: al terminar
-> cada consulta vuelve a 512, salvo que esa consulta haya recorrido más,
-> y entonces conserva todos los suyos. El destino de cada include se
-> resuelve en cada consulta, así que crear o borrar un archivo incluido
-> no requiere invalidar nada. En caliente, una definición cross-file con
-> 100 includes tarda ~1,8 ms en JS y ~1,7 ms en VBScript, frente a 115 y
-> 17 ms antes. [Mediciones](tests/bench/includes_graph.md).
->
-> La primera búsqueda de usos de una página recorre y lee el sitio entero,
-> y puede tardar segundos. Las siguientes comprueban mtime y tamaño y solo
-> releen archivos cambiados. Si se recorren al menos 2.000 archivos o la
-> consulta tarda un segundo, se emite un único aviso INFO con la cantidad
-> de archivos y el uso de caché en las siguientes consultas.
->
-> En Neovim 0.12.6 sobre Apple M4 Pro, 5.000 fuentes de unos 20 KB más el
-> destino y cinco JS minificados tardaron 3.334 ms en la primera consulta y
-> 70 ms con caché, frente a 6.546 y 127 ms antes de estas correcciones.
-> Son medianas de cinco pares alternados, con 5.000 referencias verificadas
-> en cada consulta. Los archivos recién creados podían estar en la caché
-> del sistema operativo. [Mediciones y límites](tests/bench/pages_references.md).
-> Para repetir el caso con validación de rangos y lecturas:
-> `nvim --headless -u NONE --cmd 'set rtp+=.' -l tests/bench/pages_references.lua`.
+El ejemplo se registra cuando se adjunta `asp-ls`, también en `.inc` y
+extensiones en mayúsculas.
+
+### Rendimiento
+
+Las consultas VBScript sobre archivos de disco, como includes y símbolos
+del proyecto, parsean sólo VBScript. En el buffer que tenés abierto,
+tree-sitter también procesa las capas HTML, JavaScript, CSS y regex. En
+páginas muy grandes con muchos bloques `<script>`, la primera consulta
+puede tardar varios segundos. Las siguientes reutilizan los árboles,
+aunque el costo de recorrer símbolos y ocurrencias crece con el archivo.
+
+El resaltado recorre sólo las ocurrencias del buffer. Si la declaración
+está allí, tampoco consulta archivos externos para clasificarla. Cuando
+falta, busca la definición en includes o scripts externos para distinguir
+un uso de un nombre sin declaración.
+[Mediciones del resaltado frente a referencias](tests/bench/document_highlight.md).
+
+El JavaScript de los `<script src>` y de los includes se lee desde disco
+con parsers de HTML y JavaScript confinados a sus regiones. La caché usa
+mtime y tamaño. Al terminar cada consulta vuelve a 64 archivos, descartando
+los usados hace más tiempo, salvo los que usó esa consulta: si fueron más
+de 64, los conserva todos. Olvida los borrados en la siguiente consulta.
+
+El grafo de includes cachea las directivas de cada archivo por mtime y
+tamaño, con el mismo criterio y un tope de 512 archivos. El destino de
+cada include se resuelve en cada consulta, así que crear o borrar un
+archivo incluido no requiere invalidar nada. En caliente, una definición
+cross-file con 100 includes tarda ~1,8 ms en JS y ~1,7 ms en VBScript,
+frente a 115 y 17 ms antes de agregar esta caché.
+[Mediciones](tests/bench/includes_graph.md).
+
+La primera búsqueda de usos de una página recorre y lee el sitio entero,
+y puede tardar segundos. Las siguientes comprueban mtime y tamaño y sólo
+releen archivos cambiados. Si se recorren al menos 2.000 archivos o la
+consulta tarda un segundo, se emite un único aviso INFO con la cantidad
+de archivos y el uso de caché en las siguientes consultas.
+
+En Neovim 0.12.6 sobre Apple M4 Pro, 5.000 fuentes de unos 20 KB más el
+destino y cinco JS minificados tardaron 3.334 ms en la primera consulta y
+70 ms con caché, frente a 6.546 y 127 ms antes de optimizar el barrido.
+Son medianas de cinco pares alternados, con 5.000 referencias verificadas
+en cada consulta. Los archivos recién creados podían estar en la caché
+del sistema operativo. [Mediciones y límites](tests/bench/pages_references.md).
+Para repetir el caso con validación de rangos y lecturas:
+`nvim --headless -u NONE --cmd 'set rtp+=.' -l tests/bench/pages_references.lua`.
 
 ## Limitaciones conocidas
 
@@ -273,10 +333,6 @@ if path then vim.cmd.find(vim.fn.fnameescape(path)) end
   onclick=...>"`) ni un `href` cuyo prefijo `javascript:` viene de un
   `<%= %>`.
 
-## Verificación
-
-`:checkhealth asp`
-
 ## Licencias
 
 - El plugin (código Lua, gramática aspclassic, queries): **MIT**.
@@ -292,9 +348,19 @@ if path then vim.cmd.find(vim.fn.fnameescape(path)) end
   Windows no está en la matriz (el build usa `make`/`cc`/`.so`, Unix-only);
   soporte Windows es backlog, requeriría un path de build separado.
 
-El plugin cubre las cinco fases del diseño: resaltado de las tres capas,
-gramática VBScript propia, navegación LSP, grafo de includes cross-file, y
-ayuda al código (hover/completion) con documentación y CI.
+La versión 0.6.0 incluye:
+
+- Resaltado de VBScript, HTML y JavaScript, con gramática VBScript propia.
+- Navegación VBScript en el archivo y a través del grafo de includes.
+- Apertura de páginas y recursos por literal, `gf` y `C-w f`.
+- Búsqueda de usos de páginas en todo el sitio.
+- Navegación JavaScript en el archivo, en `.js` e includes, en manejadores
+  `on*` y en URLs `javascript:`.
+- Hover de los objetos intrínsecos de ASP y de las firmas de tus funciones
+  y subs de VBScript. Completion de miembros intrínsecos y símbolos del proyecto.
+- Diagnósticos de includes y búsqueda de símbolos.
+- `documentHighlight` para las ocurrencias VBScript y JS del buffer actual.
+- CI en Neovim 0.10.4, estable y nightly, sobre Linux y macOS.
 
 ## Desarrollo
 
