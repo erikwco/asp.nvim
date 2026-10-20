@@ -39,6 +39,7 @@ M.handlers['textDocument/references'] = function(params)
   local pos = params.position
   return nonempty(require('asp.symbols').references(bufnr, pos))
     or require('asp.js').references(bufnr, pos)
+    or require('asp.pages').references(bufnr, pos)
     or {}
 end
 
