@@ -35,18 +35,24 @@ describe('asp.ts.add', function()
   it('rechaza nil con mensaje en Neovim 0.11+', function()
     version(true)
     vim.treesitter.language.add = function() return nil, 'parser ausente' end
-    assert.is_false(require('asp.ts').add('ausente'))
+    local added, err = require('asp.ts').add('ausente')
+    assert.is_false(added)
+    assert.are.equal('parser ausente', err)
   end)
 
   for _, modern in ipairs({ false, true }) do
     it('captura excepciones en Neovim ' .. (modern and '0.11+' or '0.10'), function()
       version(modern)
-      vim.treesitter.language.add = function() error('parser inválido o ausente') end
-      assert.is_false(require('asp.ts').add('ausente'))
+      vim.treesitter.language.add = function() error('parser inválido o ausente', 0) end
+      local added, err = require('asp.ts').add('ausente')
+      assert.is_false(added)
+      assert.are.equal('parser inválido o ausente', err)
     end)
   end
 
   it('rechaza un parser que no existe en el runtime real', function()
-    assert.is_false(require('asp.ts').add('asp_parser_inexistente'))
+    local added, err = require('asp.ts').add('asp_parser_inexistente')
+    assert.is_false(added)
+    assert.is_truthy(err:find('no parser for', 1, true))
   end)
 end)
