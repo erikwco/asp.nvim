@@ -33,11 +33,13 @@ local function nonempty(list)
   return nil
 end
 
+-- Si ninguna capa resuelve, {} como antes de encadenarlas (no nil).
 M.handlers['textDocument/references'] = function(params)
   local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
   local pos = params.position
   return nonempty(require('asp.symbols').references(bufnr, pos))
     or require('asp.js').references(bufnr, pos)
+    or {}
 end
 
 M.handlers['workspace/symbol'] = function(params)

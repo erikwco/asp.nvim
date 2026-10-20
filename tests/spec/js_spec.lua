@@ -273,6 +273,15 @@ describe('asp-ls JavaScript', function()
     assert.is_true(lines[line_of('inicializar({ inicio: LIMITE })')])
   end)
 
+  it('textDocument/references fuera de VBScript y de JS devuelve {} (no nil)', function()
+    local refs = request('textDocument/references', {
+      textDocument = vim.lsp.util.make_text_document_params(),
+      position = pos_of('</head>'),
+      context = { includeDeclaration = true },
+    })
+    assert.are.same({}, refs)
+  end)
+
   it('textDocument/documentSymbol incluye las funciones JS tras las de VBScript', function()
     local syms = request('textDocument/documentSymbol', {
       textDocument = vim.lsp.util.make_text_document_params(),
