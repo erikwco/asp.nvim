@@ -159,9 +159,9 @@ if path then vim.cmd.find(vim.fn.fnameescape(path)) end
 - JavaScript entre archivos: de cada `.js` de `<script src>` y de cada
   include sólo se ven sus declaraciones globales. Gana el buffer, luego
   los `<script src>` en orden y después los includes en el orden del
-  grafo. Si dos archivos declaran el mismo global, definición y
-  referencias siguen sólo al de mayor prioridad (en el navegador serían
-  la misma variable). Se ignoran los `src` externos (`http://`, CDN),
+  grafo. Si varios archivos declaran el mismo global, la definición va
+  al de mayor prioridad y las referencias los reúnen a todos (en el
+  navegador son la misma variable). Se ignoran los `src` externos (`http://`, CDN),
   inexistentes o armados con `<%= %>`; no se siguen `import`/`export`.
   Abrir un `.js` suelto no activa `asp-ls`: ahí va tu LSP de JavaScript.
 - JavaScript: `let`/`const` se tratan como `var` (scope de función, no de

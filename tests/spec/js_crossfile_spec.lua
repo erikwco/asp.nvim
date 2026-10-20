@@ -215,17 +215,54 @@ describe('asp.js cross-file', function()
     assert.are.same({ ['pagina.asp'] = 1, ['inc/menu.inc'] = 1 }, files)
   end)
 
-  it('references de un global homónimo en dos externos sigue al que gana', function()
-    local refs = js.references(0, pos_in('duplicada();'))
-    local got = {}
-    for _, r in ipairs(refs) do
-      table.insert(got, ('%s:%d'):format(rel(r.uri), r.range.start.line))
-    end
-    -- La `function duplicada` del include es otro binding, como en definition.
+  it('references de un global homónimo en dos externos reúne ambos', function()
+    -- En el navegador el global es uno solo: definition va al de mayor
+    -- prioridad (app.js) y references incluye también el del include.
     assert.are.same({
       'pagina.asp:' .. pos_in('duplicada();').line,
       'js/app.js:' .. line_in_file('js/app.js', 'function duplicada'),
-    }, got)
+      'inc/menu.inc:' .. line_in_file('inc/menu.inc', 'function duplicada'),
+    }, where(js.references(0, pos_in('duplicada();'))))
+  end)
+
+  it('references une los globales homónimos y respeta los locales de cada archivo', function()
+    in_project({
+      ['a.js'] = { 'var f = 1;', 'f;' },
+      ['b.js'] = { 'var f = 2;', 'f;', 'function g(f) {', '  return f;', '}' },
+      ['pagina.asp'] = {
+        '<script src="a.js"></script>',
+        '<script src="b.js"></script>',
+        '<script>',
+        'f;',
+        'function h() { var f = 3; return f; }',
+        '</script>',
+      },
+    }, function()
+      local expected = { 'pagina.asp:3', 'a.js:0', 'a.js:1', 'b.js:0', 'b.js:1' }
+      assert.are.same(expected, where(js.references(0, pos_in('f;'))))
+      -- definition sigue yendo a la primera por prioridad.
+      assert.are.equal('a.js', rel(js.definition(0, pos_in('f;')).uri))
+      -- El local de h() sigue aparte.
+      assert.are.same({ 'pagina.asp:4', 'pagina.asp:4' },
+        where(js.references(0, pos_in('return f', 'f'))))
+    end)
+
+    -- Si el buffer también lo declara, su declaración entra junto con las
+    -- de los externos.
+    in_project({
+      ['a.js'] = { 'function f() {}' },
+      ['pagina.asp'] = {
+        '<script src="a.js"></script>',
+        '<script>',
+        'var f = 1;',
+        'f();',
+        '</script>',
+      },
+    }, function()
+      assert.are.equal('pagina.asp', rel(js.definition(0, pos_in('f();')).uri))
+      assert.are.same({ 'pagina.asp:2', 'pagina.asp:3', 'a.js:0' },
+        where(js.references(0, pos_in('f();'))))
+    end)
   end)
 
   it('references de un global del buffer incluye sus usos en los externos', function()

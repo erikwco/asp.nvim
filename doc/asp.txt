@@ -185,16 +185,16 @@ JavaScript de cliente de los bloques <script> del archivo actual:
     de otro archivo no son visibles desde la página.
   - references reúne los usos del buffer y de esos archivos que
     resuelven a la misma declaración; en cada archivo sus propios
-    locales sombrean igual que en el buffer.
+    locales sombrean igual que en el buffer. Como en el navegador, el
+    scope global de la página es uno solo: si varios de esos archivos
+    declaran el mismo global, definition va al primero en ese orden y
+    references reúne todas esas declaraciones y sus usos.
   - Los archivos externos se leen de disco y se cachean por mtime: sólo
     se parsean html (confinado a la plantilla) y javascript, nunca
     VBScript ni CSS.
 
 Límites:
 
-  - Entre archivos sólo se ven los globales. Si dos archivos declaran
-    el mismo global, definition y references siguen sólo al de mayor
-    prioridad (en el navegador serían la misma variable).
   - Se ignoran los `src` externos (`http://`, CDN), los inexistentes y
     los armados con `<%= %>`. No se siguen `import`/`export`.
   - Abrir un `.js` suelto no activa asp-ls: ahí va el LSP de

@@ -779,42 +779,37 @@ local function references(bufnr, position)
   if not occ then return nil end
   local name = occ.name
 
+  local out = {}
+  -- Cada archivo resuelve con su propio índice: sus locales sombrean.
+  local function collect(uri, d, keep)
+    for _, o in ipairs(d.occurrences[name] or {}) do
+      if keep(resolve(d, o)) then table.insert(out, location(uri, o)) end
+    end
+  end
+
   -- Un local del buffer no puede aparecer en otro archivo: los externos
   -- sólo se cargan si el binding es global o no está en el buffer.
   local binding = resolve(data, occ)
-  local exts = {}
-  if not binding or binding.global then
-    each_external(bufnr, data, function(uri, ext)
-      table.insert(exts, { uri = uri, data = ext })
-    end)
+  if binding and not binding.global then
+    collect(vim.uri_from_bufnr(bufnr), data, function(r) return r == binding end)
+    return out
   end
-  if not binding then
-    for _, x in ipairs(exts) do
-      binding = global_binding(x.data, name)
-      if binding then break end
-    end
-  end
-  -- Sin declaración en la página ni en sus archivos externos (`document`,
-  -- `alert`, un global implícito) no hay binding: nil, como definition.
-  if not binding then return nil end
 
-  -- Cada archivo resuelve con su propio índice (sus locales sombrean). Un
-  -- uso que no resuelve en su archivo cae al global de la página, y ese es
-  -- `binding` cuando es global: el del buffer, o si el buffer no lo
-  -- declara, el del primer externo que lo declara. Un global homónimo de
-  -- un externo de menor prioridad es otro binding, como en definition.
-  local out = {}
-  local function collect(uri, d)
-    for _, o in ipairs(d.occurrences[name] or {}) do
-      local r = resolve(d, o)
-      if r == binding or (r == nil and binding.global) then
-        table.insert(out, location(uri, o))
-      end
-    end
-  end
-  collect(vim.uri_from_bufnr(bufnr), data)
-  for _, x in ipairs(exts) do
-    collect(x.uri, x.data)
+  -- En el navegador el scope global de la página es uno solo: los globales
+  -- homónimos del buffer y de sus externos son la misma variable, y un uso
+  -- que no resuelve en su archivo cae a ella. definition elige una de esas
+  -- declaraciones por prioridad; references las reúne todas.
+  local files = { { uri = vim.uri_from_bufnr(bufnr), data = data } }
+  local declared = binding ~= nil
+  each_external(bufnr, data, function(uri, ext)
+    table.insert(files, { uri = uri, data = ext })
+    declared = declared or global_binding(ext, name) ~= nil
+  end)
+  -- Sin declaración en la página ni en sus archivos externos (`document`,
+  -- `alert`, un global implícito): nil, como definition.
+  if not declared then return nil end
+  for _, f in ipairs(files) do
+    collect(f.uri, f.data, function(r) return r == nil or r.global end)
   end
   return out
 end
@@ -895,7 +890,8 @@ end
 
 ---Ocurrencias del buffer y de sus archivos externos que resuelven a la
 ---misma declaración que el identificador JS bajo `position`, incluida la
----declaración.
+---declaración. Un global es uno solo para toda la página: reúne las
+---declaraciones homónimas de todos esos archivos y sus usos.
 ---@param bufnr integer
 ---@param position table {line, character}
 ---@return table[]|nil Location[]
