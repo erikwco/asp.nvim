@@ -247,6 +247,8 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       `Total`) es válido y unifica todas las ocurrencias. JavaScript: los
       <script> de la página, los atributos `on*`, las URLs `javascript:`,
       los .js de <script src> y los includes; distingue mayúsculas.
+      Conserva las claves abreviadas: al renombrar `total` a `saldo`,
+      `{total}` pasa a `{total: saldo}`.
 
       No renombra miembros de objeto (`rs.EOF`, `obj.Total`, `Me.Total`,
       `obj.metodo` en JS), intrínsecos de ASP, funciones, constantes ni

@@ -291,6 +291,34 @@ describe('asp.rename rename', function()
     }, edits_of(edit))
   end)
 
+  it('conserva las claves de propiedades abreviadas de JS al aplicar el rename', function()
+    in_temp({
+      ['app.js'] = 'var total = 5; function crear() { return {total}; }\n',
+      ['lib.inc'] = '<script>var otro = {total};</script>\n',
+      ['pagina.asp'] = table.concat({
+        '<!--#include file="lib.inc"-->', '<script src="app.js"></script>',
+        '<script>var obj = {total}; console.log(obj.total);</script>',
+        '<button onclick="guardar({total})">ok</button>',
+        '<a href="javascript:guardar({total})">ok</a>', '',
+      }, '\n'),
+    }, function(dir)
+      vim.cmd.edit(dir .. '/pagina.asp')
+      local pos = pos_in('var obj = {total}', 'total')
+      local edit = assert(rename.rename(0, pos, '$saldo'))
+      assert.are.same({ ['pagina.asp'] = 3, ['app.js'] = 2, ['lib.inc'] = 1 }, counts(edit, dir))
+      vim.lsp.util.apply_workspace_edit(edit, 'utf-8')
+      assert.are.same({
+        '<!--#include file="lib.inc"-->', '<script src="app.js"></script>',
+        '<script>var obj = {total: $saldo}; console.log(obj.total);</script>',
+        '<button onclick="guardar({total: $saldo})">ok</button>',
+        '<a href="javascript:guardar({total: $saldo})">ok</a>',
+      }, buffer_lines(dir .. '/pagina.asp'))
+      assert.are.same({ 'var $saldo = 5; function crear() { return {total: $saldo}; }' },
+        buffer_lines(dir .. '/app.js'))
+      assert.are.same({ '<script>var otro = {total: $saldo};</script>' }, buffer_lines(dir .. '/lib.inc'))
+    end)
+  end)
+
   it('rechaza un nombre nuevo inválido, reservado o igual al actual', function()
     open('pagina.asp')
     local vbs, js = pos_in('total = 0'), pos_in('  validarFormulario();')

@@ -305,7 +305,8 @@ muestra el motivo.
   (`total` → `Total`) es válido y unifica todas las ocurrencias.
 - JavaScript: los `<script>` de la página, los atributos `on*`, las URLs
   `javascript:`, los `.js` de `<script src>` y los includes. Distingue
-  mayúsculas.
+  mayúsculas. Conserva las claves de propiedades abreviadas: al renombrar
+  `total` a `saldo`, `{total}` pasa a `{total: saldo}`.
 
 No se renombran los miembros de objeto (`rs.EOF`, `obj.Total`,
 `Me.Total`, `obj.metodo` en JS), los objetos intrínsecos de ASP, las

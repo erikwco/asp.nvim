@@ -476,7 +476,10 @@ local function index(data, scopes, items)
         member = true,
       })
     else
-      local occ = { name = name, node = it.node, scope = inner and inner.key or 0 }
+      local occ = {
+        name = name, node = it.node, scope = inner and inner.key or 0,
+        shorthand = it.node:type() == 'shorthand_property_identifier',
+      }
       local kind, decl, where = classify(it.node)
       if kind then
         local s = inner
@@ -979,7 +982,13 @@ local function references(bufnr, position, opts)
   -- Cada archivo resuelve con su propio índice: sus locales sombrean.
   local function collect(uri, d, keep)
     for _, o in ipairs(d.occurrences[name] or {}) do
-      if keep(resolve(d, o)) then table.insert(out, location(uri, o)) end
+      if keep(resolve(d, o)) then
+        local loc = location(uri, o)
+        if opts.rename_to and o.shorthand then
+          loc.newText = name .. ': ' .. opts.rename_to
+        end
+        table.insert(out, loc)
+      end
     end
   end
 
@@ -1098,9 +1107,11 @@ end
 ---declaraciones homónimas de todos esos archivos y sus usos.
 ---Con buffer_only no consulta externos: devuelve candidatos del buffer
 ---aunque falte una declaración. El llamador debe resolverla antes de usarlos.
+---Con rename_to agrega newText a las propiedades abreviadas para conservar
+---su clave: `{nombre}` pasa a `{nombre: nuevo}`.
 ---@param bufnr integer
 ---@param position table {line, character}
----@param opts? table {buffer_only?: boolean}
+---@param opts? table {buffer_only?: boolean, rename_to?: string}
 ---@return table[]|nil Location[]
 ---@return table|nil binding Location de la declaración en el buffer
 function M.references(bufnr, position, opts)

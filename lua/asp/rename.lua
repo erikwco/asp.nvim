@@ -293,7 +293,7 @@ local function javascript_locations(bufnr, position, _, new_name)
       vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ':t'), clash.node:range() + 1))
   end
   -- Solo las ubicaciones: el segundo valor de references es el binding.
-  return (require('asp.js').references(bufnr, position))
+  return (require('asp.js').references(bufnr, position, { rename_to = new_name }))
 end
 
 ---WorkspaceEdit con un TextEdit por ubicación, sin rangos repetidos y en
@@ -333,7 +333,7 @@ local function workspace_edit(bufnr, locations, new_name)
     if not seen[key] then
       seen[key] = true
       changes[uri] = changes[uri] or {}
-      table.insert(changes[uri], { range = r, newText = new_name })
+      table.insert(changes[uri], { range = r, newText = loc.newText or new_name })
     end
   end
   for _, edits in pairs(changes) do
