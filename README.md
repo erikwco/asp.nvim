@@ -554,8 +554,14 @@ Al abrir la página, al guardarla y 500 ms después de la última edición
 `.html`, `.js` o `.css` vuelve a revisar las páginas abiertas que lo
 incluyen, directa o transitivamente, y las que tienen un include o un
 enlace sin resolver, porque el archivo guardado puede ser el que faltaba.
-Las demás no dependen de él. Con 30 páginas abiertas de ~326 KB y 20
-includes, decidir cuáles revisar tarda ~8 ms.
+También detecta destinos borrados o renombrados desde disco y librerías cuya
+revisión de `Call`/`New` cambia porque se agregó o quitó una página que las
+incluye. Las demás páginas conservan sus diagnósticos.
+
+La primera revisión de un `Call` o `New` desconocido sin `Option Explicit`
+recorre el sitio para determinar si el archivo es una librería incluida por
+otra página. Ese barrido es síncrono; las consultas siguientes reutilizan
+el contenido de los archivos que no cambiaron.
 
 `undeclared` y `unknown_call` usan el buffer con sus cambios sin guardar,
 pero leen los includes desde disco: un include recién creado o editado

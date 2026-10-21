@@ -494,8 +494,12 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       .inc, .htm, .html, .js o .css vuelve a revisar las páginas abiertas
       que lo incluyen, directa o transitivamente, y las que tienen un
       include o un enlace sin resolver (el archivo guardado puede ser el
-      que faltaba); las demás no dependen de él. Con 30 páginas abiertas
-      de ~326 KB y 20 includes, elegirlas tarda ~8 ms.
+      que faltaba). También detecta destinos borrados o renombrados desde
+      disco y librerías cuya revisión de Call/New cambia al agregar o
+      quitar un incluidor. Las demás conservan sus diagnósticos.
+      La primera revisión de Call/New sin Option Explicit puede recorrer
+      el sitio de forma síncrona para buscar incluidores. Las siguientes
+      reutilizan el contenido de los archivos que no cambiaron.
       undeclared y unknown_call usan el buffer con sus cambios
       sin guardar, pero leen los includes desde disco: un include recién
       creado o editado cuenta cuando se guarda. Configuración en
@@ -895,8 +899,9 @@ Diagnósticos (|asp-diagnostics|):
   - Sin Option Explicit se revisan igual `Call X` y `New X`, salvo en
     un archivo que otro del sitio incluye.
   - Se actualizan también 500 ms después de cada edición. Guardar un
-    archivo revisa solo las páginas abiertas que lo incluyen o que
-    tienen un include o un enlace sin resolver.
+    archivo revisa las páginas abiertas que lo incluyen o tienen un
+    destino sin resolver, borrado o renombrado; también las librerías
+    cuya revisión de Call/New cambia al agregar o quitar un incluidor.
 
 Ayuda de VBScript y COM (|asp-signatures|, |asp-com-help|):
   - Hover, completion y signatureHelp de funciones y constantes nativas
