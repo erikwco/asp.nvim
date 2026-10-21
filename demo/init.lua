@@ -47,6 +47,13 @@ end
 
 require('asp').setup({ virtual_root = repo .. '/demo/app' })
 
+-- Neovim 0.11+ no muestra el texto virtual de los diagnósticos por defecto.
+vim.diagnostic.config({
+  virtual_text = { spacing = 2 },
+  severity_sort = true,
+  float = { border = 'rounded', source = true },
+})
+
 -- Atajos LSP para las demos (equivalentes a los de LazyVim).
 vim.api.nvim_create_autocmd('LspAttach', {
   callback = function(args)
