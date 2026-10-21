@@ -98,6 +98,27 @@ marcan con un warning en su línea. La raíz de los includes `virtual=` se
 autodetecta mediante `web.config` o `.git` y puede fijarse con
 `require('asp').setup({ virtual_root = '/ruta/al/sitio' })`.
 
+Las referencias de un símbolo de página (Function, Sub, Class, `Dim` o
+`Const` fuera de un Sub/Function/Property) tienen alcance de sitio. Desde
+una librería como `includes/helpers.asp`, `vim.lsp.buf.references()` lista
+también los usos de las páginas que la incluyen, directa o transitivamente,
+y de los demás includes de esas páginas: si una página incluye
+`helpers.asp` y `lib/db.inc`, las llamadas desde `db.inc` también cuentan.
+Desde una página que usa la función, el conjunto parte del include que la
+declara, así que el resultado es el mismo que desde la librería.
+
+En cada archivo se omiten los usos dentro de un Sub, Function o Property
+que declara ese nombre como local o parámetro. Una página que no incluye la
+librería no cuenta aunque use el mismo nombre. Una declaración de página
+homónima en otro archivo del conjunto sí cuenta: al incluirse, ASP junta
+todo en un único script y es la misma variable global, y en runtime gana la
+última definición. La definición no cambia: sigue el buffer y sus includes.
+El conjunto usa la raíz y el barrido de los [usos de una
+página](#usos-de-una-página). Los includes del buffer consultado son los
+de su contenido sin guardar; los de los demás archivos, los del disco. Un
+include que se crea o se borra entra o sale del conjunto en la siguiente
+consulta, también fuera de la raíz.
+
 ### JavaScript de cliente
 
 Definición y referencias resuelven funciones, clases, métodos,
@@ -266,9 +287,10 @@ frente a 115 y 17 ms antes de agregar esta caché.
 
 La primera búsqueda de usos de una página recorre y lee el sitio entero,
 y puede tardar segundos. Las siguientes comprueban mtime y tamaño y sólo
-releen archivos cambiados. Si se recorren al menos 2.000 archivos o la
-consulta tarda un segundo, se emite un único aviso INFO con la cantidad
-de archivos y el uso de caché en las siguientes consultas.
+releen archivos cambiados. Si la consulta lee al menos 2.000 archivos o
+tarda un segundo, se emite un único aviso INFO con la cantidad de
+archivos y el uso de caché en las siguientes consultas. Una consulta con
+la caché caliente no avisa, aunque el sitio sea grande.
 
 En Neovim 0.12.6 sobre Apple M4 Pro, 5.000 fuentes de unos 20 KB más el
 destino y cinco JS minificados tardaron 3.334 ms en la primera consulta y
@@ -278,6 +300,27 @@ en cada consulta. Los archivos recién creados podían estar en la caché
 del sistema operativo. [Mediciones y límites](tests/bench/pages_references.md).
 Para repetir el caso con validación de rangos y lecturas:
 `nvim --headless -u NONE --cmd 'set rtp+=.' -l tests/bench/pages_references.lua`.
+
+Las referencias VBScript con alcance de sitio hacen ese mismo barrido y
+reutilizan lo que leyó: cada archivo se lee una vez por consulta. Solo
+parsean los archivos del conjunto que mencionan el nombre en su texto, y
+de ellos solo la capa VBScript. De cada archivo parseado guardan las
+ocurrencias de todos sus nombres por mtime y tamaño; de los demás, sus
+palabras. Con la caché caliente, buscar otro símbolo no lee disco salvo
+los archivos cambiados y los que recién ahora mencionan el nombre buscado.
+Emiten el mismo aviso INFO que los usos de páginas.
+
+Con 500 páginas de ~2,9 KB que incluyen una librería de 50 funciones, la
+primera consulta tardó ~200 ms y las siguientes ~8 ms, también para otro
+nombre y sin lecturas. La caché ocupó ~1,8 MB.
+
+En un sitio grande, la primera consulta bloquea Neovim varios segundos.
+Con 2.000 páginas de 20 KiB que usan todas el nombre buscado, tardó
+~5,1 s: ~1,2 s de barrido y ~4 s de parsear las 2.000 páginas. Las
+siguientes tardaron ~27 ms y la caché ocupó ~46 MB. Un nombre que ninguna
+página usa tardó ~1,7 s en frío, porque no hace falta parsear ninguna.
+Una página cambiada se relee sola.
+[Mediciones](tests/bench/symbols_site.md).
 
 ## Limitaciones conocidas
 
@@ -300,6 +343,12 @@ Para repetir el caso con validación de rangos y lecturas:
 - Las rutas relativas dentro de un `.inc` o una página incluida se
   resuelven contra el archivo que contiene la ruta, no contra la página
   que pidió el navegador. Es un límite de diseño del resolver compartido.
+- Las referencias VBScript con alcance de sitio no siguen `Server.Execute`,
+  `Server.Transfer` ni includes armados en runtime. Solo conocen los
+  incluidores dentro de la raíz del barrido; un include fuera de ella se
+  recorre con su grafo. Los demás archivos se leen de disco, sin los cambios
+  sin guardar de otros buffers. Los usos se buscan por nombre, así que un
+  miembro `obj.Total` cuenta como uso de un `Total` de página, igual que antes.
 - `gf` y `C-w f` solo reconocen rutas con `/` como separador. Neovim corta
   el nombre en `\` en Unix. `C-]` y `vim.lsp.buf.definition()` sí normalizan
   `\` a `/`.

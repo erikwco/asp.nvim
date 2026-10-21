@@ -86,7 +86,9 @@ local function include_references(content, from_abs, root)
           kind = kind, path_text = path:gsub('\\', '/'),
         }, from_abs, root)
         if target then
-          table.insert(refs, { target_abs = target, first = first, last = last })
+          -- `include` separa las directivas de los literales: asp.site arma
+          -- con ellas el grafo de includes del sitio sin volver a leer nada.
+          table.insert(refs, { target_abs = target, first = first, last = last, include = true })
         end
         offset = last + 1
       else
@@ -136,28 +138,24 @@ local function scan_file(content, from_abs, root)
     local end_row, end_col = position(ref.last + 1)
     table.insert(entries, {
       target_abs = ref.target_abs, lnum = row, col = col,
-      end_lnum = end_row, end_col = end_col,
+      end_lnum = end_row, end_col = end_col, include = ref.include,
     })
   end
   return entries
 end
 
-local function collect_file(path, root)
-  local stat = vim.uv.fs_stat(path)
-  if not stat or stat.type ~= 'file' then
-    file_cache[path] = nil
-    return {}
-  end
-  local mtime = stat.mtime.sec .. ':' .. stat.mtime.nsec
-  local hit = file_cache[path]
-  if hit and hit.mtime == mtime and hit.size == stat.size and hit.root == root then
-    return hit.entries
-  end
+---Contenido de una fuente con las columnas UTF-8 que tendrá su buffer: sin
+---BOM y convertido de latin1 si no es UTF-8 válido. Lo comparten el
+---barrido de páginas y las ocurrencias VBScript de disco (asp.symbols),
+---para que ambos den las mismas columnas que el buffer abierto.
+---@param path string
+---@return string|nil
+function M.read(path)
   local f = io.open(path, 'r')
-  if not f then return {} end
+  if not f then return nil end
   local content = f:read('*a')
   f:close()
-  if not content then return {} end
+  if not content then return nil end
   content = content:gsub('^\239\187\191', '')
   if content:find('[\128-\255]') then
     -- iconv sustituye los bytes UTF-8 inválidos; la ida y vuelta los detecta.
@@ -166,14 +164,36 @@ local function collect_file(path, root)
       content = vim.iconv(content, 'latin1', 'utf-8') or content
     end
   end
+  return content
+end
+
+local function collect_file(path, root, contents)
+  local stat = vim.uv.fs_stat(path)
+  if not stat or stat.type ~= 'file' then
+    file_cache[path] = nil
+    return {}
+  end
+  local mtime = stat.mtime.sec .. ':' .. stat.mtime.nsec
+  local hit = file_cache[path]
+  if hit and hit.mtime == mtime and hit.size == stat.size and hit.root == root then
+    return hit.entries, false
+  end
+  local content = M.read(path)
+  if not content then return {}, false end
+  if contents then contents[path] = content end
   local entries = scan_file(content, path, root)
   file_cache[path] = { mtime = mtime, size = stat.size, root = root, entries = entries }
-  return entries
+  return entries, true
 end
 
 ---@param abs_path string
 function M.invalidate(abs_path)
-  if type(abs_path) == 'string' then file_cache[vim.fs.normalize(abs_path)] = nil end
+  if type(abs_path) ~= 'string' then return end
+  file_cache[vim.fs.normalize(abs_path)] = nil
+  -- El barrido guarda rutas reales: un buffer abierto a través de un
+  -- symlink también tiene que invalidar la suya.
+  local real = vim.uv.fs_realpath(abs_path)
+  if real then file_cache[real] = nil end
 end
 
 ---El barrido abarca el sitio exterior; /virtual conserva la raíz más cercana.
@@ -187,6 +207,77 @@ function M.scan_root_for(abs_path)
     if vim.uv.fs_stat(dir .. '/web.config') then outer = dir end
   end
   return outer or vim.fs.root(abs_path, { '.git' })
+end
+
+---Recorre las fuentes del sitio bajo `root` y devuelve sus entradas
+---(literales y directivas `include`) desde la caché por archivo: solo lee
+---las fuentes nuevas o cambiadas. Purga de la caché las fuentes de esa raíz
+---que ya no aparecen. Lo comparten M.references y asp.site, así que ambos
+---ven el mismo sitio con un único escáner y una única caché.
+---
+---Una entrada sin cambios conserva su tabla entre barridos: asp.site
+---compara esas tablas para saber si su índice de includes sigue vigente.
+---
+---Si se pasa `contents`, recibe el contenido de cada fuente que este
+---barrido leyó, por ruta real: asp.symbols lo reutiliza durante la misma
+---consulta para no volver a leer esos archivos. Sin `contents` no se
+---retiene ningún contenido.
+---@param root string raíz de scan_root_for
+---@param contents? table<string, string>
+---@return string[] files rutas reales, ordenadas
+---@return table<string, table[]> entries por archivo
+---@return integer read fuentes leídas de disco en este barrido
+function M.sweep(root, contents)
+  root = vim.uv.fs_realpath(root) or root
+  local files, dirs, next_dir = {}, { root }, 1
+  while next_dir <= #dirs do
+    local dir = dirs[next_dir]
+    next_dir = next_dir + 1
+    for name, kind in vim.fs.dir(dir) do
+      if name:sub(1, 1) ~= '.' then
+        local path = dir .. '/' .. name
+        -- En 0.10 scandir puede omitir el tipo. Hay que recuperarlo antes
+        -- de decidir si descender; lstat conserva los symlinks como links.
+        if kind == nil then
+          local stat = vim.uv.fs_lstat(path)
+          kind = stat and stat.type
+        end
+        if kind == 'directory' and name ~= 'node_modules' and name ~= 'build' then
+          table.insert(dirs, path)
+        elseif kind == 'file' and SOURCE_EXTENSIONS[name:lower():match('%.(%w+)$')] then
+          table.insert(files, path)
+        end
+      end
+    end
+  end
+  table.sort(files)
+  local entries, roots, read = {}, {}, 0
+  for _, file in ipairs(files) do
+    local dir = vim.fs.dirname(file)
+    if roots[dir] == nil then roots[dir] = require('asp.includes').virtual_root_for(file) or false end
+    local fresh
+    entries[file], fresh = collect_file(file, roots[dir], contents)
+    if fresh then read = read + 1 end
+  end
+  local prefix = root:gsub('/$', '') .. '/'
+  for path in pairs(file_cache) do
+    if path:sub(1, #prefix) == prefix and not entries[path] then file_cache[path] = nil end
+  end
+  return files, entries, read
+end
+
+---Aviso INFO de una consulta que recorrió el sitio: si leyó de disco
+---2.000 archivos o más, o si tardó un segundo desde `started`
+---(vim.uv.hrtime()). No depende del tamaño del sitio: con la caché
+---caliente, una consulta rápida no avisa.
+---@param count integer archivos recorridos
+---@param read integer archivos leídos de disco en la consulta
+---@param started number
+function M.notify_slow(count, read, started)
+  if read >= 2000 or vim.uv.hrtime() - started >= 1e9 then
+    vim.notify(('asp: se recorrieron %d archivos; las siguientes consultas usan la caché.'):format(count),
+      vim.log.levels.INFO)
+  end
 end
 
 ---@param bufnr integer
@@ -210,7 +301,6 @@ function M.references(bufnr, position)
     end
     local root = M.scan_root_for(from)
     if not root then return nil end
-    root = vim.uv.fs_realpath(root) or root
     local target_real = vim.uv.fs_realpath(target) or target
     local base, memo = target_real:lower():match('[^/]+$'), {}
     local function same(candidate)
@@ -219,34 +309,10 @@ function M.references(bufnr, position)
       if memo[candidate] == nil then memo[candidate] = vim.uv.fs_realpath(candidate) or false end
       return memo[candidate] == target_real
     end
-    local files, dirs, next_dir = {}, { root }, 1
-    while next_dir <= #dirs do
-      local dir = dirs[next_dir]
-      next_dir = next_dir + 1
-      for name, kind in vim.fs.dir(dir) do
-        if name:sub(1, 1) ~= '.' then
-          local path = dir .. '/' .. name
-          -- En 0.10 scandir puede omitir el tipo. Hay que recuperarlo antes
-          -- de decidir si descender; lstat conserva los symlinks como links.
-          if kind == nil then
-            local stat = vim.uv.fs_lstat(path)
-            kind = stat and stat.type
-          end
-          if kind == 'directory' and name ~= 'node_modules' and name ~= 'build' then
-            table.insert(dirs, path)
-          elseif kind == 'file' and SOURCE_EXTENSIONS[name:lower():match('%.(%w+)$')] then
-            table.insert(files, path)
-          end
-        end
-      end
-    end
-    table.sort(files)
-    local out, seen, roots = {}, {}, {}
+    local files, entries, read = M.sweep(root)
+    local out = {}
     for _, file in ipairs(files) do
-      seen[file] = true
-      local dir = vim.fs.dirname(file)
-      if roots[dir] == nil then roots[dir] = require('asp.includes').virtual_root_for(file) or false end
-      for _, ref in ipairs(collect_file(file, roots[dir])) do
+      for _, ref in ipairs(entries[file]) do
         if same(ref.target_abs) then
           table.insert(out, {
             uri = vim.uri_from_fname(file),
@@ -258,14 +324,7 @@ function M.references(bufnr, position)
         end
       end
     end
-    local prefix = root:gsub('/$', '') .. '/'
-    for path in pairs(file_cache) do
-      if path:sub(1, #prefix) == prefix and not seen[path] then file_cache[path] = nil end
-    end
-    if #files >= 2000 or vim.uv.hrtime() - started >= 1e9 then
-      vim.notify(('asp: se recorrieron %d archivos; las siguientes consultas usan la caché.'):format(#files),
-        vim.log.levels.INFO)
-    end
+    M.notify_slow(#files, read, started)
     return #out > 0 and out or nil
   end)
   return ok and result or nil

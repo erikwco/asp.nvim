@@ -94,6 +94,15 @@ que fijó Erik. Cada ítem es un PR (o una serie corta) con revisión cruzada
 - En un buffer sin nombre, el URI `file://` resuelve a otro buffer y los
   handlers devuelven vacío. Definir cómo identificar estos buffers antes
   de ampliar la navegación a archivos sin guardar.
+- En las referencias con alcance de sitio, un miembro `Private Hit` de
+  una clase y sus usos dentro de un método se cuentan junto con el `Hit`
+  global homónimo. El filtro de sombreado de los archivos de disco
+  (`parse_occurrences` en `asp.symbols`) solo mira los locales de
+  Sub/Function/Property (`scope_id`), no los miembros de clase. Es el
+  mismo problema de precedencia del punto anterior.
+- `documentHighlight` de un símbolo declarado en un include hace dos
+  lecturas de disco en frío: sin declaración en el buffer llama a
+  `definition`, que lee las directivas del grafo y parsea el include.
 
 Estos casos quedan para el roadmap y no se corrigen en la release 0.6.
 

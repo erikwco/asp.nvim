@@ -30,7 +30,10 @@ abrir el buffer ni parsear las capas LSP. La caché de páginas empieza vacía;
 la caché del sistema operativo puede estar caliente tras crear los archivos.
 La segunda consulta usa el mismo proceso y la caché de páginas llena.
 No hubo errores y las veinte consultas devolvieron 5.000 referencias.
-Cada consulta corregida emitió exactamente un aviso INFO.
+Cada consulta corregida emitió exactamente un aviso INFO. Desde el PR #9
+el aviso depende de lo que lee la consulta: sale si lee 2.000 archivos o
+tarda un segundo, así que en esta carga solo lo emitiría la primera
+consulta.
 
 ## Resultados en milisegundos
 

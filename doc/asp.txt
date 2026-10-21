@@ -117,8 +117,37 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
         if path then vim.cmd.find(vim.fn.fnameescape(path)) end
 <
   references ~
-      Todas las referencias de un símbolo en el buffer y el grafo.
-      Los símbolos locales se limitan a su propio scope.
+      Todas las referencias de un símbolo VBScript. Los símbolos locales
+      se limitan a su propio scope.
+
+      Un símbolo de página (Function, Sub, Class, Dim o Const fuera de
+      un Sub/Function/Property) tiene alcance de sitio: además del
+      buffer y su grafo de includes, reúne los usos de las páginas que
+      incluyen el archivo, directa o transitivamente, y de todo lo que
+      incluye cada una. Desde `includes/helpers.asp`, las llamadas de
+      `default.asp` y de cualquier otra página que la incluya; desde un
+      include hermano como `lib/db.inc`, también las suyas. Desde una
+      página que usa el nombre, el conjunto parte del include que lo
+      declara, así que el resultado es el mismo que desde la librería.
+
+      En cada archivo se omiten los usos dentro de un Sub, Function o
+      Property que declara ese nombre como local o parámetro. Una página
+      que no incluye la librería no cuenta aunque use el mismo nombre.
+      Una declaración de página homónima en otro archivo del conjunto sí
+      cuenta: al incluirse, ASP junta todo en un único script y es la
+      misma variable global (en runtime gana la última definición).
+      definition no cambia: sigue el buffer y sus includes.
+
+      Usa la raíz y el barrido de los usos de páginas (abajo) y su
+      caché. Los includes del buffer consultado son los de su contenido
+      sin guardar; los demás archivos se leen de disco, sin cambios sin
+      guardar. Un include que se crea o se borra entra o sale del
+      conjunto en la siguiente consulta, también fuera de la raíz del
+      barrido. No sigue Server.Execute, Server.Transfer ni includes
+      armados en runtime. Solo conoce los incluidores dentro de la raíz
+      del barrido; un include fuera de ella se recorre con su grafo.
+      Los usos se buscan por nombre, así que un miembro `obj.Total`
+      cuenta como uso de un `Total` de página, igual que antes.
 
       Dentro de un literal de página, `vim.lsp.buf.references()` lista
       los enlaces y directivas <!--#include --> que apuntan a ese archivo
@@ -224,9 +253,10 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
 
       La primera búsqueda de usos de una página lee todo el sitio y puede
       tardar segundos. Las siguientes comprueban mtime y tamaño y solo
-      releen archivos cambiados. Al recorrer al menos 2.000 archivos o
-      tardar un segundo, emite un único aviso INFO con la cantidad de
-      archivos y el uso de caché en las siguientes consultas.
+      releen archivos cambiados. Si la consulta lee al menos 2.000
+      archivos o tarda un segundo, emite un único aviso INFO con la
+      cantidad de archivos y el uso de caché en las siguientes consultas.
+      Con la caché caliente no avisa, aunque el sitio sea grande.
 
       En Neovim 0.12.6 sobre Apple M4 Pro, 5.000 fuentes de unos 20 KB,
       más el destino y cinco JS minificados, dieron 3.334 ms en frío y
@@ -238,6 +268,33 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       con validación de rangos y lecturas desde la raíz del repo: >
         nvim --headless -u NONE --cmd 'set rtp+=.' \
           -l tests/bench/pages_references.lua
+<
+      Las referencias VBScript con alcance de sitio hacen el mismo
+      barrido y reutilizan lo que leyó: cada archivo se lee una vez por
+      consulta. Solo parsean los archivos del conjunto que mencionan el
+      nombre en su texto, y de ellos solo la capa VBScript. De cada
+      archivo parseado guardan las ocurrencias de todos sus nombres por
+      mtime y tamaño; de los demás, sus palabras. Con la caché caliente,
+      buscar otro símbolo no lee disco salvo los archivos cambiados y
+      los que recién ahora mencionan el nombre. Emiten el mismo aviso
+      INFO que los usos de páginas.
+
+      En Neovim 0.12.6 sobre Apple M4 Pro, 500 páginas de ~2,9 KB que
+      incluyen una librería de 50 funciones dieron ~200 ms en la primera
+      consulta y ~8 ms en las siguientes, también para otro nombre, sin
+      lecturas. La caché ocupó ~1,8 MB.
+
+      En un sitio grande, la primera consulta bloquea Neovim varios
+      segundos. Con 2.000 páginas de 20 KiB que usan todas el nombre
+      buscado tardó ~5,1 s: ~1,2 s de barrido y ~4 s de parsear las
+      2.000 páginas. Las siguientes tardaron ~27 ms y la caché ocupó
+      ~46 MB. Un nombre que ninguna página usa tardó ~1,7 s en frío.
+      Una página cambiada se relee sola. Detalles en
+      tests/bench/symbols_site.md. Para repetir los dos casos: >
+        nvim --headless -u NONE --cmd 'set rtp+=.' \
+          -l tests/bench/symbols_site.lua
+        ASP_BENCH_GRANDE=1 nvim --headless -u NONE --cmd 'set rtp+=.' \
+          -l tests/bench/symbols_site.lua
 <
 
   limitaciones conocidas ~
@@ -383,6 +440,15 @@ El plugin (Lua, gramática aspclassic, queries) es MIT. El directorio
 
 ==============================================================================
 7. Cambios                                                       *asp-cambios*
+
+Sin publicar ~
+
+  - references de un símbolo VBScript de página con alcance de sitio:
+    las páginas que incluyen el archivo, directa o transitivamente, y
+    sus demás includes, sin los locales homónimos.
+  - El aviso INFO de las consultas que recorren el sitio sale solo si la
+    consulta lee 2.000 archivos o tarda un segundo, no en cada consulta
+    de un sitio grande.
 
 0.5.3 → 0.6.0 ~
 
