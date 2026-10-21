@@ -27,16 +27,28 @@ function M.mask(ctx)
         elseif char == quote then
           i, closed = i + 1, true
           break
+        elseif char == '\n' and quote ~= '`' then
+          -- Un string simple no cruza líneas: sin cerrar, termina en la
+          -- suya y no se traga el resto del script.
+          closed = true
+          break
         else
           i = i + 1
         end
       end
       if not closed then return nil end
       parts[#parts + 1] = string.rep(' ', i - start)
-    elseif pair == '//' or pair == '/*' then
-      local stop = pair == '//' and source:find('\n', i + 3, true) or source:find('*/', i + 3, true)
+    elseif pair == '//' or pair == '/*' or source:sub(i + 1, i + 4) == '<!--' then
+      -- `<!--` también abre un comentario de línea (Anexo B de ECMAScript,
+      -- habitual en páginas antiguas): el árbol lo marca como html_comment.
+      local block, stop = pair == '/*', nil
+      if block then
+        stop = source:find('*/', i + 3, true)
+      else
+        stop = source:find('\n', i + 3, true)
+      end
       if not stop then return nil end
-      stop = pair == '//' and stop - 1 or stop + 1
+      stop = block and stop + 1 or stop - 1
       if stop >= cursor then return nil end
       parts[#parts + 1], i = string.rep(' ', stop - i), stop
     else

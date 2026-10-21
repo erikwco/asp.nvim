@@ -336,6 +336,19 @@ describe('asp.js ayuda de cliente', function()
     end
   end)
 
+  it('un comentario <!-- o un string sin cerrar no apagan la ayuda de las líneas siguientes', function()
+    for _, text in ipairs({ "<!-- don't hide", "var roto = 'sin cierre;" }) do
+      local p = query(text .. '\nbuscarGlobal(1, ')
+      assert.are.equal(1, help.signature(0, p).activeParameter, text)
+      vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { 'bus' })
+      assert.is_not_nil(items({ line = p.line, character = 3 }).buscarGlobal, text)
+      vim.api.nvim_buf_set_lines(0, p.line - 1, p.line + 1, false, { '// consulta global' })
+    end
+    local p = query('<!-- buscarGlobal(1, ')
+    assert.are.same({}, help.complete(0, p))
+    assert.is_nil(help.signature(0, p))
+  end)
+
   it('no muestra ayuda en HTML ni scripts de servidor o de otro type', function()
     for _, p in ipairs({ pos('<h1>', 4), pos('runat="server">', 15), pos('type="text/template">', 21) }) do
       assert.is_nil(help.complete(0, p))
