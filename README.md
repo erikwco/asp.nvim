@@ -1,9 +1,10 @@
 # asp.nvim
 
 Soporte de Classic ASP (VBScript + HTML + JavaScript) para Neovim:
-resaltado por regiones vía tree-sitter y navegación LSP (ir a definición,
-referencias, renombrar, símbolos, hover, completion y signatureHelp)
-incluyendo la resolución de `<!--#include -->` cross-file. Ver |asp.nvim|
+resaltado por regiones vía tree-sitter, plegado e indentación, y
+navegación LSP (ir a definición, referencias, renombrar, símbolos, hover,
+completion y signatureHelp) incluyendo la resolución de
+`<!--#include -->` cross-file. Ver |asp.nvim|
 (`:help asp`) para el detalle.
 
 El VBScript de `<% %>`/`<%= %>` se parsea con gramática propia
@@ -583,6 +584,117 @@ siguientes tardaron ~27 ms y la caché ocupó ~46 MB. Un nombre que ninguna
 página usa tardó ~1,7 s en frío, porque no hace falta parsear ninguna.
 Una página cambiada se relee sola.
 [Mediciones](tests/bench/symbols_site.md).
+
+## Plegado e indentación
+
+### Plegado
+
+El ftplugin fija `foldexpr` a `v:lua.vim.treesitter.foldexpr()`, el
+plegado por tree-sitter de Neovim, con las queries `folds` del plugin. No
+toca `foldmethod` ni `foldlevel`: para plegar, activalo en el buffer con
+`:setlocal foldmethod=expr`, o para todas las páginas:
+
+```lua
+vim.api.nvim_create_autocmd('FileType', {
+  pattern = 'asp',
+  callback = function() vim.wo[0][0].foldmethod = 'expr' end,
+})
+```
+
+Pliegan:
+
+- Los bloques `<% %>` de más de una línea. Un `<%= %>` no pliega.
+- En VBScript, `Sub`, `Function`, `Property`, `Class`, `If` de bloque,
+  `For`, `For Each`, `Do`, `While`, `Select Case` y `With`. Un `If` de
+  una línea (`If x Then y = 1`) no pliega.
+- Un `<% If x Then %>` ... `<% End If %>` pliega el HTML de en medio. Lo
+  mismo vale para `For`, `Do` y los demás bloques.
+- Los elementos HTML, si tenés la query `folds` de html, por ejemplo la
+  de nvim-treesitter.
+
+Con `setup({ folds = false })`, asp.nvim no toca `foldexpr`.
+
+### Indentación
+
+El ftplugin fija `indentexpr` a `require('asp.indent').indentexpr()` y
+ajusta `indentkeys`:
+
+- El VBScript de un bloque `<% %>` de varias líneas se indenta desde la
+  línea del `<%`, un nivel por cada bloque abierto según el árbol de
+  tree-sitter. Las líneas con `End`, `Else`, `ElseIf`, `Case`, `Next`,
+  `Loop` o `Wend` vuelven un nivel. `Select Case` indenta dos niveles,
+  uno para el `Case` y otro para sus sentencias. La línea que sigue a un
+  ` _` va un nivel más que la primera de la sentencia. Un `%>` solo en
+  su línea se alinea con su `<%`.
+- El HTML, incluidas las líneas con un `<% %>` o `<%= %>` de una sola
+  línea, usa `HtmlIndent()` de Neovim (`indent/html.vim`), que también
+  indenta el JavaScript de `<script>` y el CSS de `<style>`. Cada bloque
+  VBScript que envuelve al HTML suma un nivel:
+
+  ```asp
+  <ul>
+      <% For Each item In lista %>
+          <li><%= item %></li>
+      <% Next %>
+  </ul>
+  ```
+
+- Mientras escribís, la línea se reindenta con `o` y `O` y al teclear
+  `End`, `Else`, `ElseIf`, `Case`, `Next`, `Loop` o `Wend` al principio
+  de la línea, sin distinguir mayúsculas. También se reindenta al teclear
+  `%>` al principio de la línea o `>`, que cierra una etiqueta.
+- Con código a medio escribir, cuando la línea o la anterior caen en un
+  `ERROR` del árbol, la línea toma la indentación de la anterior no
+  vacía. Suma un nivel si esa línea abre un bloque: termina en `Then` o
+  empieza con `Sub`, `Function`, `For`, `Do`, `While`, `Select`, `With`,
+  `Class`, `Property`, `Else` o `Case`. Resta uno si la línea actual
+  cierra un bloque.
+
+Con `setup({ indent = false })`, asp.nvim no toca `indentexpr` ni
+`indentkeys`.
+
+### nvim-treesitter
+
+Es opcional. Si apagás la indentación de asp.nvim y usás la de
+nvim-treesitter (`require('nvim-treesitter').indentexpr()`),
+`queries/vbscript/indents.scm` aplica las mismas reglas de bloques. No
+conoce las continuaciones ` _` ni anida el HTML dentro de un
+`<% If %>`. La suite prueba el indentexpr de asp.nvim, no esta query.
+
+### Rendimiento de la indentación
+
+asp.nvim cachea lo que saca del árbol por `changedtick`. Neovim no lo
+incrementa durante `=`, así que en `gg=G` asp.nvim no vuelve a parsear
+y su parte crece lineal con la página. En una página sintética de 307 KB, `gg=G` tarda ~6,4 s en frío,
+con ~0,1 s de asp.nvim y ~2,3 s de `HtmlIndent()`. Neovim usa los
+otros ~4 s para reajustar los rangos de las capas inyectadas en cada
+línea editada; ese costo lo paga cualquier edición masiva del buffer.
+En una página real de 318 KB con 6.850 líneas de JavaScript tarda
+~16 s, casi todo en el indent de JavaScript de Vim. La misma página con
+`ft=html` tarda ~20 s. `o` tarda entre 1 y 15 ms.
+[Mediciones](tests/bench/indent.md).
+
+### Límites
+
+- Un `If` que abre en un bloque `<% %>` de varias líneas y cierra en
+  otro cruza los pliegues de esos bloques. Vim exige que los pliegues se
+  aniden, así que los niveles quedan cortados. Con `<% If %>` y
+  `<% End If %>` en líneas propias no pasa.
+- `vim.treesitter.foldexpr()` sólo pliega las capas inyectadas ya
+  parseadas, y recalcula al cambiar el árbol de la plantilla. asp.nvim
+  parsea la capa vbscript al abrir la página; después la reparsea el
+  resaltado al redibujar. Si eso ocurre después de recalcular, un
+  pliegue nuevo de VBScript aparece con la edición siguiente.
+- Con `HtmlIndent()` vienen sus límites. El JavaScript de un `<script>`
+  lo indenta el indent de JavaScript de Vim, lento en páginas con mucho
+  JS. Sus comentarios `/* */` de varias líneas pueden cambiar de
+  indentación entre una pasada de `gg=G` y la siguiente.
+- La gramática no conoce `Rem`: un comentario `Rem` con palabras clave
+  (`Rem If no hay datos`) es un `ERROR` y su zona se indenta por texto.
+  Con `'` no pasa.
+- El respaldo por texto reconoce un `If` de bloque sólo si su línea
+  termina en `Then`: no abre nivel tras un `If x Then:` cuyas sentencias
+  siguen en las líneas de abajo.
 
 ## Limitaciones conocidas
 
