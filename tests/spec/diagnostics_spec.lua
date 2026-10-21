@@ -194,10 +194,67 @@ describe('diagnósticos de VBScript', function()
       end)
     end)
 
-    it('sin Option Explicit no reporta variables ni llamadas', function()
+    it('sin Option Explicit no reporta variables ni llamadas sin Call', function()
       local ds = diags_at(DIAG .. '/sin_explicit.asp')
       assert.are.same({}, of(ds, 'undeclared'))
       assert.are.same({}, of(ds, 'unknown_call'))
+    end)
+
+    it('sin Option Explicit reporta Call X y New X inexistentes', function()
+      in_temp({
+        ['inc/util.inc'] = { '<%', 'Sub DeInclude()', 'End Sub', 'Class Carro', 'End Class', '%>' },
+        ['p.asp'] = {
+          '<!--#include file="inc/util.inc" -->',
+          '<%',
+          'Call Fantasma(1)',
+          'Call OtroFantasma',
+          'Set o = New NoClase',
+          'Set c = New Carro',
+          'Set re = New RegExp',
+          'NoExiste 1',
+          'x = Desconocida(1)',
+          'Set conn = Server.CreateObject("ADODB.Connection")',
+          'Call conn.Open("dsn")',
+          'Set fp = GetRef("Propia")',
+          'Call fp(1)',
+          'Call Propia(): Call DeInclude()',
+          'Call MsgBox("x")',
+          'Sub Propia()',
+          'End Sub',
+          '%>',
+        },
+      }, function(dir)
+        local ds = diags_at(dir .. '/p.asp')
+        assert.are.same({ 'Fantasma', 'OtroFantasma', 'NoClase' }, texts(of(ds, 'unknown_call')))
+        assert.are.same({}, of(ds, 'undeclared'))
+        assert.is_truthy(of(ds, 'unknown_call')[3].message:find('clase', 1, true))
+      end)
+    end)
+
+    it('sin Option Explicit no revisa una librería que otra página incluye', function()
+      in_temp({
+        ['inc/log.inc'] = { '<%', 'Sub Registrar(texto)', 'End Sub', '%>' },
+        ['inc/funciones.inc'] = { '<%', 'Sub Guardar()', '  Call Registrar("guardar")', 'End Sub', '%>' },
+        ['huerfana.inc'] = { '<%', 'Call Registrar("x")', '%>' },
+        ['p.asp'] = { '<!--#include file="inc/log.inc" -->', '<!--#include file="inc/funciones.inc" -->' },
+      }, function(dir)
+        assert.are.same({}, of(diags_at(dir .. '/inc/funciones.inc'), 'unknown_call'))
+        vim.cmd('bwipeout!')
+        assert.are.same({ 'Registrar' }, texts(of(diags_at(dir .. '/huerfana.inc'), 'unknown_call')))
+      end)
+    end)
+
+    it('sin Option Explicit, Execute o un include roto apagan Call y New', function()
+      in_temp({
+        ['dinamica.asp'] = { '<%', 'Execute "Sub Fantasma(): End Sub"', 'Call Fantasma()', '%>' },
+        ['rota.asp'] = { '<!--#include file="falta.inc" -->', '<% Call Fantasma() %>' },
+      }, function(dir)
+        local ds = diags_at(dir .. '/dinamica.asp')
+        assert.are.same({}, of(ds, 'unknown_call'))
+        assert.are.same({}, of(ds, 'dynamic'))
+        vim.cmd('bwipeout!')
+        assert.are.same({}, of(diags_at(dir .. '/rota.asp'), 'unknown_call'))
+      end)
     end)
 
     it('Option Explicit en un include también activa la revisión', function()

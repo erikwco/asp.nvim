@@ -244,13 +244,32 @@ local function starts_statement(lines, use)
   return not (prev:find('%s_%s*$') or prev:find('^_%s*$'))
 end
 
+---¿Otro archivo del sitio incluye el del buffer? Entonces sus nombres
+---pueden venir de los demás includes de esa página, que no se ven desde
+---él. Usa el índice de includes de asp.site, el mismo barrido y la misma
+---caché que las referencias. Sin raíz del sitio no se puede saber y se
+---asume que sí.
+---@param bufnr integer
+---@return boolean
+local function included_elsewhere(bufnr)
+  local path = vim.api.nvim_buf_get_name(bufnr)
+  local root = path ~= '' and require('asp.pages').scan_root_for(path)
+  if not root then return true end
+  local real = vim.uv.fs_realpath(path)
+  if not real then return false end
+  local includers = require('asp.site').index(root).includers[real]
+  return includers ~= nil and #includers > 0
+end
+
 ---Familias undeclared y unknown_call: usos de identificadores VBScript
 ---contra las declaraciones del buffer y de su grafo de includes.
 ---
----Solo con Option Explicit en la página o en su grafo. Sin él, asignar
----declara (`x = Array(1)` hace de `x(0)` un índice) y el archivo suele ser
----una librería que llama a lo que declaran los demás includes de la página
----que la incluye, invisibles desde ella.
+---Con Option Explicit en la página o en su grafo se revisan todos los usos.
+---Sin él, asignar declara (`x = Array(1)` hace de `x(0)` un índice), así
+---que solo se revisan `Call X` y `New X`, formas que no pueden ser una
+---variable, y solo si ningún otro archivo incluye este: una librería
+---llama a lo que declaran los demás includes de la página que la incluye,
+---invisibles desde ella.
 local function vbscript_family(ctx, undeclared, unknown_call)
   local tree, g = tree_of(ctx), graph_of(ctx)
   if not tree or tree.jscript or not g then return {} end
@@ -270,7 +289,9 @@ local function vbscript_family(ctx, undeclared, unknown_call)
       dynamic = vim.tbl_extend('force', facts[i].dynamic, { file = file })
     end
   end
-  if not option_explicit then return {} end
+  -- Sin Option Explicit, el código dinámico puede declarar cualquier cosa
+  -- y no hay revisión que explicar con el HINT.
+  if not option_explicit and (dynamic or not unknown_call) then return {} end
 
   if dynamic then
     local lnum, col, where = dynamic.lnum, dynamic.col, ''
@@ -329,6 +350,14 @@ local function vbscript_family(ctx, undeclared, unknown_call)
     end
   end
 
+  -- Sin Option Explicit, `Set fp = GetRef("F")` declara fp y `Call fp(1)`
+  -- es válido.
+  if not option_explicit then
+    for _, assignment in ipairs(require('asp.types').scan({ tree.root }, ctx.vcontent)) do
+      page[assignment.name] = true
+    end
+  end
+
   local builtins, intrinsics = require('asp.vbscript_builtins'), require('asp.intrinsics')
   local function known(use)
     local lower = use.lower
@@ -346,10 +375,15 @@ local function vbscript_family(ctx, undeclared, unknown_call)
       local line = ctx.lines[use.lnum + 1]
       local before = line:sub(1, use.col)
       local prev = before:match('([%a_][%w_]*)%s*$')
+      prev = prev and prev:lower()
       -- `nombre(` es llamada o índice aunque el árbol diga otra cosa: la
       -- gramática lee `x = f(1) + g(2)` como `x = f` seguido de `(1) + g(2)`.
       local call = use.call or line:find('^%s*%(', use.end_col + 1) ~= nil
-      if prev and prev:lower() == 'new' then
+      if not option_explicit and not ((prev == 'new' or prev == 'call')
+          and not line:find('^%s*%.', use.end_col + 1)) then
+        -- Sin Option Explicit: ni variables ni `Call obj.Metodo`, cuyo
+        -- objeto pudo declararse al asignarlo.
+      elseif prev == 'new' then
         -- `New` toma clases: una Function homónima no sirve.
         if unknown_call and not classes[use.lower] and not builtins.is_class(use.lower) then
           table.insert(out, diag('unknown_call', unknown_call, use.lnum, use.col, use.lnum, use.end_col,
@@ -366,6 +400,7 @@ local function vbscript_family(ctx, undeclared, unknown_call)
       end
     end
   end
+  if not option_explicit and #out > 0 and included_elsewhere(ctx.bufnr) then return {} end
   return out
 end
 
