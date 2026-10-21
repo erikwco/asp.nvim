@@ -103,6 +103,14 @@ M.handlers['textDocument/completion'] = function(params)
   return require('asp.completion').complete(bufnr, params.position)
 end
 
+M.handlers['textDocument/signatureHelp'] = function(params)
+  local ok, result = pcall(function()
+    local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
+    return require('asp.signature').help(bufnr, params.position)
+  end)
+  return ok and result or nil
+end
+
 local function server(dispatchers)
   local closing = false
   local request_id = 0
@@ -124,6 +132,9 @@ local function server(dispatchers)
             workspaceSymbolProvider = true,
             hoverProvider = true,
             completionProvider = { triggerCharacters = { '.' } },
+            signatureHelpProvider = {
+              triggerCharacters = { '(', ',' }, retriggerCharacters = { ',' },
+            },
             positionEncoding = 'utf-8',
           },
           serverInfo = { name = 'asp-ls', version = '0.6.0' },

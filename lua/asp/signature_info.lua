@@ -25,8 +25,10 @@ end
 function M.markdown(info)
   local lines = { '```vbscript', info.signature, '```', '', info.doc or '' }
   for _, param in ipairs(info.params or {}) do
-    lines[#lines + 1] = ('\n- `%s`%s: %s'):format(param.name,
-      param.optional and ' (opcional)' or '', param.doc or '')
+    if param.doc then
+      lines[#lines + 1] = ('\n- `%s`%s: %s'):format(param.name,
+        param.optional and ' (opcional)' or '', param.doc)
+    end
   end
   if info.returns then lines[#lines + 1] = '\nRetorno: `' .. info.returns .. '`.' end
   return table.concat(lines, '\n')
