@@ -111,8 +111,7 @@ local function vbscript_target(bufnr, position)
   -- del medio (ver "Varios bloques <%= %>" en el README). Ese nodo no es
   -- un nombre: la posición queda para las capas siguientes.
   if range.start.line ~= range['end'].line or not name:match('^[%a_][%w_]*$') then return nil end
-  local line = vim.api.nvim_buf_get_lines(bufnr, range.start.line, range.start.line + 1, true)[1]
-  if symbols.after_dot(line, range.start.character) then
+  if symbols.is_member(node, bufnr) then
     return fail(('`%s` es un miembro de objeto: asp-ls no renombra miembros'):format(name))
   end
   local reason = vbscript_reserved(name)

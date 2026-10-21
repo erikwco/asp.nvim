@@ -568,7 +568,19 @@ local function after_dot(text, start)
   end
   return false
 end
-M.after_dot = after_dot
+
+---Miembro de objeto, incluidas las continuaciones `obj. _\n nombre`.
+---El punto en el texto también cubre `.nombre` de With si el parser no
+---consigue armar un member_expression sin receptor explícito.
+function M.is_member(node, source)
+  local parent = node:parent()
+  if parent and parent:type() == 'member_expression' then return true end
+  local row, col, byte = node:start()
+  if type(source) == 'number' then
+    return after_dot(vim.api.nvim_buf_get_lines(source, row, row + 1, true)[1], col)
+  end
+  return after_dot(source, byte)
+end
 
 ---Palabras distintas de un contenido en minúsculas, separadas por
 ---espacios. Un identificador VBScript solo tiene letras, dígitos y `_`, así
@@ -640,7 +652,7 @@ local function parse_occurrences(abs_path, content, stamp)
         list[#list + 1] = r0
         list[#list + 1] = c0
         list[#list + 1] = c1
-        list[#list + 1] = after_dot(content, start)
+        list[#list + 1] = M.is_member(node, content)
       end
     end
   end
@@ -650,7 +662,7 @@ end
 ---Ocurrencias de página de `wanted` en un archivo de disco: una lista
 ---plana {fila, col_inicio, col_fin, miembro, ...} (un identificador no
 ---cruza líneas; `miembro` marca el nombre de un acceso `obj.Total`, ver
----after_dot), o nil. Deja afuera las que caen en un Sub/Function/Property que
+---is_member), o nil. Deja afuera las que caen en un Sub/Function/Property que
 ---declara ese nombre como local o parámetro: ahí el nombre es otra
 ---variable, igual que con `shadowed` en el buffer.
 ---
@@ -827,8 +839,7 @@ function M.references(bufnr, position, opts)
           local n_scope = nearest_ancestor(n, SCOPE_TYPES)
           local n_scope_id = n_scope and n_scope:id() or nil
           local r0, c0, r1, c1 = n:range()
-          local member = opts.skip_members
-            and after_dot(vim.api.nvim_buf_get_lines(bufnr, r0, r0 + 1, true)[1], c0)
+          local member = opts.skip_members and M.is_member(n, bufnr)
           if not member
             and ((scope_id and n_scope_id == scope_id) or (not scope_id and not shadowed[n_scope_id])) then
             table.insert(out, {

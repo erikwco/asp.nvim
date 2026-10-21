@@ -370,6 +370,33 @@ describe('asp.rename rename', function()
     assert.is_truthy(err.message:find('base.inc tiene cambios sin guardar', 1, true), err.message)
   end)
 
+  it('omite miembros tras una continuación de línea en el buffer y en disco', function()
+    local members = table.concat({
+      '<%', 'x = obj. _', '  Total', 'With obj', '  . _',
+      '  Total = 3', 'End With', '%>', '',
+    }, '\n')
+    in_temp({
+      ['lib.inc'] = members:gsub('\n', '\r\n'),
+      ['pagina.asp'] = '<!--#include file="lib.inc"-->\n<% Dim Total : Total = 1 %>\n' .. members,
+    }, function(dir)
+      vim.cmd.edit(dir .. '/pagina.asp')
+      local pos = pos_in('Dim Total', 'Total')
+      local refs = require('asp.symbols').references(0, pos)
+      assert.are.equal(6, #refs)
+      local edit = assert(rename.rename(0, pos, 'Saldo'))
+      assert.are.same({ ['pagina.asp'] = 2 }, counts(edit, dir))
+      for _, text in ipairs({ '  Total', '  Total = 3' }) do
+        local prepared, err = rename.prepare(0, pos_in(text, 'Total'))
+        assert.is_nil(prepared)
+        assert.is_truthy(err.message:find('miembro de objeto', 1, true))
+      end
+      vim.lsp.util.apply_workspace_edit(edit, 'utf-8')
+      assert.are.equal('<% Dim Saldo : Saldo = 1 %>', buffer_lines(dir .. '/pagina.asp')[2])
+      assert.are.equal(members, table.concat(vim.api.nvim_buf_get_lines(0, 2, -1, false), '\n') .. '\n')
+      assert.are.equal(-1, vim.fn.bufnr(dir .. '/lib.inc'))
+    end)
+  end)
+
   it('con las cachés calientes no vuelve a leer archivos de disco', function()
     open('pagina.asp')
     local vbs = pos_in('Response.Write Redondear', 'Redondear')
