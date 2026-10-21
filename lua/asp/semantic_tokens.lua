@@ -66,14 +66,14 @@ local function library_kind(lower)
   return nil
 end
 
----Objeto de `obj.x` cuando es un nombre simple (`Me`, `Response`), por el
----texto de la línea antes del punto; nil para `f(1).x`, `a.b.x` o una
----continuación ` _`.
-local function object_name(line, col)
-  local before = line:sub(1, col)
-  local s, _, name = before:find('([%a_][%w_]*)%s*%.%s*$')
-  if not s or (s > 1 and before:sub(s - 1, s - 1):match('[%w_.]')) then return nil end
-  return name:lower()
+---Receptor simple del miembro; una cadena como `obj.Response.x` no es
+---el intrínseco `Response`, aunque haya espacios o continuaciones.
+local function object_name(member, bufnr)
+  local object = member:parent():named_child(0)
+  if not object or object:type() ~= 'primary_expression' then return nil end
+  local name = object:named_child(0)
+  if not name or name:type() ~= 'identifier' then return nil end
+  return vim.treesitter.get_node_text(name, bufnr):lower()
 end
 
 ---Tokens de VBScript del buffer: {fila, columna, largo, tipo, modificadores}.
@@ -155,7 +155,7 @@ local function vbscript_tokens(bufnr)
           if member_at == start then
             -- `Me.x` es un miembro de la clase que lo contiene; `Response.Write`,
             -- un miembro intrínseco. Los demás objetos no tienen tipo.
-            local object = object_name(line, c0)
+            local object = object_name(node, bufnr)
             if object == 'me' and classes[1] then
               for _, e in ipairs(by_name[lower] or {}) do
                 if e.class_id == classes[#classes] and not e.scope_id then

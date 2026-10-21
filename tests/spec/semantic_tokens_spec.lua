@@ -131,6 +131,30 @@ describe('asp.semantic_tokens', function()
     assert.are.equal('variable/defaultLibrary,readonly', kind(tokens, '& vbCrLf', 'vbCrLf'))
   end)
 
+  it('no atribuye miembros de cadenas desconocidas a Response ni a Me', function()
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, {
+      '<%', 'Class Caja', 'Private total', 'Sub Mostrar()',
+      'obj. Response.Write 1', 'obj. Me.total = 2',
+      'obj. _', ' Response.Write 3', 'End Sub', 'End Class', '%>',
+    })
+    local actual = decode(semantic.full(0).data)
+    assert.is_nil(token_at(actual, 'obj. Response.Write', 'Write'))
+    assert.is_nil(token_at(actual, 'obj. Me.total', 'total'))
+    assert.is_nil(token_at(actual, ' Response.Write 3', 'Write'))
+  end)
+
+  it('resuelve miembros conocidos con continuación antes o después del punto', function()
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, {
+      '<%', 'Class Caja', 'Private total', 'Sub Mostrar()',
+      'Response. _', ' Write 1', 'Me. _', ' total = 2',
+      'Response _', ' .Buffer = True', 'End Sub', 'End Class', '%>',
+    })
+    local actual = decode(semantic.full(0).data)
+    assert.are.equal('method/defaultLibrary', kind(actual, ' Write 1', 'Write'))
+    assert.are.equal('property/', kind(actual, ' total = 2', 'total'))
+    assert.are.equal('property/defaultLibrary', kind(actual, ' .Buffer', 'Buffer'))
+  end)
+
   it('una Function declarada en un include', function()
     assert.are.equal('function/', kind(tokens, 'Redondear(total)', 'Redondear'))
   end)
