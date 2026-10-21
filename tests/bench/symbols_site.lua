@@ -1,8 +1,12 @@
 -- Referencias VBScript con alcance de sitio: 500 páginas que incluyen una
 -- librería de 50 funciones. Mide la primera consulta (cachés vacías), la
--- siguiente y la de otro nombre con la caché caliente, y cuenta lecturas.
+-- siguiente y la de otro nombre con la caché caliente, y cuenta lecturas y
+-- avisos INFO.
 --
 --   nvim --headless -u NONE --cmd 'set rtp+=.' -l tests/bench/symbols_site.lua
+--
+-- Con ASP_BENCH_GRANDE=1 son 2.000 páginas de 20 KiB, con ~190 líneas más
+-- de VBScript cada una.
 --
 -- Con ASP_BENCH_ANTES=1 solo mide, sin validar resultados ni lecturas: sirve
 -- para correr la misma carga con los módulos de una versión anterior
@@ -15,11 +19,13 @@ local has_site = vim.env.ASP_BENCH_ANTES == nil
 local paths, bytes = {}, 0
 local previous_root = require('asp').options.virtual_root
 local original_open = io.open
+local original_notify = vim.notify
 local buf, page_buf
 
 vim.treesitter.language.register('aspclassic', 'asp')
 
-local PAGES, FUNCTIONS = 500, 50
+local LARGE = vim.env.ASP_BENCH_GRANDE ~= nil
+local PAGES, FUNCTIONS = LARGE and 2000 or 500, 50
 
 local function write(path, lines)
   vim.fn.mkdir(vim.fs.dirname(path), 'p')
@@ -75,6 +81,19 @@ local ok, err = xpcall(function()
     if i % 10 == 0 then
       vim.list_extend(body, { '<%', 'Function Ajuste(Fn01)', '  Ajuste = Fn01 * 2', 'End Function', '%>' })
     end
+    if LARGE then
+      -- Un bloque de código con comillas y HTML en strings, y un
+      -- comentario HTML que completa exactamente 20 KiB.
+      body[#body + 1] = '<%'
+      for row = 1, 95 do
+        body[#body + 1] = ([[  sql = "SELECT a, b FROM t WHERE id = '" & id & "' AND x = 'y'" ' comentario %d]]):format(row)
+        body[#body + 1] = [[  Response.Write "<td class=""celda"" style=""width:10px"">" & rs("campo") & "</td>"]]
+      end
+      body[#body + 1] = '%>'
+      local used = #table.concat(body, '\n') + 1
+      body[#body + 1] = '<!--' .. string.rep('x', 20480 - used - 8) .. '-->'
+      assert(#table.concat(body, '\n') + 1 == 20480)
+    end
     write(('%s/m%02d/p%04d.asp'):format(root, i % 10, i), body)
   end
 
@@ -84,10 +103,16 @@ local ok, err = xpcall(function()
   vim.bo[buf].filetype = 'asp'
   local fn01 = { line = 2, character = 9 }
   local fn02 = { line = 8, character = 9 }
+  local fn03 = { line = 14, character = 9 }
   -- Prepara el parser del buffer fuera del cronómetro, como en un buffer
   -- ya abierto.
   vim.treesitter.get_parser(buf, 'aspclassic'):parse(true)
 
+  local notices = 0
+  vim.notify = function(_, level)
+    assert(level == vim.log.levels.INFO)
+    notices = notices + 1
+  end
   local reads = 0
   io.open = function(path, mode)
     if mode == 'r' and type(path) == 'string' and path:sub(1, #root) == root then reads = reads + 1 end
@@ -162,12 +187,33 @@ local ok, err = xpcall(function()
   lines[#lines + 1] = '<p>Cambio</p>'
   vim.fn.writefile(lines, changed)
   assert(vim.uv.fs_utime(changed, stat.atime.sec, stat.mtime.sec + 2))
-  local elapsed, _, changed_reads = measure(fn01, has_site and 2 or nil)
+  local elapsed, _, changed_reads = measure(fn01, has_site and 1 or nil)
   print(('una_pagina_cambiada_ms=%.2f lecturas=%d'):format(elapsed, changed_reads))
+
+  -- Fn03 no aparece en ninguna página. Con las cachés vacías, el barrido
+  -- lee todo pero no hace falta parsear ninguna página. Fn01 después sí
+  -- las parsea: vuelve a leerlas, porque de cada una solo quedaron sus
+  -- palabras.
+  for _, path in ipairs(paths) do
+    pages.invalidate(path)
+    symbols.invalidate(path)
+    includes.invalidate(path)
+  end
+  reads = 0
+  local start = vim.uv.hrtime()
+  local unused = symbols.references(buf, fn03)
+  local unused_ms = (vim.uv.hrtime() - start) / 1e6
+  if has_site then assert(#unused == 2, ('referencias=%d, esperadas=2'):format(#unused)) end
+  local unused_reads = reads
+  local after_ms, _, after_reads = measure(fn01)
+  print(('sin_usos_primera_ms=%.1f lecturas=%d luego_fn01_ms=%.1f lecturas=%d')
+    :format(unused_ms, unused_reads, after_ms, after_reads))
+  print('avisos_INFO=' .. notices)
 end, debug.traceback)
 
 require('asp').options.virtual_root = previous_root
 io.open = original_open
+vim.notify = original_notify
 for _, b in ipairs({ buf, page_buf }) do vim.api.nvim_buf_delete(b, { force = true }) end
 vim.fn.delete(root, 'rf')
 if not ok then error(err) end
