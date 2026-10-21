@@ -120,6 +120,12 @@ require('asp').setup({opts})
 <
       Llamá a setup antes de abrir las páginas: el ftplugin lee las
       opciones al cargar cada buffer.
+
+  semantic_tokens ~
+      `false` para que asp-ls no anuncie los tokens semánticos
+      (|asp-semantic-tokens|). Se lee al iniciar el servidor. >lua
+        require('asp').setup({ semantic_tokens = false })
+<
 ==============================================================================
 5. Funcionalidades                                       *asp-funcionalidades*
 
@@ -405,6 +411,41 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       El buffer se cachea por edición. Los includes comparten el parseo
       de símbolos y diagnósticos, con caché por mtime y tamaño e
       invalidación al guardar. En caliente no se relee su contenido.
+
+  semanticTokens ~                                    *asp-semantic-tokens*
+      textDocument/semanticTokens/full y /range. Cada identificador de
+      VBScript o de JavaScript de cliente recibe el tipo de la
+      declaración a la que resuelve, con la resolución de definition y
+      references (local, página, miembro de clase, includes). Las
+      palabras clave, los literales, los strings, los comentarios y el
+      HTML los resalta tree-sitter: sobre ellos no hay tokens.
+
+      Tipos: `function` (Functions y Subs, nativas como Len, funciones
+      JS), `method` (Subs y Functions de una clase, métodos JS en su
+      declaración, Response.Write), `class` (también en New y RegExp),
+      `property` (miembros de una clase de VBScript, también con Me.x;
+      Response.Buffer), `variable`, `parameter` y `namespace` (Response,
+      Request, Server, Session, Application, Err).
+      Modificadores: `declaration` (el nombre en su declaración),
+      `readonly` (Const, constantes nativas, const de JS) y
+      `defaultLibrary` (nativos de VBScript e intrínsecos de ASP).
+
+      Neovim los aplica como @lsp.type.{tipo}.asp, @lsp.mod.{mod}.asp y
+      @lsp.typemod.{tipo}.{mod}.asp (|lsp-semantic-highlight|), con
+      prioridad sobre tree-sitter. Por ejemplo: >lua
+        vim.api.nvim_set_hl(0, '@lsp.mod.defaultLibrary.asp',
+          { link = '@function.builtin' })
+<
+      Un miembro de objeto solo lleva tipo si el objeto es Me o un
+      intrínseco; el `.Campo` de un With y las propiedades JS no.
+
+      En una página de 318 KB, full tarda unos 46 ms la primera vez,
+      3 ms en caliente y 40 ms tras una edición (55 ms en Neovim 0.10).
+      Para apagarlo en el buffer actual: >lua
+        local client = vim.lsp.get_clients({ name = 'asp-ls' })[1]
+        vim.lsp.semantic_tokens.stop(0, client.id)
+<
+      Para que el servidor no lo anuncie, |asp-setup| semantic_tokens.
 
   diagnósticos ~                                          *asp-diagnostics*
       Se publican con |vim.diagnostic| (fuente `asp-ls`) en cinco
@@ -892,6 +933,10 @@ Sin publicar ~
     termina en el `%>` de su bloque. definition, references, hover,
     rename y los diagnósticos ven esos usos.
   - La severidad por defecto de syntax pasa de HINT a WARN.
+  - Tokens semánticos (|asp-semantic-tokens|): funciones, métodos,
+    clases, propiedades, variables, parámetros y objetos intrínsecos de
+    VBScript y JavaScript, con declaration, readonly y defaultLibrary.
+    `setup({ semantic_tokens = false })` no los anuncia.
 
 0.5.3 → 0.6.0 ~
 
