@@ -122,7 +122,7 @@ local function vbscript_target(bufnr, position)
   if not symbols.definition(bufnr, position) then
     return fail(('`%s` no tiene una declaración en la página ni en sus includes'):format(name))
   end
-  return { lang = 'vbscript', name = name, range = range, node = node }
+  return { lang = 'vbscript', name = name, range = range }
 end
 
 ---Identificador JS bajo el cursor que se puede renombrar. Devuelve nil
@@ -150,7 +150,7 @@ local function javascript_target(bufnr, position)
   return { lang = 'javascript', name = name, range = range }
 end
 
----Símbolo renombrable bajo `position`: {lang, name, range, node?} o nil y
+---Símbolo renombrable bajo `position`: {lang, name, range} o nil y
 ---el error que explica por qué no.
 local function target(bufnr, position)
   if vim.api.nvim_buf_get_name(bufnr) == '' then
