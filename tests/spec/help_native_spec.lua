@@ -77,9 +77,44 @@ describe('catálogos de ayuda VBScript y COM', function()
     assert.are.equal('Match', com.member('Matches', 'Item').returns)
   end)
 
+  it('cubre los miembros frecuentes en ASP de ADO, FSO, MSXML, CDO y Stream', function()
+    local expected = {
+      Recordset = { 'CursorLocation', 'CursorType', 'LockType', 'PageSize', 'AbsolutePage',
+        'PageCount', 'AbsolutePosition', 'RecordCount', 'BOF', 'Find', 'Supports', 'CancelUpdate',
+        'Update', 'AddNew', 'Delete', 'MoveFirst', 'MoveLast', 'MovePrevious', 'GetRows', 'Requery' },
+      FileSystemObject = { 'GetBaseName', 'GetParentFolderName', 'GetTempName', 'GetExtensionName',
+        'GetFileName', 'BuildPath', 'CopyFolder', 'MoveFolder', 'MoveFile', 'CopyFile', 'DriveExists',
+        'GetSpecialFolder', 'GetAbsolutePathName' },
+      DOMDocument = { 'parseError', 'getElementsByTagName', 'createTextNode', 'createElement',
+        'appendChild', 'save', 'async', 'setProperty' },
+      XMLNode = { 'getAttribute', 'setAttribute', 'attributes', 'firstChild', 'childNodes',
+        'nodeName', 'nodeValue', 'text', 'removeChild' },
+      Message = { 'ReplyTo', 'Sender', 'Cc', 'Bcc', 'AddAttachment', 'CreateMHTMLBody' },
+      Stream = { 'LineSeparator', 'Mode', 'CopyTo', 'SetEOS', 'Charset', 'Position', 'Size',
+        'LoadFromFile', 'SaveToFile' },
+      ServerXMLHTTP = { 'setOption', 'setTimeouts', 'getResponseHeader', 'getAllResponseHeaders' },
+    }
+    for type_name, names in pairs(expected) do
+      for _, name in ipairs(names) do
+        assert.is_not_nil(com.member(type_name, name), type_name .. '.' .. name)
+      end
+    end
+    assert.are.equal('ParseError', com.member('DOMDocument', 'parseError').returns)
+    assert.are.equal('0', com.member('ParseError', 'errorCode').doc:match('(%d) si'))
+    assert.are.equal('XMLNodes', com.member('DOMDocument', 'getElementsByTagName').returns)
+    assert.are.equal('NamedNodeMap', com.member('XMLNode', 'attributes').returns)
+    assert.are.equal('Folder', com.member('FileSystemObject', 'GetSpecialFolder').returns)
+    assert.are.equal('Boolean', com.member('Recordset', 'Supports').returns)
+    assert.are.same({ 'Criteria', 'SkipRows', 'SearchDirection', 'Start' },
+      vim.tbl_map(function(p) return p.name end, com.member('Recordset', 'Find').params))
+    assert.is_true(com.member('Recordset', 'Find').params[2].optional)
+    assert.is_truthy(com.member('Recordset', 'CursorLocation').doc:find('adUseClient (3)', 1, true))
+    assert.is_truthy(com.member('Stream', 'LineSeparator').doc:find('adCRLF (-1, por defecto)', 1, true))
+  end)
+
   it('documenta según Microsoft los separadores de CDO y la semilla de Rnd', function()
     -- CDO separa destinatarios con comas; el punto y coma es de MAPI.
-    for _, field in ipairs({ 'To', 'CC', 'BCC' }) do
+    for _, field in ipairs({ 'To', 'CC', 'BCC', 'ReplyTo' }) do
       assert.is_truthy(com.member('Message', field).doc:find('por comas', 1, true), field)
     end
     -- Un argumento negativo repite siempre el mismo número, no reinicia.
@@ -185,6 +220,19 @@ describe('ayuda nativa y COM', function()
     assert.are.equal('ADODB.Recordset.MoveNext()', result.MoveNext.detail)
     assert.are.equal(10, result.EOF.kind)
     assert.is_nil(result.Replace)
+  end)
+
+  it('infiere el error de análisis, las listas de nodos y los elementos de MSXML', function()
+    query('Set doc = Server.CreateObject("MSXML2.DOMDocument.6.0")')
+    query('Set errorXml = doc.parseError')
+    query('Set nodos = doc.getElementsByTagName("item")')
+    query('Set raiz = doc.documentElement')
+    local p = query('Response.Write errorXml.')
+    assert.are.equal('ParseError', types.infer(0, p, 'errorXml').id)
+    assert.are.equal('XMLNodes', types.infer(0, p, 'nodos').id)
+    assert.are.equal('XMLNode', types.infer(0, p, 'raiz').id)
+    assert.is_not_nil(items('errorXml.rea').reason)
+    assert.is_not_nil(items('raiz.getAttr').getAttribute)
   end)
 
   it('filtra miembros COM por prefijo', function()
