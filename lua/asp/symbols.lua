@@ -699,7 +699,9 @@ function M.references(bufnr, position, opts)
     for _, file in ipairs(files) do
       vim.list_extend(out, occurrences_in_file(file, wanted, contents))
     end
-    if ok and swept then require('asp.pages').notify_slow(swept, started) end
+    if ok and swept then
+      require('asp.pages').notify_slow(swept, vim.tbl_count(contents), started)
+    end
   end
   return out, binding
 end

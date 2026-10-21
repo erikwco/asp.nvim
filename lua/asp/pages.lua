@@ -266,12 +266,15 @@ function M.sweep(root, contents)
   return files, entries, read
 end
 
----Aviso INFO de una consulta que recorrió el sitio: con 2.000 archivos o
----más, o si tardó un segundo desde `started` (vim.uv.hrtime()).
+---Aviso INFO de una consulta que recorrió el sitio: si leyó de disco
+---2.000 archivos o más, o si tardó un segundo desde `started`
+---(vim.uv.hrtime()). No depende del tamaño del sitio: con la caché
+---caliente, una consulta rápida no avisa.
 ---@param count integer archivos recorridos
+---@param read integer archivos leídos de disco en la consulta
 ---@param started number
-function M.notify_slow(count, started)
-  if count >= 2000 or vim.uv.hrtime() - started >= 1e9 then
+function M.notify_slow(count, read, started)
+  if read >= 2000 or vim.uv.hrtime() - started >= 1e9 then
     vim.notify(('asp: se recorrieron %d archivos; las siguientes consultas usan la caché.'):format(count),
       vim.log.levels.INFO)
   end
@@ -306,7 +309,7 @@ function M.references(bufnr, position)
       if memo[candidate] == nil then memo[candidate] = vim.uv.fs_realpath(candidate) or false end
       return memo[candidate] == target_real
     end
-    local files, entries = M.sweep(root)
+    local files, entries, read = M.sweep(root)
     local out = {}
     for _, file in ipairs(files) do
       for _, ref in ipairs(entries[file]) do
@@ -321,7 +324,7 @@ function M.references(bufnr, position)
         end
       end
     end
-    M.notify_slow(#files, started)
+    M.notify_slow(#files, read, started)
     return #out > 0 and out or nil
   end)
   return ok and result or nil

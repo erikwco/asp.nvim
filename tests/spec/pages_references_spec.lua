@@ -426,6 +426,22 @@ describe('asp.pages references', function()
     } }, notices)
   end)
 
+  it('el aviso depende de lo que leyó y tardó la consulta, no del tamaño del sitio', function()
+    local notices = {}
+    vim.notify = function(message, level) table.insert(notices, { message, level }) end
+    local now = vim.uv.hrtime()
+    pages.notify_slow(5000, 0, now)
+    pages.notify_slow(5000, 1999, now)
+    assert.are.same({}, notices)
+    pages.notify_slow(5000, 2000, now)
+    pages.notify_slow(3, 0, now - 1e9)
+    local function notice(count)
+      return { ('asp: se recorrieron %d archivos; las siguientes consultas usan la caché.'):format(count),
+        vim.log.levels.INFO }
+    end
+    assert.are.same({ notice(5000), notice(3) }, notices)
+  end)
+
   it('busca quién usa la página desde el hueco entre literales que no son rutas', function()
     site()
     local source = write('pagina.asp', { [[<% Response.Write "a" & x & "b" %>]] })

@@ -280,9 +280,11 @@ describe('asp.symbols references en un sitio temporal', function()
     local refs = symbols.references(0, pos)
     vim.uv.hrtime = original_hrtime
     assert.are.equal(3, #refs)
-    assert.are.same({ {
-      'asp: se recorrieron 2 archivos; las siguientes consultas usan la caché.', vim.log.levels.INFO,
-    } }, notices)
+    local notice = { 'asp: se recorrieron 2 archivos; las siguientes consultas usan la caché.', vim.log.levels.INFO }
+    assert.are.same({ notice }, notices)
+    -- En caliente no lee nada y tarda menos de un segundo: no avisa.
+    assert.are.equal(3, #symbols.references(0, pos))
+    assert.are.same({ notice }, notices)
   end)
 
   it('usa los includes del buffer sin guardar, no los del disco', function()
