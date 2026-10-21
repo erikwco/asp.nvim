@@ -1055,16 +1055,49 @@ local function opaque_of(data)
   return data.opaque
 end
 
+---¿Puede `position` caer en una región JS? Sólo mira la capa html: un
+---<script> o un atributo `on*`/`href` en la posición o justo antes (el
+---final de una región es inclusivo: `onclick=f|>`). El índice decide el
+---resto (type, `javascript:`, bloques ASP).
+---@param parser vim.treesitter.LanguageTree del buffer
+---@param bufnr integer
+---@param position table {line, character}
+---@return boolean
+local function maybe_js(parser, bufnr, position)
+  parser:parse(true)
+  local html = parser:children().html
+  if not html then return false end
+  local row = position.line
+  for _, col in ipairs({ position.character, position.character - 1 }) do
+    for _, tree in pairs(html:trees()) do
+      local node = col >= 0 and tree:root():named_descendant_for_range(row, col, row, col)
+      while node do
+        if node:type() == 'script_element' then return true end
+        if node:type() == 'attribute' then
+          local name = node:named_child(0)
+          local attr = name and vim.treesitter.get_node_text(name, bufnr):lower() or ''
+          if attr == 'href' or attr:match('^on%a+$') then return true end
+        end
+        node = node:parent()
+      end
+    end
+  end
+  return false
+end
+
 local function region_at(bufnr, position)
-  -- Un bloque ASP es VBScript: se descarta con el árbol de la plantilla,
-  -- sin construir el índice JS, porque completion y signatureHelp de
-  -- VBScript preguntan en cada tecla. Mismo criterio que overlaps_asp
-  -- (byte, byte + 1): cuenta el bloque que empieza en el cursor, no el que
-  -- termina ahí.
-  local root = vim.treesitter.get_parser(bufnr):parse()[1]:root()
+  -- Completion y signatureHelp preguntan en cada tecla, también en
+  -- VBScript y en HTML: sin construir el índice JS, un bloque ASP se
+  -- descarta con el árbol de la plantilla y el HTML que no es <script> ni
+  -- atributo de JS, con el de html. En los bloques, el mismo criterio que
+  -- overlaps_asp(byte, byte + 1): cuenta el que empieza en el cursor, no
+  -- el que termina ahí.
+  local parser = vim.treesitter.get_parser(bufnr)
+  local root = parser:parse()[1]:root()
   local at = root:named_descendant_for_range(position.line, position.character,
     position.line, position.character)
   if at and at:type() ~= 'content' and not at:equal(root) then return nil end
+  if not maybe_js(parser, bufnr, position) then return nil end
   local data = get_data(bufnr)
   if not data then return nil end
   local byte = vim.api.nvim_buf_get_offset(bufnr, position.line) + position.character

@@ -232,7 +232,7 @@ describe('asp.js ayuda de cliente', function()
     assert.is_not_nil(handlers['textDocument/hover'](params(pos('Len('))))
   end)
 
-  it('las consultas de VBScript no construyen el índice JS', function()
+  it('las consultas de VBScript y de HTML no construyen el índice JS', function()
     local old_parser = vim.treesitter.get_string_parser
     local parsed = 0
     vim.treesitter.get_string_parser = function(source, lang, ...)
@@ -245,13 +245,20 @@ describe('asp.js ayuda de cliente', function()
         vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { 'total = Len("' .. ('a'):rep(i) .. '")' })
         handlers[method](params({ line = p.line, character = #'total = Len(' }))
         handlers[method](params({ line = p.line, character = #'total = ' }))
+        p = pos('<h1')
+        local h1 = '<h1 class="x' .. ('y'):rep(i) .. '">buscar</h1>'
+        vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { h1 })
+        handlers[method](params({ line = p.line, character = #h1 - #'</h1>' }))
+        handlers[method](params({ line = p.line, character = #'<h1 class="x' }))
+        handlers[method](params(pos('>Buscar<', 3)))
       end
       assert.are.equal(0, parsed)
+      assert.is_not_nil(items(pos('onclick="buscarGlobal', #'onclick="bus')).buscarGlobal)
+      assert.is_true(parsed > 0)
       -- Control: el borde de un bloque que termina es del JS que sigue.
       local p = query('const valor = <%= 1 %>;')
       assert.is_not_nil(js.region_at(0, { line = p.line, character = #'const valor = <%= 1 %>' }))
       assert.is_nil(js.region_at(0, { line = p.line, character = #'const valor = ' }))
-      assert.is_true(parsed > 0)
     end)
     vim.treesitter.get_string_parser = old_parser
     assert.is_true(ok, err)
