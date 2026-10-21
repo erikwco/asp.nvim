@@ -5,9 +5,9 @@ local M = {}
 -- de comillas cubre strings sin cerrar que tree-sitter recupera como ERROR.
 function M.mask(ctx)
   local source, cursor = ctx.source, ctx.byte
-  local parts, i = {}, ctx.range[3]
+  local parts, i, opaque_at = {}, ctx.range[3], ctx.opaque()
   while i < cursor do
-    local opaque = ctx.opaque[i]
+    local opaque = opaque_at[i]
     local char, pair = source:sub(i + 1, i + 1), source:sub(i + 1, i + 2)
     if opaque then
       if opaque.stop > cursor then return nil end

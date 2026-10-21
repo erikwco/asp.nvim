@@ -392,6 +392,37 @@ describe('asp.js ayuda de cliente', function()
     end
   end)
 
+  it('definition y references no arman la ayuda ni los opacos de la ayuda', function()
+    local info = require('asp.js_info')
+    -- Externos ya cacheados: su ayuda se extrae al cargarlos.
+    assert.is_true(#js.references(0, pos('buscarExterna(1)')) > 0)
+    local old_declaration, old_parse = info.declaration, vim.treesitter.query.parse
+    local declared, opaque = 0, 0
+    info.declaration = function(...)
+      declared = declared + 1
+      return old_declaration(...)
+    end
+    vim.treesitter.query.parse = function(lang, text, ...)
+      if text:find('@opaque', 1, true) then opaque = opaque + 1 end
+      return old_parse(lang, text, ...)
+    end
+    local ok, err = pcall(function()
+      query('var cambio = 1;')
+      local p = pos('buscarGlobal(1, 2);')
+      assert.is_not_nil(js.definition(0, p))
+      assert.is_true(#js.references(0, p) > 0)
+      assert.are.equal(0, declared)
+      assert.is_not_nil(help.hover(0, p))
+      assert.is_true(declared > 0)
+      assert.are.equal(0, opaque)
+      assert.are.equal(1, help.signature(0, pos('buscarGlobal(1, 2);', #'buscarGlobal(1, ')).activeParameter)
+      assert.is_not_nil(items(pos('buscarGlobal(1, 2);', #'busc')).buscarGlobal)
+      assert.are.equal(1, opaque)
+    end)
+    info.declaration, vim.treesitter.query.parse = old_declaration, old_parse
+    assert.is_true(ok, err)
+  end)
+
   it('en caliente hover, completion y signatureHelp no releen ni reparsean externos', function()
     local p = pos('onclick="buscarGlobal', #'onclick="bus')
     assert.is_not_nil(items(p).buscarExterna)

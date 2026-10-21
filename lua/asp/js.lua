@@ -89,8 +89,10 @@ local JS_QUERY = [[
 (shorthand_property_identifier) @id
 (shorthand_property_identifier_pattern) @id
 (method_definition name: (property_identifier) @method)
-[(string) (template_string) (regex) (comment)] @opaque
 ]]
+
+-- Lo que js_context.mask no recorre como código: ver opaque_of.
+local OPAQUE_QUERY = [[ [(string) (template_string) (regex) (comment)] @opaque ]]
 
 -- Tipos de nodo de @id: los únicos que se resuelven bajo el cursor.
 local IDENTIFIERS = {
@@ -574,9 +576,6 @@ local function index(data, scopes, items)
   end
   enter_until(math.huge)
   data.scopes = scopes
-  for _, e in ipairs(data.decls) do
-    e.help = require('asp.js_info').declaration(e, data.source)
-  end
 end
 
 local function new_data()
@@ -592,7 +591,6 @@ local function new_data()
     scopes = {},     -- intervalos de scope, también para posiciones sin token
     regions = {},    -- rangos originales, incluidos sus espacios exteriores
     blocks = {},     -- ASP excluido del JS
-    opaque = {},     -- strings, templates, regex y comentarios del árbol
     srcs = {},        -- `src` de los <script>, sin resolver (externals)
   }
 end
@@ -661,9 +659,7 @@ local function index_js(data, source, regions, blocks, handlers)
     for id, node in q:iter_captures(tree:root(), source) do
       local _, _, sb = node:start()
       local _, _, eb = node:end_()
-      if q.captures[id] == 'opaque' then
-        data.opaque[sb] = { stop = eb, kind = node:type() }
-      elseif q.captures[id] == 'scope' then
+      if q.captures[id] == 'scope' then
         table.insert(scopes, { node = node, sb = sb, eb = eb })
       elseif not overlaps_asp(blocks, sb, eb) then
         table.insert(items, { node = node, sb = sb, method = q.captures[id] == 'method', url = url[i] })
@@ -736,11 +732,13 @@ local function detach(data)
   end
   for _, e in ipairs(data.decls) do
     e.range = lsp_range(e.node)
+    -- La ayuda sale del árbol: se extrae antes de soltarlo, sin otra
+    -- lectura para mostrarla (ver help_entry).
+    e.help = require('asp.js_info').declaration(e, data.source)
     e.node, e.decl, e.scope, e.class = nil, nil, nil, nil
   end
   data.trees, data.ltree, data.source, data.at, data.decls = nil, nil, nil, nil, nil
   data.scopes, data.regions, data.blocks = nil, nil, nil
-  data.opaque = nil
   return data
 end
 
@@ -1037,6 +1035,26 @@ local function each_external(bufnr, data, visit)
   return hit
 end
 
+---Strings, templates, regex y comentarios del buffer por byte de inicio,
+---{stop, kind}, para js_context.mask. Se arman la primera vez que se
+---enmascara en cada changedtick: definition, references y hover no los
+---usan.
+---@param data table del buffer, con sus árboles
+---@return table<integer, table>
+local function opaque_of(data)
+  if data.opaque then return data.opaque end
+  data.opaque = {}
+  local q = vim.treesitter.query.parse('javascript', OPAQUE_QUERY)
+  for _, tree in ipairs(data.trees) do
+    for _, node in q:iter_captures(tree:root(), data.source) do
+      local _, _, sb = node:start()
+      local _, _, eb = node:end_()
+      data.opaque[sb] = { stop = eb, kind = node:type() }
+    end
+  end
+  return data.opaque
+end
+
 local function region_at(bufnr, position)
   -- Un bloque ASP es VBScript: se descarta con el árbol de la plantilla,
   -- sin construir el índice JS, porque completion y signatureHelp de
@@ -1062,7 +1080,10 @@ local function region_at(bufnr, position)
           break
         end
       end
-      return { source = data.source, range = r, byte = byte, node = node, opaque = data.opaque }, data
+      return {
+        source = data.source, range = r, byte = byte, node = node,
+        opaque = function() return opaque_of(data) end,
+      }, data
     end
   end
 end
@@ -1076,7 +1097,10 @@ local function scope_at(data, byte)
   return key
 end
 
-local function help_entry(entry, uri)
+-- Ayuda de una declaración. Las del buffer la calculan al pedirla, con su
+-- texto (`source`); las de disco ya la traen (ver detach).
+local function help_entry(entry, uri, source)
+  if not entry.help then entry.help = require('asp.js_info').declaration(entry, source) end
   if not uri then return entry.help end
   local info = vim.tbl_extend('force', {}, entry.help)
   info.file = vim.uri_to_fname(uri)
@@ -1092,12 +1116,12 @@ local function named(bufnr, position, name)
     -- Sólo el nombre en la declaración del método. Resolver `obj.metodo`
     -- requeriría inferir el tipo de obj, fuera del alcance de esta capa.
     for _, e in ipairs(data.decls) do
-      if e.member and ctx.node and e.node:equal(ctx.node) then return e.help end
+      if e.member and ctx.node and e.node:equal(ctx.node) then return help_entry(e, nil, data.source) end
     end
     return nil
   end
   local entry = resolve(data, occ)
-  if entry then return entry.help end
+  if entry then return help_entry(entry, nil, data.source) end
   return each_external(bufnr, data, function(uri, ext)
     local e = global_binding(ext, occ.name)
     if e then return help_entry(e, uri) end
@@ -1115,7 +1139,7 @@ local function visible(bufnr, position)
       local e = slots[name]
       if not seen[name] and (not parameter_only or e.parameter) then
         seen[name] = true
-        out[#out + 1] = help_entry(e, uri)
+        out[#out + 1] = help_entry(e, uri, data.source)
       end
     end
   end
