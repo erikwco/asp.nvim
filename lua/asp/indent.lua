@@ -344,7 +344,7 @@ local function html_indent(st, buf, lnum)
       vim.b[buf].hi_lasttick = st.tick - 1
     end
     local ok, ind = pcall(vim.fn.HtmlIndent)
-    if ok and type(ind) == 'number' and ind >= 0 then return ind, true end
+    if ok and type(ind) == 'number' then return ind, true end
   end
   local prev = vim.fn.prevnonblank(lnum - 1)
   return prev > 0 and vim.fn.indent(prev) or 0, false
@@ -386,14 +386,19 @@ local function compute(buf, lnum)
   -- HTML: si la línea anterior es VBScript, se mide desde su `<%`; si es
   -- HTML, desde lo que diga HtmlIndent. Una etiqueta de cierre siempre se
   -- alinea con su apertura, que HtmlIndent busca por nombre.
-  local base, base_key, from_html
+  local base, from_html = html_indent(st, buf, lnum)
+  if base < 0 then
+    st.html_lnum = nil
+    return base
+  end
+  local base_key
   local closing_tag = prev_info and prev_info.kind ~= 'html' and getline(buf, row):find('^%s*</') ~= nil
   if not prev_info or prev_info.kind == 'html' or closing_tag then
-    base, from_html = html_indent(st, buf, lnum)
     base_key = closing_tag and info.key or prev_info and prev_info.key
   else
     base = vim.fn.indent(prev_info.open + 1)
     base_key = row_info(st, buf, prev_info.open).key
+    from_html = false
   end
 
   local delta

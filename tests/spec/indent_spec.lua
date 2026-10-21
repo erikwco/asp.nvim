@@ -68,6 +68,26 @@ describe('indentación', function()
     end)
   end)
 
+  it('conserva el contenido de pre, incluso entre bloques ASP', function()
+    local expected = {
+      '<% If x Then %>',
+      '    <pre>',
+      '  primera',
+      '        segunda',
+      '    <%',
+      '    x = 1',
+      '    %>',
+      '   tercera',
+      '    </pre>',
+      '<% End If %>',
+    }
+    page(expected)
+    vim.cmd('silent normal! gg=G')
+    assert.are.same(expected, lines())
+    vim.cmd('silent normal! gg=G')
+    assert.are.same(expected, lines())
+  end)
+
   describe('mientras se escribe', function()
     local SUB = { '<%', 'Sub Foo()', '    If x Then', '        y = 1', 'End Sub', '%>' }
 

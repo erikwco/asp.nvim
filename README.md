@@ -639,6 +639,9 @@ ajusta `indentkeys`:
   </ul>
   ```
 
+  Se conserva la indentación del contenido de `<pre>`, incluso si
+  contiene bloques ASP, como indica `HtmlIndent()`.
+
 - Mientras escribís, la línea se reindenta con `o` y `O` y al teclear
   `End`, `Else`, `ElseIf`, `Case`, `Next`, `Loop` o `Wend` al principio
   de la línea, sin distinguir mayúsculas. También se reindenta al teclear

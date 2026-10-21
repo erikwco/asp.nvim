@@ -761,6 +761,8 @@ ajusta 'indentkeys'.
           <% Next %>
       </ul>
 <
+    Se conserva la indentación del contenido de <pre>, incluso si
+    contiene bloques ASP, como indica HtmlIndent().
   - Al escribir se reindenta con o y O, al teclear End, Else, ElseIf,
     Case, Next, Loop o Wend al principio de la línea (sin distinguir
     mayúsculas), al teclear %> al principio y al teclear > (cierra una
