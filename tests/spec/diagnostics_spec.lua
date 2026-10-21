@@ -154,13 +154,14 @@ describe('diagnósticos de VBScript', function()
         ['p.asp'] = {
           '<%', 'Option Explicit', 'Dim valor',
           'valor = DatePart("ww", Date, vbSunday, vbUseSystem)',
-          'valor = vbDatabaseCompare',
+          'valor = InStr(1, "a", "b", vbTextCompare)',
           'valor = vbMsgBoxHelpButton + vbMsgBoxSetForeground + vbMsgBoxRight + vbMsgBoxRtlReading',
-          'valor = vbConstanteInventada', '%>',
+          'valor = vbConstanteInventada + vbDatabaseCompare', '%>',
         },
       }, function(dir)
         local ds = diags_at(dir .. '/p.asp')
-        assert.are.same({ 'vbConstanteInventada' }, texts(ds))
+        -- vbDatabaseCompare es de VBA: VBScript no la define.
+        assert.are.same({ 'vbConstanteInventada', 'vbDatabaseCompare' }, texts(ds))
         assert.are.equal('undeclared', ds[1].code)
       end)
     end)

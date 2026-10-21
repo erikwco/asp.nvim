@@ -2,8 +2,9 @@
 
 Soporte de Classic ASP (VBScript + HTML + JavaScript) para Neovim:
 resaltado por regiones vía tree-sitter y navegación LSP (ir a definición,
-referencias, símbolos, hover y completion) incluyendo la resolución de
-`<!--#include -->` cross-file. Ver |asp.nvim| (`:help asp`) para el detalle.
+referencias, símbolos, hover, completion y signatureHelp) incluyendo la
+resolución de `<!--#include -->` cross-file. Ver |asp.nvim| (`:help asp`)
+para el detalle.
 
 El VBScript de `<% %>`/`<%= %>` se parsea con gramática propia
 (`grammars/vbscript/`, fork de tree-sitter-vba), con resaltado de
@@ -208,17 +209,49 @@ una lista de referencias vacía. Los literales de página dentro de JS sí
 consultan los usos del destino. Las referencias de símbolos VBScript
 conservan la precedencia.
 
-### Símbolos, hover y completion
+### Símbolos, hover, completion y firmas
 
 - `vim.lsp.buf.document_symbol()` muestra el outline del archivo, también
   disponible desde aerial o Telescope `lsp_document_symbols`. Las funciones
   y clases JS globales aparecen al final, con detail `javascript`.
 - `vim.lsp.buf.workspace_symbol()` busca símbolos VBScript en todo el proyecto.
-- Hover muestra la documentación de los intrínsecos de ASP (`Response`,
-  `Request`, `Server`, `Session`, `Application`) y la firma de tus funciones
-  y subs de VBScript.
-- Completion ofrece miembros de los intrínsecos tras `Objeto.` con
-  `triggerCharacters` en `.`, además de los símbolos VBScript del proyecto.
+- Hover muestra los intrínsecos de ASP (`Response`, `Request`, `Server`,
+  `Session`, `Application`), funciones nativas con sus parámetros y retorno,
+  constantes con su valor y tipos y miembros COM. También muestra declaraciones
+  del usuario en la página y sus includes transitivos, con el archivo de origen.
+- Completion ofrece funciones nativas, constantes y símbolos VBScript de la
+  página y sus includes. Las palabras clave aparecen desde dos letras de prefijo.
+  Después de `Objeto.` ofrece miembros intrínsecos o COM; si el objeto no
+  tiene tipo conocido (una clase tuya, un COM fuera del catálogo), ofrece los
+  símbolos del proyecto, sin nativos ni palabras clave. Dentro de
+  `CreateObject("` y `Server.CreateObject("` ofrece ProgIDs del catálogo.
+- `vim.lsp.buf.signature_help()` muestra firmas de funciones nativas,
+  miembros intrínsecos y COM, y Subs, Functions y Properties del usuario.
+  `textDocument/signatureHelp` anuncia `(` y `,` como disparadores y `,`
+  como redisparador. Cuenta argumentos fuera de strings y paréntesis anidados;
+  también reconoce `MiSub a, b` y `Call MiSub a, b` al comienzo de una sentencia.
+
+La inferencia reconoce `Set x = Server.CreateObject("ProgID")`,
+`Set x = CreateObject("ProgID")` y `Set x = New RegExp`. También sigue un
+nivel de retorno COM, como `Set rs = conn.Execute(sql)` cuando `conn` se
+creó directamente. Busca primero en la Sub, Function o Property actual,
+después en la página y después en los includes, en el orden del grafo.
+La primera asignación de cada nombre gana en el scope más cercano, incluso
+si está después del cursor; `Set x = Nothing` no cuenta. No distingue
+mayúsculas; acepta versiones como `ADODB.Recordset.6.0` y
+`MSXML2.DOMDocument.6.0`. Un parámetro o `Dim` local sin tipo oculta el
+nombre de página.
+
+El catálogo COM es parcial: ADO, FileSystemObject y sus tipos derivados,
+Dictionary, MSXML, CDO y RegExp. No inspecciona componentes instalados.
+No infiere tipos para `Set x = funcionDelUsuario()`, ProgIDs calculados,
+alias de variables ni cadenas de varios retornos COM. No analiza el flujo
+de control ni cambios de tipo posteriores. Las llamadas activas se detectan
+en la línea actual; no sigue continuaciones con `_`.
+
+Los datos del buffer se invalidan al editar. Los includes comparten el
+parseo de símbolos y diagnósticos, cacheado por mtime y tamaño e invalidado
+al guardar. Las consultas en caliente no vuelven a leer su contenido.
 
 ### Resaltar ocurrencias del símbolo
 
@@ -547,6 +580,18 @@ Para probar otro Neovim, pasá su ruta en `NVIM`:
 ```bash
 make test NVIM=/ruta/a/nvim
 ```
+
+Para medir la ayuda en caliente con una página sintética de 20 KiB y 20
+includes, corré el benchmark con el mismo inicio aislado de la suite:
+
+```bash
+nvim --headless -u tests/minimal_init.lua \
+  -c "lua dofile('tests/bench_help.lua')"
+```
+
+Imprime medianas, p95, cantidad de resultados y contadores de lecturas y
+parseos de disco. Comprueba los resultados de cada consulta y elimina sus
+archivos temporales al terminar.
 
 El harness desactiva ShaDa con `vim.o.shadafile = 'NONE'` para que los
 procesos de prueba no lean ni escriban el estado del desarrollador.

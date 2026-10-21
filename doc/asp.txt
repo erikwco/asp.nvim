@@ -241,11 +241,51 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
 
   hover ~
       Documentación de los objetos intrínsecos (Response, Request,
-      Server, Session, Application) y firma de los símbolos de usuario.
+      Server, Session, Application), funciones y constantes nativas,
+      tipos y miembros COM y declaraciones del usuario. Incluye firmas,
+      parámetros, retornos y valores. Los símbolos de includes
+      transitivos muestran su archivo de origen.
 
   completion ~
-      Miembros de los objetos intrínsecos tras `Objeto.`, más los
-      símbolos del proyecto.
+      Funciones nativas, constantes y símbolos de la página y sus
+      includes. Palabras clave desde dos letras de prefijo. Miembros
+      intrínsecos y COM tras `Objeto.`; sin tipo conocido, los símbolos
+      del proyecto, sin nativos ni palabras clave. ProgIDs dentro de
+      `CreateObject("` o `Server.CreateObject("`, filtrados sin
+      distinguir mayúsculas.
+
+  signatureHelp ~                                          *asp-signatures*
+      Firmas de funciones nativas, miembros intrínsecos y COM, y Subs,
+      Functions y Properties del usuario en la página y sus includes.
+      Se invoca con |vim.lsp.buf.signature_help()|. Anuncia `(` y `,`
+      como disparadores y `,` como redisparador.
+      Detecta la llamada abierta en la línea actual. Ignora comas en
+      strings y paréntesis anidados. También reconoce `MiSub a, b` y
+      `Call MiSub a, b` al comienzo de una sentencia.
+
+  Tipos COM ~                                              *asp-com-help*
+      La inferencia reconoce asignaciones Set con
+      `Server.CreateObject("ProgID")`, `CreateObject("ProgID")` y
+      `New RegExp`. Sigue un nivel de retorno COM: por ejemplo,
+      `Set rs = conn.Execute(sql)` si conn se creó directamente.
+      Busca en la Sub/Function/Property actual, después en la página y
+      después en los includes, en orden del grafo. Gana la primera
+      asignación del scope más cercano, incluso posterior al cursor;
+      `Set x = Nothing` no cuenta.
+      Un Dim o parámetro local sin tipo oculta el nombre de página.
+      Los nombres y ProgIDs no distinguen mayúsculas; se aceptan
+      versiones como ADODB.Recordset.6.0 y MSXML2.DOMDocument.6.0.
+
+      Catálogo parcial: ADO, FileSystemObject y sus tipos derivados,
+      Dictionary, MSXML, CDO y RegExp. No inspecciona COM instalado.
+      No infiere `Set x = funcionDelUsuario()`, ProgIDs calculados,
+      alias ni cadenas de varios retornos. No analiza flujo de control
+      ni cambios de tipo posteriores. signatureHelp no sigue llamadas
+      partidas entre líneas con `_`.
+
+      El buffer se cachea por edición. Los includes comparten el parseo
+      de símbolos y diagnósticos, con caché por mtime y tamaño e
+      invalidación al guardar. En caliente no se relee su contenido.
 
   diagnósticos ~                                          *asp-diagnostics*
       Se publican con |vim.diagnostic| (fuente `asp-ls`) en cinco
@@ -550,6 +590,13 @@ El plugin (Lua, gramática aspclassic, queries) es MIT. El directorio
 
 Sin publicar ~
 
+  - Hover, completion y signatureHelp de funciones y constantes nativas
+    de VBScript y miembros COM, con inferencia por Set/CreateObject y
+    New RegExp. Catálogo parcial y un nivel de retorno COM.
+  - Hover y firmas de procedimientos de includes transitivos, con
+    parámetros extraídos del árbol y nombre del archivo de origen.
+  - Completion de ProgIDs dentro de CreateObject y de palabras clave
+    desde dos letras de prefijo. Ver |asp-signatures| y |asp-com-help|.
   - Diagnósticos de VBScript (|asp-diagnostics|): errores de sintaxis,
     variables sin declarar bajo Option Explicit, llamadas a Subs o
     Functions inexistentes y enlaces a páginas inexistentes, con

@@ -2,9 +2,19 @@ local M = {}
 
 local intrinsics = require('asp.intrinsics')
 local symbols = require('asp.symbols')
+local com = require('asp.com')
+local signature_info = require('asp.signature_info')
 
 local function md(value)
   return { contents = { kind = 'markdown', value = value } }
+end
+
+-- Primera línea de la declaración del usuario y, si viene de un include,
+-- el nombre de su archivo.
+local function declaration(entry)
+  local value = ('```vbscript\n%s\n```'):format(entry.declaration)
+  if entry.file then value = value .. '\n\nArchivo: `' .. vim.fn.fnamemodify(entry.file, ':t') .. '`.' end
+  return md(value)
 end
 
 -- ¿El nodo es el MIEMBRO de un member_expression? Devuelve el texto del
@@ -27,38 +37,59 @@ end
 ---@return table|nil hover
 function M.hover(bufnr, position)
   bufnr = bufnr == 0 and vim.api.nvim_get_current_buf() or bufnr
-  -- identifier_at() ya confina el lookup a la capa vbscript y filtra por
-  -- tipo identifier (ver asp/symbols.lua) — reusar en vez de duplicar
-  -- (Global Constraint del plan). La comprobación de tipo queda como guard
-  -- redundante pero inofensivo.
-  local node = symbols.identifier_at(bufnr, position)
-  if not node or node:type() ~= 'identifier' then return nil end
+  if not require('asp.call_context').line(bufnr, position) then return nil end
+  local node = symbols.node_at(bufnr, position)
+  if not node then return nil end
+  local literals = { boolean_literal = true, nothing_literal = true, null_literal = true, empty_literal = true }
+  if node:type() ~= 'identifier' and not literals[node:type()] then return nil end
   local text = vim.treesitter.get_node_text(node, bufnr)
 
-  -- 1. ¿miembro de un objeto intrínseco?
+  -- 1. ¿miembro de un objeto intrínseco o COM?
   local obj_text = object_of_member(node, bufnr)
   if obj_text then
     local m = intrinsics.member(obj_text, text)
     if m then
       return md(('```vbscript\n%s\n```\n\n%s'):format(m.signature, m.doc))
     end
+    local obj = require('asp.types').infer(bufnr, position, obj_text)
+    m = obj and com.member(obj.id, text)
+    if m then
+      return md(signature_info.markdown(m) .. '\n\nTipo: `' .. obj.name .. '`.')
+    end
   end
 
-  -- 2. ¿objeto intrínseco?
+  -- Un miembro sin ayuda de catálogo (`Me.Registrar`, `p.Saludar`, `a.b.c`)
+  -- es el de una clase del usuario, ni nativo ni tipo. Si el árbol no ve la
+  -- clase (un error de sintaxis antes), se busca por nombre como antes.
+  if node:parent() and node:parent():type() == 'member_expression' then
+    for _, entry in ipairs(symbols.help(bufnr).entries) do
+      if entry.class_id and not entry.scope_id and entry.name:lower() == text:lower() then
+        return declaration(entry)
+      end
+    end
+    local entry = symbols.named(bufnr, position, text)
+    return entry and declaration(entry) or nil
+  end
+
+  local inferred = require('asp.types').infer(bufnr, position, text)
+  if inferred then
+    return md(('**%s** (`%s`)\n\n%s'):format(text, inferred.name, inferred.doc))
+  end
+
   local obj = intrinsics.object(text)
   if obj then
     return md(('**%s** (objeto intrínseco ASP)\n\n%s'):format(obj.name, obj.doc))
   end
 
-  -- 3. símbolo de usuario del buffer: mostrar la primera línea de su
-  -- declaración.
-  local wanted = text:lower()
-  for _, e in ipairs(symbols.collect(bufnr)) do
-    if e.name:lower() == wanted then
-      local line = vim.api.nvim_buf_get_lines(bufnr, e.range[1], e.range[1] + 1, false)[1] or ''
-      return md(('```vbscript\n%s\n```'):format(vim.trim(line)))
-    end
+  local native = require('asp.vbscript_builtins').lookup(text)
+  if native and native.group == 'functions' then
+    return md(signature_info.markdown(native))
+  elseif native and native.group == 'constants' then
+    return md(('```vbscript\n%s = %s\n```\n\n%s'):format(native.name, native.value, native.doc))
   end
+
+  local entry = symbols.named(bufnr, position, text)
+  if entry then return declaration(entry) end
   return nil
 end
 

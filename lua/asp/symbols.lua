@@ -55,6 +55,33 @@ local function first_identifier_child(node)
   return nil
 end
 
+local function callable_info(node, source, declaration)
+  local params, labels, modifiers = {}, {}, {}
+  local name
+  for child in node:iter_children() do
+    if child:type() == 'block' then break end
+    local text = vim.treesitter.get_node_text(child, source)
+    local lower = text:lower()
+    if child:type() == 'identifier' then
+      if not name then
+        name = text
+      else
+        local modifier = table.concat(modifiers, ' ')
+        params[#params + 1] = {
+          name = text, optional = modifier:lower():find('optional', 1, true) ~= nil,
+          doc = modifier ~= '' and ('Parámetro ' .. modifier .. '.') or 'Parámetro del procedimiento.',
+        }
+        labels[#labels + 1] = modifier ~= '' and (modifier .. ' ' .. text) or text
+        modifiers = {}
+      end
+    elseif lower == 'byval' or lower == 'byref' or lower == 'optional' or lower == 'paramarray' then
+      modifiers[#modifiers + 1] = text
+    end
+  end
+  local prefix = declaration:match('^(.-)%(')
+  return (prefix or name) .. '(' .. table.concat(labels, ', ') .. ')', params
+end
+
 -- Recorrido de matches compartido entre fuente-buffer (M.collect) y
 -- fuente-string (M.collect_file): `source` acepta bufnr|string — tanto
 -- vim.treesitter.get_node_text() como query:iter_matches() aceptan ambas
@@ -66,6 +93,7 @@ local function collect_from_roots(roots, source)
   local query = vim.treesitter.query.parse('vbscript', QUERY)
   local entries = {}
   local seen = {}
+  local declarations = {}
 
   for _, root in ipairs(roots) do
     for pattern, match in query:iter_matches(root, source) do
@@ -101,7 +129,7 @@ local function collect_from_roots(roots, source)
           end
           local r0, c0, r1, c1 = decl_node:range()
           local sr0, sc0, sr1, sc1 = name_node:range()
-          table.insert(entries, {
+          local entry = {
             name = vim.treesitter.get_node_text(name_node, source),
             kind = PATTERN_KINDS[pattern],
             range = { r0, c0, r1, c1 },
@@ -109,7 +137,16 @@ local function collect_from_roots(roots, source)
             decl_id = decl_node:id(),
             class_id = class_anc and class_anc:id() or nil,
             scope_id = scope_anc and scope_anc:id() or nil,
-          })
+          }
+          local decl_id = entry.decl_id
+          declarations[decl_id] = declarations[decl_id]
+            or vim.treesitter.get_node_text(decl_node, source):match('^[^\r\n]*')
+          entry.declaration = declarations[decl_id]
+          if pattern == 1 or pattern == 2 or pattern == 4 then
+            entry.signature, entry.params = callable_info(decl_node, source, entry.declaration)
+            entry.doc = 'Procedimiento definido por el usuario.'
+          end
+          table.insert(entries, entry)
         end
       end
     end
@@ -137,6 +174,45 @@ function M.collect(bufnr)
     table.insert(roots, tree:root())
   end
   return collect_from_roots(roots, bufnr)
+end
+
+local help_cache = {}
+vim.api.nvim_create_autocmd('BufWipeout', {
+  callback = function(args) help_cache[args.buf] = nil end,
+})
+
+---Datos de ayuda del buffer, derivados de su árbol inyectado y cacheados
+---por changedtick. Los ids de scope siempre pertenecen al mismo parseo.
+function M.help(bufnr)
+  bufnr = bufnr == 0 and vim.api.nvim_get_current_buf() or bufnr
+  local tick = vim.api.nvim_buf_get_changedtick(bufnr)
+  local hit = help_cache[bufnr]
+  if hit and hit.tick == tick then return hit end
+  local ok, parser = pcall(vim.treesitter.get_parser, bufnr)
+  if not ok or not parser then return { entries = {}, assignments = {} } end
+  parser:parse(true)
+  local roots = {}
+  local child = parser:children().vbscript
+  for _, tree in ipairs(child and child:trees() or {}) do roots[#roots + 1] = tree:root() end
+  hit = {
+    tick = tick, entries = collect_from_roots(roots, bufnr),
+    assignments = require('asp.types').scan(roots, bufnr),
+  }
+  help_cache[bufnr] = hit
+  return hit
+end
+
+function M.scope_at(entries, position)
+  local scope
+  for _, entry in ipairs(entries) do
+    local r = entry.range
+    if entry.params
+      and (position.line > r[1] or (position.line == r[1] and position.character >= r[2]))
+      and (position.line < r[3] or (position.line == r[3] and position.character < r[4])) then
+      scope = entry.decl_id
+    end
+  end
+  return scope
 end
 
 local CODE_QUERY = [[ (code) @code ]]
@@ -224,7 +300,7 @@ local NO_FACTS = { option_explicit = false }
 ---mismo parseo (ver parse_file) y cacheados por mtime y tamaño. Nil si el
 ---archivo no existe.
 ---@param abs_path string
----@return table|nil {stamp, entries, facts}
+---@return table|nil {stamp, entries, facts, assignments}
 local function load_file(abs_path)
   abs_path = vim.fs.normalize(abs_path)
   local stamp = stamp_of(abs_path)
@@ -232,18 +308,24 @@ local function load_file(abs_path)
   local hit = file_cache[abs_path]
   if hit and hit.stamp == stamp then return hit end
 
-  local ok, entries, facts = pcall(function()
+  local ok, entries, facts, assignments = pcall(function()
     local content, vroot = parse_file(abs_path)
-    if not vroot then return {}, NO_FACTS end
+    if not vroot then return {}, NO_FACTS, {} end
     local out = collect_from_roots({ vroot }, content)
     for _, e in ipairs(out) do
       e.file = abs_path
     end
-    return out, require('asp.vbscript_scan').facts(vroot, content)
+    return out, require('asp.vbscript_scan').facts(vroot, content), require('asp.types').scan({ vroot }, content)
   end)
-  hit = { stamp = stamp, entries = ok and entries or {}, facts = ok and facts or NO_FACTS }
+  hit = { stamp = stamp, entries = ok and entries or {}, facts = ok and facts or NO_FACTS,
+    assignments = ok and assignments or {} }
   file_cache[abs_path] = hit
   return hit
+end
+
+---La inferencia comparte la lectura y el parseo de collect_file/file_facts.
+function M.file_help(abs_path)
+  return load_file(abs_path) or { entries = {}, assignments = {} }
 end
 
 ---Declaraciones de un archivo en disco (ver parse_file), cacheadas por
@@ -276,7 +358,7 @@ local function range_contains(node, row, col)
   return true
 end
 
----Localiza el TSNode `identifier` bajo `position`, confinado a la capa
+---Localiza el TSNode bajo `position`, confinado a la capa
 ---vbscript (`children().vbscript` + `named_descendant_for_range`). Compartido
 ---por M.definition y M.references — ver el comentario extenso en
 ---M.definition sobre por qué esto NUNCA debe volver a un `vim.treesitter.
@@ -285,7 +367,7 @@ end
 ---@param bufnr integer
 ---@param position table {line, character} (utf-8, 0-indexed como LSP)
 ---@return TSNode|nil
-function M.identifier_at(bufnr, position)
+function M.node_at(bufnr, position)
   local pok, parser = pcall(vim.treesitter.get_parser, bufnr)
   if not pok or not parser then return nil end
   parser:parse(true)
@@ -303,8 +385,13 @@ function M.identifier_at(bufnr, position)
       break
     end
   end
-  if not node or node:type() ~= 'identifier' then return nil end
   return node
+end
+
+---Filtro de identificadores para navegación; hover también admite literales.
+function M.identifier_at(bufnr, position)
+  local node = M.node_at(bufnr, position)
+  return node and node:type() == 'identifier' and node or nil
 end
 
 ---Resuelve, entre las declaraciones del buffer actual, cuál referencia
@@ -354,6 +441,26 @@ local function page_declaration_in(order, wanted)
     end
   end
   return nil
+end
+
+---Declaración visible para hover y firmas, incluyendo el grafo transitivo.
+function M.named(bufnr, position, name)
+  local entries = M.help(bufnr).entries
+  local scope = M.scope_at(entries, position)
+  local local_hit, page_hit, class_hit
+  for _, entry in ipairs(entries) do
+    if entry.name:lower() == name:lower() then
+      if scope and entry.scope_id == scope then
+        local_hit = local_hit or entry
+      elseif not entry.scope_id and not entry.class_id then
+        page_hit = page_hit or entry
+      elseif not entry.scope_id then
+        class_hit = class_hit or entry
+      end
+    end
+  end
+  return local_hit or page_hit or class_hit
+    or page_declaration_in(require('asp.includes').buffer_graph(bufnr).order, name:lower())
 end
 
 ---Resuelve la definición del identificador bajo `position` (case-insensitive),
@@ -488,6 +595,7 @@ local function parse_occurrences(abs_path, content, stamp)
     file_cache[abs_path] = {
       stamp = stamp, entries = entries,
       facts = require('asp.vbscript_scan').facts(vroot, content),
+      assignments = require('asp.types').scan({ vroot }, content),
     }
   end
 
