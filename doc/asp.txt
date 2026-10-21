@@ -334,6 +334,8 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       tipos y miembros COM y declaraciones del usuario. Incluye firmas,
       parámetros, retornos y valores. Los símbolos de includes
       transitivos muestran su archivo de origen.
+      En JS muestra declaraciones del usuario y ayuda del catálogo DOM
+      parcial. Ver |asp-javascript|.
 
   completion ~
       Funciones nativas, constantes y símbolos de la página y sus
@@ -342,6 +344,8 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       del proyecto, sin nativos ni palabras clave. ProgIDs dentro de
       `CreateObject("` o `Server.CreateObject("`, filtrados sin
       distinguir mayúsculas.
+      En JS ofrece bindings visibles y miembros del catálogo DOM parcial,
+      con prefijo sensible a mayúsculas. Ver |asp-javascript|.
 
   signatureHelp ~                                          *asp-signatures*
       Firmas de funciones nativas, miembros intrínsecos y COM, y Subs,
@@ -351,6 +355,8 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       Detecta la llamada abierta en la línea actual. Ignora comas en
       strings y paréntesis anidados. También reconoce `MiSub a, b` y
       `Call MiSub a, b` al comienzo de una sentencia.
+      En JS reconoce llamadas multilínea dentro de la región, con
+      parámetros del usuario y del catálogo DOM. Ver |asp-javascript|.
 
   Tipos COM ~                                              *asp-com-help*
       La inferencia reconoce asignaciones Set con
@@ -640,6 +646,31 @@ también dentro de los atributos de evento `on*` y de las URLs
     los que usó esa consulta: si fueron más de 64, los conserva todos.
     Un archivo borrado sale de ella en la siguiente consulta entre
     archivos.
+  - hover muestra la primera línea de la declaración o la firma sin el
+    cuerpo. Las funciones de .js e includes indican `Archivo:`. Incluye
+    funciones declaradas en otro <script>, variables locales, clases y
+    métodos en su declaración.
+  - completion ofrece los bindings visibles del scope más cercano,
+    después los globales de la página, sus .js e includes. El prefijo
+    distingue mayúsculas. Las palabras clave aparecen desde dos letras.
+    También funciona en on*, URLs javascript: y regiones vacías.
+  - signatureHelp usa los parámetros del árbol, con default, rest y
+    desestructuración. Detecta llamadas abiertas, incluidas las anidadas
+    y multilínea, dentro de la región JS. Ignora comas en strings,
+    templates, comentarios, regex, paréntesis, arrays y objetos.
+  - Catálogo parcial DOM y ECMAScript: 102 entradas, con 84 miembros y
+    18 globales, sin contar alias de window. Incluye document, window,
+    console, Math, JSON, localStorage, location, navigator, history,
+    Array y funciones como parseInt. Ofrece firmas y documentación en
+    español en las tres ayudas. Los bindings del usuario lo sombrean.
+    Reconoce rutas explícitas como window.location.reload y
+    document.location.href. Un obj. desconocido no ofrece miembros.
+  - El handler decide la capa según las regiones ya indexadas: no mezcla
+    sugerencias JS y VBScript ni responde dentro de strings o comentarios
+    JS. Completion y signatureHelp tratan todo template, incluida su
+    interpolación ${...}, como texto opaco. Las firmas de externos se
+    guardan junto a sus bindings; en caliente no hay lecturas de contenido
+    ni nuevos parseos.
 
 Límites:
 
@@ -649,8 +680,11 @@ Límites:
     JavaScript del usuario.
   - `let`/`const` se tratan como `var` (scope de función, no de
     bloque).
-  - Las propiedades no se resuelven (`obj.metodo`, `this.x`, jQuery
-    `$`...): no hay resolución por tipos ni objetos.
+  - Las propiedades del usuario no se resuelven (`obj.metodo`, `this.x`,
+    jQuery `$`...): no hay resolución por tipos, alias ni retornos.
+    Los métodos tienen hover en su declaración. El catálogo DOM es
+    parcial; no sigue nombres o ids del HTML como document.f o
+    document.forms.f, tampoco elementos de formularios por nombre.
   - No se recogen como declaración el parámetro de `catch (e)` ni la
     variable de `for (const x of xs)`. Los parámetros con default, rest
     o desestructurados y los nombres desestructurados de `var`, `let` y
@@ -664,7 +698,6 @@ Límites:
     manejador con `language="vbscript"` (IE) se lee igual como JS. No
     se ven los manejadores que arma VBScript (`Response.Write`) ni un
     `href` cuyo prefijo `javascript:` viene de un `<%= %>`.
-  - Sin hover ni completion para JavaScript.
 
 Salud: >
   :checkhealth asp
@@ -681,6 +714,10 @@ El plugin (Lua, gramática aspclassic, queries) es MIT. El directorio
 
 Sin publicar ~
 
+  - Hover, completion y signatureHelp de JavaScript de cliente en
+    <script>, on* y URLs javascript:. Bindings con scope, firmas de .js
+    e includes y catálogo DOM parcial de 102 entradas. Ver
+    |asp-javascript|.
   - Renombrar símbolos (|asp-rename|): prepareRename y rename para
     VBScript y JavaScript, con el alcance de references y validación del
     nombre nuevo. Las variables Private de clase incluyen sus usos
