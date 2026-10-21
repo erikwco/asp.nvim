@@ -8,6 +8,15 @@
 -- acota los miembros de clase (ver vbscript_locations) y arma el
 -- WorkspaceEdit.
 --
+-- Un rename que dejaría el programa roto se rechaza: un nombre nuevo que
+-- ya existe en cualquier alcance (vbscript_clash, vbscript_disk_clash,
+-- javascript_locations), un miembro de clase homónimo en algún archivo a
+-- cambiar (vbscript_locations) o un `<%= %>` fundido que oculta un uso
+-- (hidden_use). Esos chequeos también salen de las cachés; solo leen un
+-- archivo que todavía no se cargó: un `.js` o include que references no
+-- recorrió (el rename de un local de JS) o uno del sitio cuyo texto
+-- menciona el nombre nuevo y que todavía no se parseó.
+--
 -- Cuando no se puede renombrar, prepare y rename devuelven nil y un error
 -- LSP (InvalidParams) con el motivo, no un nil a secas: Neovim muestra el
 -- mensaje del error ("Error on prepareRename: ...") y ante un nil solo
@@ -249,12 +258,35 @@ local function where(bufnr, e)
     e.selection[1] + 1)
 end
 
+local function where_location(loc)
+  return ('%s:%d'):format(vim.fn.fnamemodify(vim.uri_to_fname(loc.uri), ':t'), loc.range.start.line + 1)
+end
+
+local TAKEN = 'un nombre que ya existe puede juntar dos símbolos en uno o tapar a uno de ellos; elegí otro'
+
+local function declared_message(name, place)
+  return ('ya hay una declaración `%s` en %s: %s'):format(name, place, TAKEN)
+end
+
+local function used_message(name, place)
+  return ('`%s` ya se usa en %s: %s'):format(name, place, TAKEN)
+end
+
+---Primera declaración de `entries` llamada `new` (en minúsculas), de
+---cualquier alcance.
+local function named(entries, new)
+  for _, e in ipairs(entries) do
+    if e.name:lower() == new then return e end
+  end
+  return nil
+end
+
 ---Una declaración con el nombre nuevo en el mismo alcance juntaría dos
 ---símbolos en uno: VBScript lo rechaza ("Name redefined") o, entre
 ---archivos, en runtime gana la última. Se mira el buffer y, para un
----símbolo de página, las declaraciones de página de su grafo de includes:
----las de la caché de asp.symbols.collect_file, que los diagnósticos ya
----llenan con todo el grafo al abrir la página.
+---símbolo de página, las declaraciones de página de su grafo de includes.
+---Solo decide el mensaje: vbscript_clash rechaza también los demás
+---alcances.
 local function vbscript_conflict(bufnr, entries, decl, new_name)
   local new = new_name:lower()
   local function same_scope(e)
@@ -270,6 +302,73 @@ local function vbscript_conflict(bufnr, entries, decl, new_name)
   for _, file in ipairs(require('asp.includes').buffer_graph(bufnr).order) do
     for _, e in ipairs(symbols.collect_file(file)) do
       if e.name:lower() == new and not e.scope_id and not e.class_id then return e end
+    end
+  end
+  return nil
+end
+
+---El nombre nuevo no puede existir ya, en ningún alcance, donde lo vería
+---el rename. En el mismo alcance juntaría dos símbolos en uno; en otro
+---puede tapar al renombrado: con un parámetro `dato` en una Sub que usa el
+---`total` de página, renombrar `total` a `dato` hace que la Sub lea su
+---parámetro. Es deliberadamente conservador: también rechaza un nombre que
+---solo coincide con un local de otra Sub, y el mensaje dice dónde está
+---para que se elija otro.
+---
+---Acá se miran las declaraciones del buffer y de su grafo de includes (la
+---caché de asp.symbols.collect_file, que los diagnósticos llenan al abrir
+---la página), los usos del buffer que no tienen declaración a la vista (un
+---global implícito, sin Option Explicit) y los identificadores fundidos
+---que podrían ocultar alguno. Los demás archivos que toca un rename de
+---página se miran en vbscript_disk_clash. Devuelve el mensaje o nil.
+local function vbscript_clash(bufnr, entries, decl, new_name)
+  local new = new_name:lower()
+  local same = vbscript_conflict(bufnr, entries, decl, new_name)
+  if same then
+    return ('ya hay una declaración `%s` en el mismo alcance (%s)'):format(same.name, where(bufnr, same))
+  end
+  local e = named(entries, new)
+  if e then return declared_message(e.name, where(bufnr, e)) end
+  local symbols = require('asp.symbols')
+  for _, file in ipairs(require('asp.includes').buffer_graph(bufnr).order) do
+    e = named(symbols.collect_file(file), new)
+    if e then return declared_message(e.name, where(bufnr, e)) end
+  end
+  local file = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ':t')
+  for _, node in ipairs(symbols.identifiers(bufnr)) do
+    local text, fused = identifier_text(node, bufnr)
+    if not fused and text:lower() == new and not symbols.is_member(node, bufnr) then
+      return used_message(text, ('%s:%d'):format(file, node:start() + 1))
+    end
+  end
+  local row = fused_use(bufnr, new)
+  if row then return fused_message(row, new_name) end
+  return nil
+end
+
+---Lo que vbscript_clash no ve de un rename de página: las declaraciones,
+---de cualquier alcance, de los archivos que cambia (`edited`), y los usos
+---de página del nombre nuevo en todos los que recorrió references
+---(`files`: el grafo y las páginas del sitio que incluyen la librería). Un
+---archivo que el rename no cambia también cuenta: si declara o usa a nivel
+---de página el nombre nuevo, después del rename sería el mismo global que
+---el renombrado. Sale de las cachés que references acaba de llenar: solo
+---lee un archivo cuyo texto menciona el nombre nuevo y que todavía no se
+---parseó. Devuelve el mensaje o nil.
+local function vbscript_disk_clash(bufnr, new_name, edited, files)
+  local symbols = require('asp.symbols')
+  local new = new_name:lower()
+  for _, path in ipairs(edited) do
+    local e = named(symbols.collect_file(path), new)
+    if e then return declared_message(e.name, where(bufnr, e)) end
+  end
+  for _, file in ipairs(files or {}) do
+    local uses = symbols.page_uses(file, new)
+    if uses[1] then
+      for _, e in ipairs(symbols.collect_file(file)) do
+        if e.name:lower() == new and not e.scope_id then return declared_message(e.name, where(bufnr, e)) end
+      end
+      return used_message(new_name, where_location(uses[1]))
     end
   end
   return nil
@@ -314,19 +413,19 @@ local function vbscript_locations(bufnr, position, t, new_name)
     end
   end
 
-  if new_name:lower() ~= wanted then
+  -- Un cambio solo de mayúsculas no es otro nombre en VBScript.
+  local renamed = new_name:lower() ~= wanted
+  if renamed then
     local decl = class and { class_id = class.entry.decl_id } or (binding and binding.scope_id and binding) or nil
-    local clash = vbscript_conflict(bufnr, entries, decl, new_name)
-    if clash then
-      return fail(('ya hay una declaración `%s` en el mismo alcance (%s)'):format(clash.name, where(bufnr, clash)))
-    end
+    local clash = vbscript_clash(bufnr, entries, decl, new_name)
+    if clash then return fail(clash) end
   end
   if class then
     return vim.tbl_filter(function(ref) return contains(class.range, ref.range.start) end, refs)
   end
   -- Un local no sale del buffer: references ya devolvió todo.
   if binding and binding.scope_id then return refs end
-  local all = symbols.references(bufnr, position, { skip_members = true })
+  local all, _, files = symbols.references(bufnr, position, { skip_members = true })
   local own = vim.uri_from_bufnr(bufnr)
   local edited, seen = {}, {}
   for _, ref in ipairs(all) do
@@ -355,12 +454,17 @@ local function vbscript_locations(bufnr, position, t, new_name)
       end
     end
   end
+  if renamed then
+    local clash = vbscript_disk_clash(bufnr, new_name, edited, files)
+    if clash then return fail(clash) end
+  end
   return all
 end
 
 ---Las declaraciones JS del buffer no se pueden juntar con otra del mismo
 ---alcance: se mira el scope de la declaración renombrada (o el global si
----está en un archivo externo).
+---está en un archivo externo). Solo decide el mensaje: javascript_locations
+---rechaza también los demás alcances.
 local function javascript_conflict(bufnr, position, new_name)
   local js = require('asp.js')
   local def = js.definition(bufnr, position)
@@ -385,14 +489,31 @@ local function javascript_conflict(bufnr, position, new_name)
   return nil
 end
 
+---Como en VBScript (ver vbscript_clash), el nombre nuevo no puede existir
+---ya en ningún scope del buffer ni de sus `.js` e includes: ni declarado
+---(`function f(dato) { return total; }` leería su parámetro si `total`
+---pasara a llamarse `dato`) ni usado sin declaración (`document`, `$` de
+---una librería, un global implícito), que después del rename sería el
+---renombrado.
 local function javascript_locations(bufnr, position, _, new_name)
+  local js = require('asp.js')
   local clash = javascript_conflict(bufnr, position, new_name)
   if clash then
     return fail(('ya hay una declaración `%s` en el mismo alcance (%s:%d)'):format(new_name,
       vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ':t'), clash.node:range() + 1))
   end
+  local sites = js.occurrences(bufnr, new_name)
+  if not sites then
+    return fail(('asp-ls no pudo comprobar si `%s` ya existe'):format(new_name), INTERNAL_ERROR)
+  end
+  local declared, used
+  for _, loc in ipairs(sites) do
+    if loc.declared then declared = declared or loc else used = used or loc end
+  end
+  if declared then return fail(declared_message(new_name, where_location(declared))) end
+  if used then return fail(used_message(new_name, where_location(used))) end
   -- Solo las ubicaciones: el segundo valor de references es el binding.
-  return (require('asp.js').references(bufnr, position, { rename_to = new_name }))
+  return (js.references(bufnr, position, { rename_to = new_name }))
 end
 
 ---WorkspaceEdit con un TextEdit por ubicación, sin rangos repetidos y en

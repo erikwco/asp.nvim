@@ -807,6 +807,8 @@ end
 ---@param opts? table {buffer_only?: boolean, skip_members?: boolean}
 ---@return table[] Location[]
 ---@return table|nil binding declaración del buffer, si existe
+---@return string[]|nil archivos de disco recorridos (el grafo y el sitio),
+---  si la búsqueda salió del buffer
 function M.references(bufnr, position, opts)
   bufnr = bufnr == 0 and vim.api.nvim_get_current_buf() or bufnr
   opts = opts or {}
@@ -882,8 +884,22 @@ function M.references(bufnr, position, opts)
     if ok and swept then
       require('asp.pages').notify_slow(swept, vim.tbl_count(contents), started)
     end
+    return out, binding, files
   end
   return out, binding
+end
+
+---Ocurrencias de página de `name` (sin distinguir mayúsculas) en un
+---archivo de disco, sin los miembros de objeto: las declaraciones y usos
+---que se ven a nivel de página, como las cuenta references (ver
+---page_occurrences). Con la caché de ocurrencias caliente no lee nada;
+---solo parsea un archivo cuyo texto menciona `name` y que todavía no se
+---parseó.
+---@param abs_path string
+---@param name string
+---@return table[] Location[]
+function M.page_uses(abs_path, name)
+  return occurrences_in_file(abs_path, name:lower(), {}, true)
 end
 
 ---Nodos `identifier` del árbol VBScript del buffer, en orden del

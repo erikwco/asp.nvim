@@ -378,8 +378,79 @@ describe('asp.rename rename', function()
       assert.is_truthy(err.message:find('mismo alcance', 1, true), err.message)
       assert.is_truthy(err.message:find(case[3], 1, true), err.message)
     end
-    -- Un local puede tomar el nombre de un local de otra Sub.
-    assert.is_table(rename.rename(0, pos_in('  Dim i', 'i'), 'suma'))
+    -- Fuera del mismo alcance también se rechaza, aunque sea un local de
+    -- otra Sub (deliberadamente conservador): el mensaje dice dónde está.
+    local res, err = rename.rename(0, pos_in('  Dim i', 'i'), 'suma')
+    assert.is_nil(res)
+    assert.is_truthy(err.message:find('declaración `suma` en pagina.asp:20', 1, true), err.message)
+  end)
+
+  it('rechaza un nombre nuevo de VBScript que ya existe en cualquier alcance y dice dónde', function()
+    in_temp({
+      ['lib.inc'] = table.concat({
+        '<%', 'Dim total', 'Function Doble(factor)', '  Doble = total * factor', 'End Function', '%>', '',
+      }, '\n'),
+      ['pagina.asp'] = table.concat({
+        '<!--#include file="lib.inc"-->', '<%', 'total = 1', 'Sub Mostrar(dato)',
+        '  Response.Write total', 'End Sub', 'Sub Otra()', '  Dim aux', '  aux = 1', 'End Sub',
+        'contador = 2', '%>', '',
+      }, '\n'),
+      ['otra.asp'] = table.concat({
+        '<!--#include file="lib.inc"-->', '<%', 'Sub Usar()', '  Dim resto', '  resto = total',
+        'End Sub', '%>', '',
+      }, '\n'),
+      ['tercera.asp'] = '<!--#include file="lib.inc"-->\n<%\nDim saldo\nsaldo = 0\n%>\n',
+    }, function(dir)
+      vim.cmd.edit(dir .. '/pagina.asp')
+      local pos = pos_in('total = 1')
+      for _, case in ipairs({
+        -- Mostrar leería su parámetro en vez del global.
+        { 'dato', 'declaración `dato` en pagina.asp:4' },
+        { 'AUX', 'declaración `aux` en pagina.asp:8' },
+        -- Un parámetro del include, un local de una página que cambia y
+        -- una página que incluye la librería sin usar `total`.
+        { 'factor', 'declaración `factor` en lib.inc:3' },
+        { 'resto', 'declaración `resto` en otra.asp:4' },
+        { 'saldo', 'declaración `saldo` en tercera.asp:3' },
+        -- Sin Dim ni Option Explicit: el rename lo juntaría con el global.
+        { 'contador', '`contador` ya se usa en pagina.asp:11' },
+      }) do
+        local res, err = rename.rename(0, pos, case[1])
+        assert.is_nil(res, case[1])
+        assert.are.equal(-32602, err.code)
+        assert.is_truthy(err.message:find(case[2], 1, true), case[1] .. ': ' .. err.message)
+        assert.is_truthy(err.message:find('elegí otro', 1, true), err.message)
+      end
+      -- Un nombre que no existe en ningún lado se acepta.
+      local edit = assert(rename.rename(0, pos, 'importe'))
+      assert.are.same({ ['pagina.asp'] = 2, ['lib.inc'] = 2, ['otra.asp'] = 1 }, counts(edit, dir))
+    end)
+  end)
+
+  it('rechaza un nombre nuevo de JavaScript declarado o usado en la página o sus .js', function()
+    in_temp({
+      ['app.js'] = 'function ayuda(indice) { return indice; }\n',
+      ['pagina.asp'] = table.concat({
+        '<script src="app.js"></script>',
+        '<script>let total = 5; function f(dato) { return total; } f(2); document.title = total;</script>',
+        '',
+      }, '\n'),
+    }, function(dir)
+      vim.cmd.edit(dir .. '/pagina.asp')
+      local pos = pos_in('let total', 'total')
+      for _, case in ipairs({
+        -- f(2) devolvería 2 en vez de 5.
+        { 'dato', 'declaración `dato` en pagina.asp:2' },
+        { 'indice', 'declaración `indice` en app.js:1' },
+        -- Un global sin declaración pasaría a ser el renombrado.
+        { 'document', '`document` ya se usa en pagina.asp:2' },
+      }) do
+        local res, err = rename.rename(0, pos, case[1])
+        assert.is_nil(res, case[1])
+        assert.is_truthy(err.message:find(case[2], 1, true), case[1] .. ': ' .. err.message)
+      end
+      assert.are.same({ ['pagina.asp'] = 3 }, counts(assert(rename.rename(0, pos, 'saldo')), dir))
+    end)
   end)
 
   it('un miembro de clase se renombra solo como identificador suelto dentro de la clase', function()
@@ -522,10 +593,13 @@ describe('asp.rename rename', function()
     end)
   end)
 
-  it('rechaza el rename si un <%= %> sin espacios funde usos del nombre', function()
+  it('rechaza el rename si un <%= %> sin espacios funde usos del nombre viejo o del nuevo', function()
     in_temp({
       ['fundido.asp'] = table.concat({
         '<%', 'Dim total', 'total = 1', '%>', '<p><%=total%></p>', '<div>', '<p><%=total%></p>', '',
+      }, '\n'),
+      ['nuevo.asp'] = table.concat({
+        '<%', 'Dim total', 'total = 1', '%>', '<p><%=cuenta%></p><p><%=otro%></p>', '<p><%= total %></p>', '',
       }, '\n'),
       -- `total` solo aparece en el HTML que separa dos bloques fundidos.
       ['html.asp'] = table.concat({
@@ -541,6 +615,13 @@ describe('asp.rename rename', function()
         assert.is_truthy(res_err[2].message:find('en la línea 5', 1, true), res_err[2].message)
         assert.is_truthy(res_err[2].message:find('(`<%= total %>`)', 1, true), res_err[2].message)
       end
+      -- El nombre nuevo oculto en un bloque fundido tampoco se puede comprobar.
+      vim.cmd.edit(dir .. '/nuevo.asp')
+      pos = pos_in('Dim total', 'total')
+      local res, err = rename.rename(0, pos, 'cuenta')
+      assert.is_nil(res)
+      assert.is_truthy(err.message:find('oculta usos de `cuenta`', 1, true), err.message)
+      assert.are.same({ ['nuevo.asp'] = 3 }, counts(assert(rename.rename(0, pos, 'saldo')), dir))
       -- Solo cuenta el código que se fundió, no el HTML del medio.
       vim.cmd.edit(dir .. '/html.asp')
       pos = pos_in('Dim total', 'total')

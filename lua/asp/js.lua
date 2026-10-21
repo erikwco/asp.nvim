@@ -1060,6 +1060,23 @@ local function references(bufnr, position, opts)
   return out, binding and location(vim.uri_from_bufnr(bufnr), binding) or nil
 end
 
+-- Ver M.occurrences.
+local function occurrences(bufnr, name)
+  local data = get_data(bufnr)
+  if not data then return nil end
+  local out = {}
+  local function add(uri, d)
+    for _, o in ipairs(d.occurrences[name] or {}) do
+      local loc = location(uri, o)
+      loc.declared = o.decl ~= nil
+      table.insert(out, loc)
+    end
+  end
+  add(vim.uri_from_bufnr(bufnr), data)
+  each_external(bufnr, data, add)
+  return out
+end
+
 local function document_symbols(bufnr)
   local data = get_data(bufnr)
   if not data then return nil end
@@ -1153,6 +1170,18 @@ end
 ---@return table|nil binding Location de la declaración en el buffer
 function M.references(bufnr, position, opts)
   return safe(references, bufnr, position, opts)
+end
+
+---Dónde aparece `name` (case-sensitive) en el JS del buffer y de sus
+---archivos externos, en el orden de each_external: cada declaración o uso
+---de cualquier scope, sin las propiedades (`obj.name`). Sirve a asp.rename
+---para no elegir un nombre que ya existe. Sale de los índices cacheados de
+---cada archivo: solo lee un externo que todavía no se cargó.
+---@param bufnr integer
+---@param name string
+---@return table[]|nil Location[] con `declared` (true si declara el nombre)
+function M.occurrences(bufnr, name)
+  return safe(occurrences, bufnr, name)
 end
 
 ---Funciones y clases JS globales (con sus métodos) para el outline, con
