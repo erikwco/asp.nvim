@@ -78,7 +78,7 @@ describe('indentación', function()
       '    x = 1',
       '    %>',
       '   tercera',
-      '    </pre>',
+      ' </pre>',
       '<% End If %>',
     }
     page(expected)
@@ -86,6 +86,53 @@ describe('indentación', function()
     assert.are.same(expected, lines())
     vim.cmd('silent normal! gg=G')
     assert.are.same(expected, lines())
+  end)
+
+  it('conserva el valor de textarea, incluidas sus expresiones ASP', function()
+    local expected = {
+      '<div>',
+      '    <TEXTAREA',
+      '        name="mensaje">',
+      '  primera',
+      '        <%= valor %>',
+      '   <p>texto literal</p>',
+      ' </TEXTAREA>',
+      '    <p>fuera</p>',
+      '</div>',
+    }
+    page(expected)
+    vim.cmd('silent normal! gg=G')
+    assert.are.same(expected, lines())
+    vim.cmd('silent normal! gg=G')
+    assert.are.same(expected, lines())
+  end)
+
+  it('retoma la profundidad HTML después del valor de textarea', function()
+    local expected = {
+      '<div><textarea>',
+      ' a',
+      '  final</textarea>',
+      '    <p>fuera</p>',
+      '</div>',
+    }
+    page(expected)
+    vim.cmd('silent normal! gg=G')
+    assert.are.same(expected, lines())
+    vim.cmd('silent normal! gg=G')
+    assert.are.same(expected, lines())
+  end)
+
+  it('un textarea sin cerrar conserva el texto hasta el final', function()
+    local expected = { '<textarea>', '  primera', '        segunda' }
+    page(expected)
+    vim.cmd('silent normal! gg=G')
+    assert.are.same(expected, lines())
+  end)
+
+  it('una mención de textarea dentro de un comentario no desactiva la indentación', function()
+    page({ '<div>', '<!-- <textarea> -->', '<p>fuera</p>', '</div>' })
+    vim.cmd('silent normal! gg=G')
+    assert.are.same({ '<div>', '    <!-- <textarea> -->', '    <p>fuera</p>', '</div>' }, lines())
   end)
 
   describe('mientras se escribe', function()

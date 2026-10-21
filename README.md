@@ -652,6 +652,8 @@ ajusta `indentkeys`:
 
   Se conserva la indentación del contenido de `<pre>`, incluso si
   contiene bloques ASP, como indica `HtmlIndent()`.
+  Con el parser HTML también se conserva el contenido de `<textarea>`
+  y los espacios antes de las etiquetas de cierre de ambos elementos.
 
 - Mientras escribís, la línea se reindenta con `o` y `O` y al teclear
   `End`, `Else`, `ElseIf`, `Case`, `Next`, `Loop` o `Wend` al principio

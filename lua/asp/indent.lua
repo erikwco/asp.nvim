@@ -39,7 +39,7 @@ local QUERY = [[
 
 local CLOSERS = { End = true, Next = true, Loop = true, Wend = true }
 
-local query
+local query, verbatim_query
 local function blocks_query()
   if query == nil then
     local ok, parsed = pcall(vim.treesitter.query.parse, 'vbscript', QUERY)
@@ -66,6 +66,7 @@ end
 ---@field branches table<number, true> Else y ElseIf
 ---@field errors number[][] rangos de los ERROR de la capa vbscript
 ---@field rows table<integer, asp.IndentRow>
+---@field verbatim table<integer, integer> filas de pre/textarea → fila de su apertura
 ---@field html_lnum integer? última línea que indentó HtmlIndent sin ajuste
 
 ---@class asp.IndentRow
@@ -89,7 +90,26 @@ api.nvim_create_autocmd({ 'BufUnload', 'BufWipeout' }, {
 local function build(buf, tick)
   local parser, vbscript = require('asp.ts').parse_vbscript(buf)
   if not parser then return nil end
-  local st = { tick = tick, parser = parser, opens = {}, closes = {}, branches = {}, errors = {}, rows = {} }
+  local st = { tick = tick, parser = parser, opens = {}, closes = {}, branches = {}, errors = {}, rows = {}, verbatim = {} }
+  local html = parser:children().html
+  if html and vim.fn.search('\\c<\\%(textarea\\|pre\\)\\>', 'nw') > 0 then
+    verbatim_query = verbatim_query or vim.treesitter.query.parse('html', '(start_tag (tag_name) @name)')
+    html:parse()
+    for _, tree in ipairs(html:trees()) do
+      for _, tag in verbatim_query:iter_captures(tree:root(), buf) do
+        local name = vim.treesitter.get_node_text(tag, buf):lower()
+        if name == 'pre' or name == 'textarea' then
+          local node = tag:parent()
+          local first = node:end_()
+          local element = node:parent()
+          local last = element:named_child(element:named_child_count() - 1)
+          local stop = element:type() == 'element' and last:type() == 'end_tag'
+            and last:start() or api.nvim_buf_line_count(buf) - 1
+          for row = first + 1, stop do st.verbatim[row] = node:start() end
+        end
+      end
+    end
+  end
   local q = vbscript and blocks_query()
   if not q then return st end
 
@@ -350,6 +370,25 @@ local function html_indent(st, buf, lnum)
   return prev > 0 and vim.fn.indent(prev) or 0, false
 end
 
+local function html_depth(st, buf, row)
+  local col = lead(getline(buf, row))
+  local html = st.parser:children().html
+  local tree = html:trees()[1]
+  local node = tree:root():named_descendant_for_range(row, col, row, col + 1)
+  local d = 0
+  while node do
+    local open = node:named_child(0)
+    if open and open:type() == 'start_tag' and open:start() < row then
+      local tag = open:named_child(0)
+      local name = vim.treesitter.get_node_text(tag, buf):lower()
+      if name == 'script' or name == 'style' then return nil end
+      if vim.fn.HtmlIndent_IsOpenTag(name) == 1 then d = d + 1 end
+    end
+    node = node:parent()
+  end
+  return d
+end
+
 ---@param buf integer
 ---@param lnum integer
 ---@return integer
@@ -357,6 +396,7 @@ local function compute(buf, lnum)
   local st = state(buf)
   if not st then return (html_indent(nil, buf, lnum)) end
   local row = lnum - 1
+  if st.verbatim[row] then return -1 end
   local sw = vim.fn.shiftwidth()
   local info = row_info(st, buf, row)
 
@@ -393,7 +433,15 @@ local function compute(buf, lnum)
   end
   local base_key
   local closing_tag = prev_info and prev_info.kind ~= 'html' and getline(buf, row):find('^%s*</') ~= nil
-  if not prev_info or prev_info.kind == 'html' or closing_tag then
+  local verbatim_open = prev > 0 and st.verbatim[prev - 1]
+  local after_verbatim = verbatim_open and from_html and not getline(buf, row):find('^%s*</')
+    and html_depth(st, buf, row)
+  if after_verbatim then
+    -- Los espacios antes del cierre de pre/textarea son contenido literal.
+    base = vim.fn.indent(verbatim_open + 1) + sw * (after_verbatim - html_depth(st, buf, verbatim_open))
+    base_key = row_info(st, buf, verbatim_open).key
+    from_html = false
+  elseif not prev_info or prev_info.kind == 'html' or closing_tag then
     base_key = closing_tag and info.key or prev_info and prev_info.key
   else
     base = vim.fn.indent(prev_info.open + 1)
