@@ -275,6 +275,16 @@ local function vbscript_conflict(bufnr, entries, decl, new_name)
   return nil
 end
 
+---Rechazo de un rename de página que tocaría un miembro de clase homónimo
+---(ver vbscript_locations). `class` es la entry de la clase, si se halló.
+local function class_message(bufnr, class, member, name)
+  local owner = class and ('la clase `%s` (%s)'):format(class.name, where(bufnr, class))
+    or ('una clase (%s)'):format(where(bufnr, member))
+  return ('%s declara un miembro `%s` que asp-ls no separa del nombre de página: renombrá primero '
+    .. 'el miembro desde adentro de la clase (sus usos con punto, como `Me.%s`, se ajustan a mano)')
+    :format(owner, name, name)
+end
+
 ---Ubicaciones VBScript a renombrar: references con alcance de sitio, sin
 ---los miembros de objeto (`obj.Total`, `Me.Total`).
 ---
@@ -283,8 +293,9 @@ end
 ---(y fuera de un local homónimo), se renombra el miembro y nada más que
 ---dentro de la clase. references no separa esos miembros de un nombre de
 ---página homónimo (ver "Heredado del resolver" en la spec): un rename de
----página que tocaría una de esas clases del buffer se rechaza, para no
----renombrar la declaración del miembro y dejar sus `Me.x` sin cambiar.
+---página que tocaría una de esas clases se rechaza, en el buffer o en
+---cualquier otro archivo que cambiaría, para no renombrar la declaración
+---del miembro y dejar sus `Me.x` sin cambiar.
 local function vbscript_locations(bufnr, position, t, new_name)
   local symbols = require('asp.symbols')
   local wanted = t.name:lower()
@@ -317,11 +328,30 @@ local function vbscript_locations(bufnr, position, t, new_name)
   if binding and binding.scope_id then return refs end
   local all = symbols.references(bufnr, position, { skip_members = true })
   local own = vim.uri_from_bufnr(bufnr)
+  local edited, seen = {}, {}
   for _, ref in ipairs(all) do
-    for _, c in ipairs(ref.uri == own and classes or {}) do
-      if contains(c.range, ref.range.start) then
-        return fail(('la clase `%s` (%s) declara un miembro `%s` que asp-ls no separa del nombre '
-          .. 'de página: renombrá el miembro desde adentro de la clase'):format(c.entry.name, where(bufnr, c.entry), t.name))
+    if ref.uri == own then
+      for _, c in ipairs(classes) do
+        if contains(c.range, ref.range.start) then return fail(class_message(bufnr, c.entry, nil, t.name)) end
+      end
+    elseif not seen[ref.uri] then
+      seen[ref.uri] = true
+      table.insert(edited, vim.uri_to_fname(ref.uri))
+    end
+  end
+  -- En otro archivo, la declaración de un miembro homónimo siempre es una
+  -- de las ubicaciones (el cuerpo de una clase no es un scope): basta con
+  -- que el archivo cambie y la declare. collect_file sale de la caché que
+  -- references llenó al parsear el archivo.
+  for _, path in ipairs(edited) do
+    local file_entries = symbols.collect_file(path)
+    for _, e in ipairs(file_entries) do
+      if e.class_id and not e.scope_id and e.name:lower() == wanted then
+        local owner
+        for _, c in ipairs(file_entries) do
+          if c.decl_id == e.class_id then owner = c end
+        end
+        return fail(class_message(bufnr, owner, e, t.name))
       end
     end
   end

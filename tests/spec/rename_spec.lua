@@ -405,6 +405,33 @@ describe('asp.rename rename', function()
     assert.is_truthy(err.message:find('miembro de objeto', 1, true))
   end)
 
+  it('rechaza un rename de página que tocaría un miembro de clase homónimo en otro archivo', function()
+    local lib = '<%\nDim Hit\nHit = 0\n%>\n'
+    local function page(member)
+      return table.concat({
+        '<!--#include file="lib.inc"-->', '<%', 'Class Contador', '  Private ' .. member,
+        '  Sub Sumar()', '    ' .. member .. ' = ' .. member .. ' + 1', '    Me.' .. member .. ' = 2',
+        '  End Sub', 'End Class', 'Hit = 3', '%>', '',
+      }, '\n')
+    end
+    -- Cambiaría `Private Hit` y sus usos sueltos, pero no `Me.Hit`.
+    in_temp({ ['lib.inc'] = lib, ['otra.asp'] = page('Hit') }, function(dir)
+      vim.cmd.edit(dir .. '/lib.inc')
+      local res, err = rename.rename(0, pos_in('Dim Hit', 'Hit'), 'Golpe')
+      assert.is_nil(res)
+      assert.are.equal(-32602, err.code)
+      assert.is_truthy(err.message:find('la clase `Contador` (otra.asp:3) declara un miembro `Hit`', 1, true),
+        err.message)
+      assert.is_truthy(err.message:find('Me.Hit', 1, true), err.message)
+    end)
+    -- Sin un miembro homónimo, el rename llega a los usos de la otra página.
+    in_temp({ ['lib.inc'] = lib, ['otra.asp'] = page('Golpes') }, function(dir)
+      vim.cmd.edit(dir .. '/lib.inc')
+      local edit = assert(rename.rename(0, pos_in('Dim Hit', 'Hit'), 'Golpe'))
+      assert.are.same({ ['lib.inc'] = 2, ['otra.asp'] = 1 }, counts(edit, dir))
+    end)
+  end)
+
   it('rechaza el rename si un archivo a cambiar tiene cambios sin guardar', function()
     open('inc/base.inc')
     vim.api.nvim_buf_set_lines(0, 0, 0, false, { '<% \' sin guardar %>' })
