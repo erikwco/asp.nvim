@@ -45,6 +45,14 @@ function M.declaration(entry, source)
   local detail = vim.trim(header:match('^[^\n]*'))
   if callable and fn:type() == 'arrow_function' then detail = detail .. ' ...' end
   local info = { name = entry.name, kind = kind, detail = detail }
+  if fn and fn:type() == 'new_expression' then
+    local ctor = fn:field('constructor')[1]
+    if ctor and ctor:type() == 'identifier' then
+      local row, col = ctor:start()
+      info.constructor = { name = vim.treesitter.get_node_text(ctor, source),
+        position = { line = row, character = col } }
+    end
+  end
   if callable then
     -- La firma completa mantiene los parámetros multilínea y los patrones;
     -- detail conserva la primera línea que se muestra en hover/completion.

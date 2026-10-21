@@ -279,6 +279,28 @@ describe('asp.js ayuda de cliente', function()
     assert.is_nil(items({ line = row, character = #'XMLHttpRequest.' }).send)
   end)
 
+  it('infiere XHR solo en un inicializador directo y con constructor nativo', function()
+    local cases = {
+      { 'var xhr = new XMLHttpRequest.Custom();\nxhr.', false },
+      { 'var xhr = new XMLHttpRequest().response;\nxhr.', false },
+      { 'var { xhr } = new XMLHttpRequest();\nxhr.', false },
+      { 'function usar(xhr = new XMLHttpRequest()) { xhr.', false },
+      { 'function XMLHttpRequest() {}\nvar xhr = new XMLHttpRequest();\nxhr.', false },
+      { 'function usar(XMLHttpRequest) { var xhr = new XMLHttpRequest(); xhr.', false },
+      { 'var xhr = new Date();\nxhr.', false },
+      { 'var xhr = new\nXMLHttpRequest();\nxhr.', true },
+      { 'var xhr = new XMLHttpRequest();\nfunction usar(XMLHttpRequest) { xhr.', true },
+    }
+    for _, case in ipairs(cases) do
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, { '<script>', '// consulta global', '</script>' })
+      local p = query(case[1])
+      local line = vim.api.nvim_buf_get_lines(0, p.line, p.line + 1, false)[1]
+      local close = case[1]:find('function usar', 1, true) and ' }' or ''
+      vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { line .. 'send();' .. close })
+      assert.are.equal(case[2], items(p).send ~= nil, case[1])
+    end
+  end)
+
   it('keywords sólo desde dos letras', function()
     local p = query('f')
     assert.is_nil(items(p)['function'])

@@ -25,7 +25,7 @@ local INSTANCES = { XMLHttpRequest = 'XMLHttpRequest.prototype' }
 
 ---Ruta del catálogo para `path`, o nil si un binding del usuario la
 ---sombrea. Un binding declarado como `var x = new XMLHttpRequest()` toma
----los miembros de su prototipo; solo se mira esa primera línea de la
+---los miembros de su prototipo; solo se mira el inicializador de la
 ---declaración, sin seguir asignaciones posteriores. `object` indica que
 ---`path` es el objeto cuyos miembros se piden, no un miembro.
 local function catalog_path(bufnr, position, path, object)
@@ -33,7 +33,10 @@ local function catalog_path(bufnr, position, path, object)
   local binding = js.named(bufnr, position, root)
   if not binding then return path end
   if rest == '' and not object then return nil end
-  local class = (binding.detail or ''):match('^[^=]*=%s*new%s+([%w_$]+)%f[^%w_$]')
+  local ctor = binding.constructor
+  if not ctor then return nil end
+  if not binding.file and js.named(bufnr, ctor.position, ctor.name) then return nil end
+  local class = ctor.name
   return INSTANCES[class] and INSTANCES[class] .. rest or nil
 end
 
