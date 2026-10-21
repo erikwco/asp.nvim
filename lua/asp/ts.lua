@@ -12,4 +12,21 @@ function M.add(lang)
   return false, err
 end
 
+---Parser del buffer con la plantilla y la capa vbscript al día. Un
+---parseo por rango procesa las inyecciones de la plantilla pero sólo
+---parsea las capas que tocan ese rango; la vbscript, combinada en un solo
+---árbol, se completa con `parse(true)`. Así no se parsean los <script> y
+---<style> de toda la página.
+---@param bufnr integer
+---@return vim.treesitter.LanguageTree|nil parser
+---@return vim.treesitter.LanguageTree|nil vbscript
+function M.parse_vbscript(bufnr)
+  local ok, parser = pcall(vim.treesitter.get_parser, bufnr, 'aspclassic')
+  if not ok or not parser then return nil end
+  parser:parse({ 0, 1 })
+  local vbscript = parser:children().vbscript
+  if vbscript then vbscript:parse(true) end
+  return parser, vbscript
+end
+
 return M

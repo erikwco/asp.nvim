@@ -8,8 +8,9 @@ CONTENIDO                                                       *asp-contents*
   3. Instalación ............................. |asp-instalacion|
   4. Configuración ........................... |asp-setup|
   5. Funcionalidades ......................... |asp-funcionalidades|
-  6. Licencias ............................... |asp-licencias|
-  7. Cambios ................................. |asp-cambios|
+  6. Plegado e indentación ................... |asp-folds|
+  7. Licencias ............................... |asp-licencias|
+  8. Cambios ................................. |asp-cambios|
 
 ==============================================================================
 1. Introducción                                                   *asp-intro*
@@ -20,6 +21,7 @@ servidor, HTML y JavaScript de cliente conviven en un mismo archivo .asp:
   - Resaltado correcto de cada región vía tree-sitter.
   - Navegación LSP (ir a definición, referencias, renombrar, símbolos)
     incluyendo los archivos referenciados con <!--#include -->.
+  - Plegado e indentación de VBScript y HTML (|asp-folds|).
 
 ==============================================================================
 2. Requisitos                                                 *asp-requisitos*
@@ -32,6 +34,17 @@ servidor, HTML y JavaScript de cliente conviven en un mismo archivo .asp:
     las regiones HTML y el código de cliente en <script>/<style>.
     `javascript` también alimenta la navegación JS (|asp-javascript|);
     sin él esa capa queda inerte y `:checkhealth asp` lo advierte.
+
+Los parsers aspclassic y vbscript deben ser los de este repositorio.
+Otro plugin o instalador de nvim-treesitter puede instalar un parser
+llamado vbscript. Neovim carga el primero que encuentra en 'runtimepath',
+y sus nodos pueden no ser compatibles con estas queries. Para ver las
+copias disponibles: >lua
+  vim.print(vim.api.nvim_get_runtime_file('parser/vbscript.*', true))
+<
+Compilá con `make parsers` y evitá que otro instalador sustituya esa copia.
+Reiniciá Neovim después de corregir el orden de 'runtimepath'. Si usás un
+instalador propio para esta gramática, compilá src/parser.c y src/scanner.c.
 
 Resolver errores de ABI en Neovim 0.10 ~
 
@@ -96,6 +109,17 @@ require('asp').setup({opts})
           },
         })
 <
+  folds ~
+      `false` para que el ftplugin no fije 'foldexpr' (|asp-folds|).
+      Por defecto lo fija a `v:lua.vim.treesitter.foldexpr()`.
+
+  indent ~
+      `false` para que el ftplugin no fije 'indentexpr' ni 'indentkeys'
+      (|asp-indent|). Por defecto usa el indentexpr de asp.nvim. >lua
+        require('asp').setup({ folds = false, indent = false })
+<
+      Llamá a setup antes de abrir las páginas: el ftplugin lee las
+      opciones al cargar cada buffer.
 ==============================================================================
 5. Funcionalidades                                       *asp-funcionalidades*
 
@@ -703,17 +727,129 @@ Salud: >
   :checkhealth asp
 <
 ==============================================================================
-6. Licencias                                                   *asp-licencias*
+6. Plegado e indentación                                         *asp-folds*
+
+Plegado ~
+
+El ftplugin fija 'foldexpr' a `v:lua.vim.treesitter.foldexpr()`, con las
+queries `folds` del plugin. No toca 'foldmethod' ni 'foldlevel': para
+plegar, activalo con >vim
+  :setlocal foldmethod=expr
+<
+o para todas las páginas: >lua
+  vim.api.nvim_create_autocmd('FileType', {
+    pattern = 'asp',
+    callback = function() vim.wo[0][0].foldmethod = 'expr' end,
+  })
+<
+Pliegan los bloques <% %> de más de una línea (un <%= %> no), y en
+VBScript Sub, Function, Property, Class, If de bloque, For, For Each,
+Do, While, Select Case y With. Un If de una línea no pliega. Un
+`<% If x Then %>` ... `<% End If %>` pliega también el HTML de en medio.
+Los elementos HTML pliegan si está la query `folds` de html (por
+ejemplo, la de nvim-treesitter). `setup({ folds = false })` deja
+'foldexpr' como esté.
+
+                                                                *asp-indent*
+Indentación ~
+
+El ftplugin fija 'indentexpr' a `require('asp.indent').indentexpr()` y
+ajusta 'indentkeys'.
+
+  - VBScript de un bloque <% %> de varias líneas: desde la línea del
+    <%, un nivel por bloque abierto según el árbol de tree-sitter. End,
+    Else, ElseIf, Case, Next, Loop y Wend vuelven un nivel. Select Case
+    indenta dos niveles: uno para el Case y otro para sus sentencias. La
+    línea que sigue a un ` _` va un nivel más que la primera de la
+    sentencia. Un %> solo en su línea se alinea con su <%.
+  - HTML, incluidas las líneas con un <% %> o <%= %> de una línea:
+    `HtmlIndent()` de Neovim (indent/html.vim), que también indenta el
+    JavaScript de <script> y el CSS de <style>. Cada bloque VBScript que
+    envuelve al HTML suma un nivel: >
+      <ul>
+          <% For Each item In lista %>
+              <li><%= item %></li>
+          <% Next %>
+      </ul>
+<
+    Se conserva la indentación del contenido de <pre>, incluso si
+    contiene bloques ASP, como indica HtmlIndent().
+    Con el parser HTML también se conserva el contenido de <textarea>
+    y los espacios antes de las etiquetas de cierre de ambos elementos.
+  - Al escribir se reindenta con o y O, al teclear End, Else, ElseIf,
+    Case, Next, Loop o Wend al principio de la línea (sin distinguir
+    mayúsculas), al teclear %> al principio y al teclear > (cierra una
+    etiqueta).
+  - Código a medio escribir: si la línea o la anterior caen en un ERROR
+    del árbol, la línea toma la indentación de la anterior no vacía, un
+    nivel más si esa línea abre un bloque (termina en Then o empieza con
+    Sub, Function, For, Do, While, Select, With, Class, Property, Else o
+    Case) y uno menos si la actual cierra uno.
+
+`setup({ indent = false })` deja 'indentexpr' e 'indentkeys' como estén.
+
+nvim-treesitter (opcional) ~
+
+`queries/vbscript/indents.scm` aplica las mismas reglas de bloques al
+módulo de indentación de nvim-treesitter, para quien apague el de
+asp.nvim y use `require('nvim-treesitter').indentexpr()`. No conoce las
+continuaciones ` _` ni anida el HTML dentro de un <% If %>. La suite
+prueba el indentexpr de asp.nvim, no esta query.
+
+Rendimiento ~
+
+Lo que se saca del árbol se cachea por |b:changedtick|, que Neovim no
+incrementa durante |=|: en `gg=G`, asp.nvim no vuelve a parsear y su
+parte crece lineal. En una página sintética de 307 KB, `gg=G` tarda
+~6,9 s en frío: ~0,1 s de asp.nvim, ~2,7 s de `HtmlIndent()` y ~4 s de
+Neovim reajustando los rangos de las capas inyectadas en cada línea
+editada. En una página real de 318 KB con 6.850 líneas de JavaScript
+tarda ~16 s, casi todo en el indent de JavaScript de Vim (con `ft=html`,
+~20 s). El indentexpr al abrir con o tarda ~1–2 ms en VBScript real y
+~18 ms en la página sintética. En HTML llega a ~45 ms con Neovim 0.10.
+Son tiempos del indentexpr, no de toda la tecla. Ver tests/bench/indent.md.
+
+Límites:
+
+  - Un If que abre en un bloque <% %> de varias líneas y cierra en otro
+    cruza los pliegues de esos bloques. Vim exige pliegues anidados, así
+    que los niveles quedan cortados. Con <% If %> y <% End If %> en
+    líneas propias no pasa.
+  - |vim.treesitter.foldexpr()| sólo pliega las capas inyectadas ya
+    parseadas y recalcula al cambiar el árbol de la plantilla. asp.nvim
+    parsea la capa vbscript al abrir; después la reparsea el resaltado.
+    Si eso ocurre después de recalcular, un pliegue nuevo de VBScript
+    aparece con la edición siguiente.
+  - El JavaScript de <script> lo indenta el indent de JavaScript de Vim,
+    lento en páginas con mucho JS. Sus comentarios /* */ de varias
+    líneas pueden cambiar de indentación entre dos pasadas de `gg=G`.
+  - La gramática no conoce Rem: un Rem con palabras clave es un ERROR y
+    su zona se indenta por texto. Con ' no pasa.
+  - El respaldo por texto reconoce un If de bloque sólo si su línea
+    termina en Then.
+
+==============================================================================
+7. Licencias                                                   *asp-licencias*
 
 El plugin (Lua, gramática aspclassic, queries) es MIT. El directorio
 `grammars/vbscript/` es GPL-3.0 (fork de tree-sitter-vba); ver
 `grammars/vbscript/NOTICE.md`.
 
 ==============================================================================
-7. Cambios                                                       *asp-cambios*
+8. Cambios                                                       *asp-cambios*
 
 Sin publicar ~
 
+  - Plegado por tree-sitter (|asp-folds|): bloques <% %> multilínea y
+    los bloques de VBScript, incluido un <% If %> que envuelve HTML.
+    El ftplugin fija 'foldexpr'; 'foldmethod' lo elige el usuario.
+  - Indentación (|asp-indent|): VBScript por el árbol, HTML por
+    HtmlIndent() y el HTML que envuelve un <% If %> o <% For %> un nivel
+    más. `setup({ folds = false, indent = false })` las apaga.
+  - Gramática vbscript: un If de una línea seguido de un If de bloque ya
+    no se parsea como un solo If de bloque que toma el End If ajeno.
+  - :checkhealth asp informa si el plegado y la indentación están
+    activos en la página y si HtmlIndent() está disponible.
   - Hover, completion y signatureHelp de JavaScript de cliente en
     <script>, on* y URLs javascript:. Bindings con scope, firmas de .js
     e includes y catálogo DOM parcial de 102 entradas. Ver

@@ -53,7 +53,7 @@ $(TS_JS_DIR)/src/parser.c: | build
 parser/aspclassic.so: grammars/aspclassic/src/parser.c | parser
 	$(CC) $(CFLAGS) -Igrammars/aspclassic/src grammars/aspclassic/src/*.c -o $@
 
-parser/vbscript.so: grammars/vbscript/src/parser.c | parser
+parser/vbscript.so: grammars/vbscript/src/parser.c grammars/vbscript/src/scanner.c | parser
 	$(CC) $(CFLAGS) -Igrammars/vbscript/src grammars/vbscript/src/*.c -o $@
 
 parser/html.so: | build/tree-sitter-html parser

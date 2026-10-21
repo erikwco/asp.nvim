@@ -103,3 +103,73 @@ describe('asp.health.check', function()
     end
   end)
 end)
+
+describe('asp.health: plegado e indentación', function()
+  local original_health, messages
+
+  before_each(function()
+    original_health, messages = {}, {}
+    for _, level in ipairs({ 'start', 'ok', 'warn', 'error', 'info' }) do
+      original_health[level] = vim.health[level]
+      messages[level] = {}
+      vim.health[level] = function(message, advice)
+        messages[level][message] = advice or {}
+      end
+    end
+  end)
+
+  after_each(function()
+    for level, original in pairs(original_health) do vim.health[level] = original end
+    require('asp').options.indent = nil
+    require('asp').options.folds = nil
+    vim.cmd('silent! %bwipeout!')
+  end)
+
+  local function page()
+    local buf = vim.api.nvim_create_buf(true, false)
+    vim.api.nvim_set_current_buf(buf)
+    vim.api.nvim_buf_set_name(buf, vim.fn.tempname() .. '/pagina.asp')
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '<% x = 1 %>' })
+    vim.bo[buf].filetype = 'asp'
+    return buf
+  end
+
+  it('informa HtmlIndent y el foldexpr e indentexpr activos del buffer asp', function()
+    page()
+    vim.wo.foldmethod = 'expr'
+    require('asp.health').check_layout()
+    assert.is_not_nil(messages.ok['HtmlIndent() disponible (indent/html.vim): indenta las líneas HTML'])
+    assert.is_not_nil(messages.ok['plegado por tree-sitter activo en pagina.asp'])
+    assert.is_not_nil(messages.ok['indentexpr de asp.nvim activo en pagina.asp'])
+  end)
+
+  it('desde la ventana de :checkhealth informa el buffer asp anterior', function()
+    page()
+    vim.cmd('tabnew')
+    require('asp.health').check_layout()
+    assert.is_not_nil(messages.ok['indentexpr de asp.nvim activo en pagina.asp'])
+    vim.cmd('tabclose')
+  end)
+
+  it('sugiere foldmethod=expr cuando foldexpr está fijado pero no se pliega', function()
+    page()
+    vim.wo.foldmethod = 'manual'
+    require('asp.health').check_layout()
+    local advice = messages.info['foldexpr de tree-sitter fijado en pagina.asp, pero foldmethod=manual']
+    assert.is_truthy(table.concat(advice, '\n'):find('setlocal foldmethod=expr', 1, true))
+  end)
+
+  it('avisa cuando setup apagó la indentación', function()
+    require('asp').setup({ indent = false })
+    page()
+    require('asp.health').check_layout()
+    assert.is_nil(messages.ok['indentexpr de asp.nvim activo en pagina.asp'])
+    assert.is_not_nil(messages.info['indentexpr de pagina.asp no es el de asp.nvim: '])
+  end)
+
+  it('sin buffer asp pide abrir uno', function()
+    vim.cmd('enew')
+    require('asp.health').check_layout()
+    assert.is_not_nil(messages.info['abrí un .asp para ver si el plegado y la indentación están activos'])
+  end)
+end)

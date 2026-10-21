@@ -20,9 +20,12 @@ module.exports = grammar({
 
   extras: $ => [/\s/, $.comment, $._line_continuation, ':'],
 
+  // src/scanner.c: _block_then (ancho cero) marca el Then de un If de
+  // bloque, que termina su línea o su bloque <% %>.
+  externals: $ => [$._block_then, $._error_sentinel],
+
   conflicts: $ => [
     [$.function_call, $.primary_expression],
-    [$.block, $._statement],
   ],
 
   rules: {
@@ -123,7 +126,7 @@ module.exports = grammar({
     if_statement: $ => choice($._block_if, $._inline_if),
 
     _block_if: $ => seq(
-      ci('If'), $.expression, ci('Then'),
+      ci('If'), $.expression, ci('Then'), $._block_then,
       optional($.block),
       repeat($.elseif_clause),
       optional($.else_clause),

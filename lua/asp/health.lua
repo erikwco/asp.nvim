@@ -55,6 +55,65 @@ function M.check()
   end
 
   health.ok('diagnósticos de includes activos (namespace asp_includes)')
+
+  M.check_layout(health)
+end
+
+---Ventana con un buffer asp: la actual, la del buffer alterno (la que
+---había antes de :checkhealth) o la primera que lo muestre.
+---@return integer|nil win
+local function asp_window()
+  local function is_asp(buf) return buf > 0 and vim.bo[buf].filetype == 'asp' end
+  local win = vim.api.nvim_get_current_win()
+  if is_asp(vim.api.nvim_win_get_buf(win)) then return win end
+  local alt = vim.fn.bufnr('#')
+  if is_asp(alt) then
+    local wins = vim.fn.win_findbuf(alt)
+    if #wins > 0 then return wins[1] end
+  end
+  for _, w in ipairs(vim.api.nvim_list_wins()) do
+    if is_asp(vim.api.nvim_win_get_buf(w)) then return w end
+  end
+end
+
+---Plegado e indentación del buffer asp actual, y HtmlIndent.
+function M.check_layout(health)
+  health = health or vim.health
+  health.start('asp.nvim: plegado e indentación')
+  if require('asp.indent').html_available() then
+    health.ok('HtmlIndent() disponible (indent/html.vim): indenta las líneas HTML')
+  else
+    health.warn('HtmlIndent() no disponible: las líneas HTML conservan la indentación de la anterior',
+      { 'Revisá que $VIMRUNTIME/indent/html.vim exista.' })
+  end
+
+  local win = asp_window()
+  if not win then
+    health.info('abrí un .asp para ver si el plegado y la indentación están activos')
+    return
+  end
+  local buf = vim.api.nvim_win_get_buf(win)
+  local name = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(buf), ':t')
+  if name == '' then name = ('buffer %d'):format(buf) end
+
+  if vim.wo[win].foldexpr == 'v:lua.vim.treesitter.foldexpr()' then
+    if vim.wo[win].foldmethod == 'expr' then
+      health.ok(('plegado por tree-sitter activo en %s'):format(name))
+    else
+      health.info(('foldexpr de tree-sitter fijado en %s, pero foldmethod=%s'):format(name, vim.wo[win].foldmethod),
+        { 'Activalo con `:setlocal foldmethod=expr` (o en un autocmd FileType asp).' })
+    end
+  else
+    health.info(('foldexpr de %s no es el de asp.nvim: %s'):format(name, vim.wo[win].foldexpr),
+      { 'asp.nvim no lo fija con `setup({ folds = false })`.' })
+  end
+
+  if vim.bo[buf].indentexpr:find('asp.indent', 1, true) then
+    health.ok(('indentexpr de asp.nvim activo en %s'):format(name))
+  else
+    health.info(('indentexpr de %s no es el de asp.nvim: %s'):format(name, vim.bo[buf].indentexpr),
+      { 'asp.nvim no lo fija con `setup({ indent = false })`.' })
+  end
 end
 
 return M

@@ -13,6 +13,12 @@ vim.api.nvim_create_autocmd('FileType', {
     -- del buffer; :checkhealth asp (Task 6) diagnostica el motivo.
     pcall(vim.treesitter.start, args.buf, 'aspclassic')
 
+    -- vim.treesitter.foldexpr() sólo pliega las capas inyectadas que ya
+    -- están parseadas: la vbscript se parsea antes del primer plegado.
+    if require('asp').options.folds ~= false then
+      pcall(require('asp.ts').parse_vbscript, args.buf)
+    end
+
     pcall(function()
       require('asp.lsp').start(args.buf)
     end)
