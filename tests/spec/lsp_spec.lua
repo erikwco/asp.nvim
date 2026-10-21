@@ -128,6 +128,49 @@ describe('asp-ls', function()
   end)
 end)
 
+describe('asp-ls al detenerse', function()
+  local dir, previous
+
+  before_each(function()
+    previous = require('asp').options.semantic_tokens
+    dir = vim.fn.tempname()
+    vim.fn.mkdir(dir, 'p')
+    vim.fn.writefile({}, dir .. '/web.config')
+    vim.fn.writefile({ '<% Dim total %>' }, dir .. '/p.asp')
+    vim.cmd.edit(dir .. '/p.asp')
+  end)
+
+  after_each(function()
+    require('asp').options.semantic_tokens = previous
+    vim.cmd('bwipeout!')
+    vim.fn.delete(dir, 'rf')
+  end)
+
+  for _, force in ipairs({ false, true }) do
+    it((force and 'terminate' or 'shutdown y exit') .. ' libera el cliente y permite reiniciarlo', function()
+      local client
+      assert.is_true(vim.wait(2000, function()
+        client = vim.lsp.get_clients({ bufnr = 0, name = 'asp-ls' })[1]
+        return client and client.initialized
+      end))
+      if vim.fn.has('nvim-0.11') == 1 then client:stop(force) else client.stop(force) end
+      assert.is_true(vim.wait(2000, function()
+        return vim.lsp.get_client_by_id(client.id) == nil
+      end), 'el cliente detenido sigue registrado')
+
+      require('asp').options.semantic_tokens = false
+      local id = require('asp.lsp').start(vim.api.nvim_get_current_buf())
+      assert.is_number(id)
+      assert.are_not.equal(client.id, id)
+      assert.is_true(vim.wait(2000, function()
+        local next_client = vim.lsp.get_client_by_id(id)
+        return next_client and next_client.initialized
+      end))
+      assert.is_nil(vim.lsp.get_client_by_id(id).server_capabilities.semanticTokensProvider)
+    end)
+  end
+end)
+
 describe('asp-ls documentHighlight', function()
   after_each(function() vim.cmd('bwipeout!') end)
 

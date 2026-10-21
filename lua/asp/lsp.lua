@@ -177,6 +177,11 @@ end
 local function server(dispatchers)
   local closing = false
   local request_id = 0
+  local function close()
+    if closing then return end
+    closing = true
+    vim.schedule(function() dispatchers.on_exit(0, 0) end)
+  end
   return {
     request = function(method, params, callback, notify_reply_callback)
       request_id = request_id + 1
@@ -217,16 +222,14 @@ local function server(dispatchers)
     -- tokens semánticos). Su contenido no se usa.
     notify = function(method, _params)
       if method == 'exit' then
-        closing = true
+        close()
       end
       return not closing
     end,
     is_closing = function()
       return closing
     end,
-    terminate = function()
-      closing = true
-    end,
+    terminate = close,
   }
 end
 
