@@ -1,9 +1,10 @@
 local M = {}
 
 -- Handlers por método. Cada handler recibe (params) y retorna el resultado
--- (o nil). Su respuesta se entrega SIEMPRE de forma diferida (vim.schedule,
--- ver `request` abajo) — no agregues un handler que necesite responder
--- sincrónicamente.
+-- (o nil), o nil y un error LSP {code, message} para que el cliente lo
+-- muestre. Su respuesta se entrega SIEMPRE de forma diferida
+-- (vim.schedule, ver `request` abajo) — no agregues un handler que
+-- necesite responder sincrónicamente.
 M.handlers = {}
 
 M.handlers['textDocument/documentSymbol'] = function(params)
@@ -103,6 +104,22 @@ M.handlers['textDocument/completion'] = function(params)
   return require('asp.completion').complete(bufnr, params.position)
 end
 
+-- prepareRename y rename responden con un error (InvalidParams y el motivo)
+-- cuando no se puede renombrar: ver asp.rename.
+M.handlers['textDocument/prepareRename'] = function(params)
+  local rename = require('asp.rename')
+  local bufnr, err = rename.buffer_for(params.textDocument.uri)
+  if not bufnr then return nil, err end
+  return rename.prepare(bufnr, params.position)
+end
+
+M.handlers['textDocument/rename'] = function(params)
+  local rename = require('asp.rename')
+  local bufnr, err = rename.buffer_for(params.textDocument.uri)
+  if not bufnr then return nil, err end
+  return rename.rename(bufnr, params.position, params.newName)
+end
+
 M.handlers['textDocument/signatureHelp'] = function(params)
   local ok, result = pcall(function()
     local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
@@ -135,6 +152,7 @@ local function server(dispatchers)
             signatureHelpProvider = {
               triggerCharacters = { '(', ',' }, retriggerCharacters = { ',' },
             },
+            renameProvider = { prepareProvider = true },
             positionEncoding = 'utf-8',
           },
           serverInfo = { name = 'asp-ls', version = '0.6.0' },
@@ -142,14 +160,16 @@ local function server(dispatchers)
       elseif method == 'shutdown' then
         respond(nil, nil)
       elseif M.handlers[method] then
-        local ok, result = pcall(M.handlers[method], params)
+        local ok, result, err = pcall(M.handlers[method], params)
         -- Respuesta diferida (como un servidor LSP real, que contesta async
         -- por un pipe). Si se contesta sincrónicamente, la maquinaria de
         -- completion de Neovim llama vim.fn.complete() dentro de un contexto
         -- donde no se permite cambiar texto → E565. vim.schedule mueve el
         -- callback al siguiente tick del event loop, fuera de ese contexto.
         vim.schedule(function()
-          if ok then
+          if ok and err ~= nil then
+            respond(err, nil)
+          elseif ok then
             respond(nil, result)
           else
             respond({ code = -32603, message = tostring(result) }, nil)
