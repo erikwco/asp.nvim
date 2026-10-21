@@ -181,7 +181,18 @@ module.exports = grammar({
     resume_statement: $ => seq(ci('Resume'), choice(ci('Next'), $.expression)),
     erase_statement: $ => seq(ci('Erase'), $.expression, repeat(seq(',', $.expression))),
     redim_statement: $ => seq(ci('ReDim'), optional(ci('Preserve')), $.expression, repeat(seq(',', $.expression))),
-    let_statement: $ => prec(4, seq(optional(ci('Let')), $.expression, '=', $.expression)),
+    let_statement: $ => prec(4, seq(
+      optional(ci('Let')), choice($.expression, $._keyword_target), '=', $.expression,
+    )),
+
+    // `error = 1`, `call = 2`, `mid = 3`: la palabra clave de una
+    // sentencia seguida de `=` es una variable (Error y Mid no son
+    // reservadas en VBScript).
+    _keyword_target: $ => alias($._keyword_primary, $.expression),
+    _keyword_primary: $ => alias($._keyword_name, $.primary_expression),
+    // El mismo token que ci(), con otro nombre en este lugar.
+    _keyword_name: $ => choice(...['Error', 'Call', 'Mid'].map(word =>
+      alias(new RegExp(word, 'i'), $.identifier))),
     set_statement: $ => seq(ci('Set'), $.expression, '=', $.expression),
     call_statement: $ => choice(
       seq(ci('Call'), $.expression),

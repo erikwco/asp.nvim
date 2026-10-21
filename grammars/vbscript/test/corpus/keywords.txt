@@ -1,0 +1,59 @@
+==================
+palabras clave de sentencia seguidas de igual son variables
+==================
+error = 1
+call = 2
+mid = 3
+---
+
+(source_file
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal))))
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal))))
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal)))))
+
+==================
+las sentencias siguen igual
+==================
+Error 5
+Call Foo
+Mid(s, 1, 1) = "x"
+---
+
+(source_file
+  (error_statement
+    (expression
+      (primary_expression
+        (number_literal))))
+  (call_statement
+    (expression
+      (primary_expression
+        (identifier))))
+  (mid_statement
+    (identifier)
+    (expression
+      (primary_expression
+        (number_literal)))
+    (expression
+      (primary_expression
+        (number_literal)))
+    (expression
+      (primary_expression
+        (string_literal)))))
