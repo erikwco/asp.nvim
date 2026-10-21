@@ -629,6 +629,38 @@ describe('asp.rename rename', function()
     assert.are.same({}, reads)
   end)
 
+  it('el choque de sitio solo relee el archivo pendiente que menciona el nombre nuevo', function()
+    in_temp({
+      ['lib.inc'] = '<%\nDim total\ntotal = 1\n%>\n',
+      ['usa.asp'] = '<!--#include file="lib.inc"-->\n<% Response.Write total %>\n',
+      ['implicito.asp'] = '<!--#include file="lib.inc"-->\n<% saldo = 2 %>\n',
+      ['vacia.asp'] = '<!--#include file="lib.inc"-->\n<p>Sin código</p>\n',
+    }, function(dir)
+      vim.cmd.edit(dir .. '/lib.inc')
+      local pos = pos_in('Dim total', 'total')
+      local refs, _, files = require('asp.symbols').references(0, pos, { skip_members = true })
+      assert.are.equal(3, #refs)
+      assert.are.equal(3, #files)
+      local open_file, reads = io.open, {}
+      io.open = function(path, ...)
+        if type(path) == 'string' and path:find(dir, 1, true) then table.insert(reads, path) end
+        return open_file(path, ...)
+      end
+      local ok, err = pcall(function()
+        local edit, conflict = rename.rename(0, pos, 'saldo')
+        assert.is_nil(edit)
+        assert.is_truthy(conflict.message:find('`saldo` ya se usa en implicito.asp:2', 1, true), conflict.message)
+        assert.are.same({ dir .. '/implicito.asp' }, reads)
+        reads = {}
+        assert.is_table(rename.rename(0, pos, 'importe'))
+        assert.is_nil(rename.rename(0, pos, 'saldo'))
+        assert.are.same({}, reads)
+      end)
+      io.open = open_file
+      assert(ok, err)
+    end)
+  end)
+
   it('un archivo abierto sin cambios recibe los edits en su propio buffer', function()
     open('inc/base.inc')
     local lib = vim.uri_from_bufnr(0)
