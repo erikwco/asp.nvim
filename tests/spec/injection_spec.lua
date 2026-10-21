@@ -33,6 +33,9 @@ end)
 describe('queries de vbscript', function()
   it('las queries de vbscript compilan', function()
     assert.is_not_nil(vim.treesitter.query.get('vbscript', 'highlights'))
+    -- indents es para el módulo indent de nvim-treesitter (no está en la
+    -- suite): basta con que compile.
+    assert.is_not_nil(vim.treesitter.query.get('vbscript', 'indents'))
   end)
 end)
 
