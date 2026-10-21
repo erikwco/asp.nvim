@@ -477,6 +477,43 @@ describe('diagnósticos de VBScript', function()
       end)
     end)
 
+    it('guardar un archivo solo vuelve a revisar las páginas que dependen de él', function()
+      in_temp({
+        ['inc/comun.inc'] = { '<% Sub Comun() : End Sub %>' },
+        ['inc/medio.inc'] = { '<!--#include file="comun.inc" -->' },
+        ['directa.asp'] = { '<!--#include file="inc/comun.inc" -->', '<% Call Comun() %>' },
+        ['transitiva.asp'] = { '<!--#include file="inc/medio.inc" -->', '<% Call Comun() %>' },
+        ['ajena.asp'] = { '<% Dim x %>' },
+        ['enlace.asp'] = { '<a href="nueva.asp">x</a>' },
+        ['rota.asp'] = { '<!--#include file="inc/nuevo.inc" -->' },
+      }, function(dir)
+        local bufs, names = {}, { 'directa', 'transitiva', 'ajena', 'enlace', 'rota' }
+        for _, name in ipairs(names) do
+          diags_at(dir .. '/' .. name .. '.asp')
+          bufs[name] = vim.api.nvim_get_current_buf()
+        end
+        assert.are.equal(1, #of(vim.diagnostic.get(bufs.enlace), 'missing_page'))
+        assert.are.equal(1, #of(vim.diagnostic.get(bufs.rota), 'includes'))
+        vim.cmd.edit(dir .. '/inc/comun.inc')
+        local saved = vim.api.nvim_get_current_buf()
+        local ok, err = pcall(function()
+          assert.are.same({ bufs.directa, bufs.transitiva, bufs.enlace, bufs.rota },
+            diagnostics().affected(dir .. '/inc/comun.inc', saved))
+          vim.cmd('silent write')
+          for _, name in ipairs(names) do
+            assert.are.equal(name ~= 'ajena', diagnostics().pending(bufs[name]), name)
+          end
+          -- Un archivo que nadie incluye solo afecta a las que tienen un
+          -- include o un enlace sin resolver.
+          assert.are.same({ bufs.enlace, bufs.rota }, diagnostics().affected(dir .. '/inc/suelto.inc'))
+        end)
+        for _, buf in pairs(bufs) do vim.cmd('bwipeout! ' .. buf) end
+        vim.cmd('bwipeout! ' .. saved)
+        assert(ok, err)
+        assert.are.equal(0, diagnostics().pending())
+      end)
+    end)
+
     it('TextChanged programa un refresh y al cerrar el buffer no queda ningún timer', function()
       vim.cmd.edit(DIAG .. '/explicit.asp')
       local buf = vim.api.nvim_get_current_buf()

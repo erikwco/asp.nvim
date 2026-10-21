@@ -565,10 +565,51 @@ function M.schedule(bufnr)
   end)
 end
 
----Cantidad de refrescos pendientes (para los tests).
----@return integer
-function M.pending()
+---Cantidad de refrescos pendientes, o si `bufnr` tiene uno (para los
+---tests).
+---@param bufnr? integer
+---@return integer|boolean
+function M.pending(bufnr)
+  if bufnr then return timers[bufnr] ~= nil end
   return vim.tbl_count(timers)
+end
+
+---Páginas abiertas, salvo `except`, cuyos diagnósticos puede cambiar el
+---guardado de `path`: las que lo incluyen, directa o transitivamente (por
+---su grafo de includes, con las directivas de su buffer), y las que tienen
+---publicado un diagnóstico de includes o de páginas inexistentes, porque
+---el archivo guardado puede ser el que faltaba. Las demás no dependen de
+---él. Ninguna se refresca acá: el llamador decide cuándo.
+---@param path string
+---@param except? integer
+---@return integer[]
+function M.affected(path, except)
+  local names = { [vim.fs.normalize(path)] = true }
+  local real = vim.uv.fs_realpath(path)
+  if real then names[real] = true end
+  local out = {}
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if buf ~= except and vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].filetype == 'asp' then
+      local hit = false
+      for _, d in ipairs(vim.diagnostic.get(buf, { namespace = M.ns })) do
+        if d.code == 'includes' or d.code == 'missing_page' then
+          hit = true
+          break
+        end
+      end
+      if not hit then
+        local ok, g = pcall(require('asp.includes').buffer_graph, buf)
+        for _, file in ipairs(ok and g.order or {}) do
+          if names[file] then
+            hit = true
+            break
+          end
+        end
+      end
+      if hit then table.insert(out, buf) end
+    end
+  end
+  return out
 end
 
 ---Refresca `bufnr` con espera tras cada edición (TextChanged e
