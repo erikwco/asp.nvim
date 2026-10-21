@@ -133,7 +133,6 @@ local function context(bufnr)
   local ctx = { bufnr = bufnr }
   ctx.lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   ctx.content = table.concat(ctx.lines, '\n')
-  ctx.vcontent = require('asp.vbscript_scan').source(ctx.content)
   return ctx
 end
 
@@ -147,7 +146,7 @@ end
 
 local function tree_of(ctx)
   if ctx.tree == nil then
-    local ok, tree = pcall(vbscript_tree, ctx.bufnr, ctx.vcontent)
+    local ok, tree = pcall(vbscript_tree, ctx.bufnr, ctx.content)
     ctx.tree = ok and tree or false
     if ctx.tree then ctx.errors = syntax_errors(ctx.tree.root) end
   end
@@ -259,7 +258,7 @@ local function vbscript_family(ctx, undeclared, unknown_call)
   if #g.unresolved > 0 then return {} end
 
   local symbols = require('asp.symbols')
-  local scan = require('asp.vbscript_scan').buffer({ tree.root }, ctx.vcontent, ctx.lines)
+  local scan = require('asp.vbscript_scan').buffer({ tree.root }, ctx.content, ctx.lines)
 
   local option_explicit, dynamic = scan.option_explicit, scan.dynamic
   local facts = {}
@@ -298,7 +297,7 @@ local function vbscript_family(ctx, undeclared, unknown_call)
       page[lower] = true
     end
   end
-  for _, e in ipairs(symbols.collect_roots({ tree.root }, ctx.vcontent)) do
+  for _, e in ipairs(symbols.collect_roots({ tree.root }, ctx.content)) do
     local lower = e.name:lower()
     declare(lower, e.scope_id, e.class_id)
     if e.kind == 5 then classes[lower] = true end

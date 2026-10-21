@@ -126,6 +126,18 @@ describe('diagnósticos de VBScript', function()
       end)
     end)
 
+    it('Rem tras un punto es un miembro, con espacios o continuación', function()
+      in_temp({
+        ['p.asp'] = {
+          '<%', 'Option Explicit', 'Dim obj, x',
+          'x = obj. Rem', 'x = obj. _', ' Rem',
+          'With obj', ' . Rem = 1', 'End With', '%>',
+        },
+      }, function(dir)
+        assert.are.same({}, diags_at(dir .. '/p.asp'))
+      end)
+    end)
+
     it('una página JScript no se revisa como VBScript', function()
       assert.are.same({}, diags_at(DIAG .. '/jscript.asp'))
     end)

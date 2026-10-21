@@ -78,3 +78,55 @@ comentario termina en el cierre del bloque
     (expression
       (primary_expression
         (number_literal)))))
+
+==================
+rem como miembro tras espacios y continuaciones
+==================
+x = obj. Rem
+x = obj. _
+ Rem
+With obj
+ . Rem = 1
+ . _
+ Rem = 2
+End With
+---
+
+(source_file
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (member_expression
+        (primary_expression
+          (identifier))
+        (identifier))))
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (member_expression
+        (primary_expression
+          (identifier))
+        (identifier))))
+  (with_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (block
+      (let_statement
+        (expression
+          (member_expression
+            (identifier)))
+        (expression
+          (primary_expression
+            (number_literal))))
+      (let_statement
+        (expression
+          (member_expression
+            (identifier)))
+        (expression
+          (primary_expression
+            (number_literal)))))))

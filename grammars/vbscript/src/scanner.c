@@ -183,9 +183,9 @@ bool tree_sitter_vbscript_external_scanner_scan(void *payload, TSLexer *lexer,
   bool rem = false;
   if (c == 'r' || c == 'R') {
     rem = match_word(lexer, "rem");
-    // `obj.Rem` es un miembro: tras el punto no hay blancos y no vale
-    // ningún otro token externo.
-    if (rem && !newline && !blank && !continued && !recovering
+    // Tras el punto se espera el nombre del miembro, también con blancos
+    // o una continuación de línea antes de `Rem`.
+    if (rem && !recovering
         && !valid_symbols[WITH_DOT] && !valid_symbols[MEMBER_DOT] && !valid_symbols[BLOCK_THEN]) {
       rem = false;
     }
@@ -201,7 +201,7 @@ bool tree_sitter_vbscript_external_scanner_scan(void *payload, TSLexer *lexer,
 
   if (code) return false;
 
-  if (rem || c == '\'') {
+  if (valid_symbols[COMMENT] && (rem || c == '\'')) {
     if (!rem) lexer->advance(lexer, false);
     lexer->result_symbol = COMMENT;
     return comment_rest(lexer);
@@ -217,8 +217,8 @@ bool tree_sitter_vbscript_external_scanner_scan(void *payload, TSLexer *lexer,
 
   if (c == '.') {
     bool with_first = newline || (blank && !continued);
-    bool member = recovering || valid_symbols[MEMBER_DOT];
-    bool with = recovering || valid_symbols[WITH_DOT];
+    bool member = valid_symbols[MEMBER_DOT];
+    bool with = valid_symbols[WITH_DOT];
     if (!member && !with) return false;
     lexer->advance(lexer, false);
     // `.5` es un número: lo lee el lexer interno.
