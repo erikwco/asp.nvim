@@ -352,6 +352,13 @@ describe('alcance y cachés de ayuda', function()
     assert.are.equal('Recordset', infer('x'))
   end)
 
+  it('Set x = Nothing no cuenta como asignación', function()
+    code({ 'Set rs = CreateObject("ADODB.Recordset")', 'Sub Cerrar()', 'rs.Close', 'Set rs = Nothing', 'End Sub',
+      'Set x = Nothing', 'Set x = CreateObject("Scripting.Dictionary")' })
+    assert.are.equal('Recordset', infer('rs', 3))
+    assert.are.equal('Dictionary', infer('x'))
+  end)
+
   it('una asignación local desconocida oculta la de página', function()
     code({ 'Set x = CreateObject("ADODB.Recordset")',
       'Sub Uno()', 'Set x = fabrica()', 'Response.Write x', 'End Sub' })

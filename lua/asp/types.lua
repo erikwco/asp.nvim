@@ -32,6 +32,9 @@ local function assignment(node, source)
   entry.range = { node:range() }
   local rhs = unwrap(node:named_child(1))
   if not rhs then return entry end
+  -- `Set x = Nothing` libera la referencia: no fija ni oculta un tipo, ni
+  -- en una Sub que cierra un objeto de página.
+  if rhs:type() == 'nothing_literal' then return nil end
   local text = vim.treesitter.get_node_text(rhs, source)
   if rhs:type() == 'identifier' and text:lower() == 'new' then
     -- La gramática separa `New RegExp` en dos expresiones. Solo se acepta

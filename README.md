@@ -237,9 +237,10 @@ nivel de retorno COM, como `Set rs = conn.Execute(sql)` cuando `conn` se
 creó directamente. Busca primero en la Sub, Function o Property actual,
 después en la página y después en los includes, en el orden del grafo.
 La primera asignación de cada nombre gana en el scope más cercano, incluso
-si está después del cursor. No distingue mayúsculas; acepta versiones como
-`ADODB.Recordset.6.0` y `MSXML2.DOMDocument.6.0`. Un parámetro o `Dim` local
-sin tipo oculta el nombre de página.
+si está después del cursor; `Set x = Nothing` no cuenta. No distingue
+mayúsculas; acepta versiones como `ADODB.Recordset.6.0` y
+`MSXML2.DOMDocument.6.0`. Un parámetro o `Dim` local sin tipo oculta el
+nombre de página.
 
 El catálogo COM es parcial: ADO, FileSystemObject y sus tipos derivados,
 Dictionary, MSXML, CDO y RegExp. No inspecciona componentes instalados.

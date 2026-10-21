@@ -270,7 +270,8 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       `Set rs = conn.Execute(sql)` si conn se creó directamente.
       Busca en la Sub/Function/Property actual, después en la página y
       después en los includes, en orden del grafo. Gana la primera
-      asignación del scope más cercano, incluso posterior al cursor.
+      asignación del scope más cercano, incluso posterior al cursor;
+      `Set x = Nothing` no cuenta.
       Un Dim o parámetro local sin tipo oculta el nombre de página.
       Los nombres y ProgIDs no distinguen mayúsculas; se aceptan
       versiones como ADODB.Recordset.6.0 y MSXML2.DOMDocument.6.0.
