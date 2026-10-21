@@ -129,6 +129,47 @@ describe('diagnósticos de VBScript', function()
     it('una página JScript no se revisa como VBScript', function()
       assert.are.same({}, diags_at(DIAG .. '/jscript.asp'))
     end)
+
+    it('las construcciones válidas que la gramática marcaba no son errores', function()
+      in_temp({
+        ['p.asp'] = {
+          '<%', 'Option Explicit', 'Dim x, y, rs, valor, error, mid',
+          'If x Is Nothing Then y = 1',
+          'If Not rs Is Nothing Then', '  y = 2', 'End If',
+          'Select Case x', '  Case 1, 2, 3', '    y = 1', '  Case "a", "b"', '    y = 2', '  Case Else', 'End Select',
+          'Const A = 1, B = 2',
+          'With rs', '  .Campo = valor', '  .Metodo A', '  .MoveNext', 'End With',
+          'Sub Foo', '  y = B', 'End Sub',
+          'Function Bar', '  Bar = A', 'End Function',
+          'If x Then', '  If y Then x = 1', 'Else', '  x = 2', 'End If',
+          'error = 1', 'mid = 3',
+          'Rem If no hay datos: Then (',
+          '%>',
+        },
+      }, function(dir)
+        assert.are.same({}, diags_at(dir .. '/p.asp'))
+      end)
+    end)
+
+    it('un comentario termina en el %> de su bloque', function()
+      in_temp({
+        ['p.asp'] = { '<% Option Explicit %>', "<% Dim x ' declara x %><p>hola</p><% y = x %>" },
+      }, function(dir)
+        local ds = diags_at(dir .. '/p.asp')
+        assert.are.same({}, of(ds, 'syntax'))
+        assert.are.same({ 'y' }, texts(of(ds, 'undeclared')))
+      end)
+    end)
+
+    it('dos <%= %> pegados se revisan cada uno', function()
+      in_temp({
+        ['p.asp'] = { '<% Option Explicit : Dim a %>', '<p><%=a%></p><p><%=b%></p>' },
+      }, function(dir)
+        local ds = diags_at(dir .. '/p.asp')
+        assert.are.same({}, of(ds, 'syntax'))
+        assert.are.same({ 'b' }, texts(of(ds, 'undeclared')))
+      end)
+    end)
   end)
 
   describe('variables sin declarar', function()
@@ -234,9 +275,27 @@ describe('diagnósticos de VBScript', function()
 
     it('un nombre dentro de un error de sintaxis cuenta como declarado', function()
       in_temp({
-        ['p.asp'] = { '<%', 'Option Explicit', 'Dim x', 'Const A = 1, B = 2', 'x = A + B + C', '%>' },
+        ['p.asp'] = {
+          '<%', 'Option Explicit', 'Dim x', 'Const 1 = 2, B = 3', 'x = 1', 'Sub Usa()', '  x = B + C', 'End Sub', '%>',
+        },
       }, function(dir)
-        assert.are.same({ 'C' }, texts(of(diags_at(dir .. '/p.asp'), 'undeclared')))
+        local ds = diags_at(dir .. '/p.asp')
+        assert.are.equal(3, of(ds, 'syntax')[1].lnum)
+        assert.are.same({ 'C' }, texts(of(ds, 'undeclared')))
+      end)
+    end)
+
+    it('Const con varias constantes declara todas, también en un include', function()
+      in_temp({
+        ['inc/constantes.inc'] = { '<%', 'Const A = 1, B = 2', '%>' },
+        ['p.asp'] = {
+          '<!--#include file="inc/constantes.inc"-->', '<%', 'Option Explicit', 'Const D = 1, E = 2',
+          'Dim x', 'x = A + B + C + D + E', '%>',
+        },
+      }, function(dir)
+        local ds = diags_at(dir .. '/p.asp')
+        assert.are.same({}, of(ds, 'syntax'))
+        assert.are.same({ 'C' }, texts(of(ds, 'undeclared')))
       end)
     end)
   end)

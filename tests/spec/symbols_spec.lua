@@ -70,6 +70,31 @@ describe('asp.symbols', function()
 
   local FIX = vim.fn.fnamemodify('tests/fixtures/proyecto', ':p'):gsub('/$', '')
 
+  it('Const con varias constantes y procedimientos sin paréntesis', function()
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, {
+      '<%', 'Const A = 1, B = "x"', 'Sub Foo', '  Dim local', 'End Sub', 'Function Bar', '  Bar = A', 'End Function',
+      'Class Caja', '  Property Get Total', '    Total = B', '  End Property', 'End Class', '%>',
+    })
+    local symbols = require('asp.symbols')
+    local entries = symbols.collect(0)
+    assert.are.equal(14, by_name(entries, 'A')[1].kind)
+    assert.are.equal(14, by_name(entries, 'B')[1].kind)
+    local foo = by_name(entries, 'Foo')[1]
+    assert.are.equal(12, foo.kind)
+    assert.are.same({}, foo.params)
+    assert.are.equal('Foo()', foo.signature)
+    assert.are.equal(foo.decl_id, by_name(entries, 'local')[1].scope_id)
+    assert.are.equal(12, by_name(entries, 'Bar')[1].kind)
+    local total = by_name(entries, 'Total')[1]
+    assert.are.equal(7, total.kind)
+    assert.are.equal(by_name(entries, 'Caja')[1].decl_id, total.class_id)
+    -- Las dos constantes y los procedimientos van al outline.
+    local names = vim.tbl_map(function(s) return s.name end, symbols.document_symbols(0))
+    assert.are.same({ 'A', 'B', 'Foo', 'Bar', 'Caja' }, names)
+    local def = symbols.definition(0, { line = 10, character = 12 })
+    assert.are.same({ line = 1, character = 13 }, def.range.start)
+  end)
+
   it('collect_file extrae símbolos de un archivo en disco', function()
     local entries = require('asp.symbols').collect_file(FIX .. '/includes/helpers.asp')
     local names = {}
