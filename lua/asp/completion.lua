@@ -105,8 +105,10 @@ function M.complete(bufnr, position)
     if not obj_name and (group ~= 'keywords' or #pfx >= 2) then
       for _, entry in ipairs(native.groups[group]) do
         local info = native.lookup(type(entry) == 'table' and entry[1] or entry)
-        add(info.name, group == 'functions' and 3 or (group == 'constants' and 21 or 14),
-          info.signature or info.value, info.doc)
+        if not info.vba_only then
+          add(info.name, group == 'functions' and 3 or (group == 'constants' and 21 or 14),
+            info.signature or info.value, info.doc)
+        end
       end
     end
   end

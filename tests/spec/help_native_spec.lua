@@ -260,6 +260,51 @@ describe('ayuda nativa y COM', function()
     assert.is_truthy(value:find('Response.Write(variant)', 1, true))
   end)
 
+  it('completion no ofrece las palabras clave de VBA que VBScript no admite', function()
+    for _, text in ipairs({ 'Dim x As In', 'Dim x As Lo', 'Function F(Opt', 'Ty', 'Like', 'As', 'Sta',
+      'RaiseE', 'Impl', 'En' }) do
+      local result = items(text)
+      for _, word in ipairs({ 'Integer', 'Long', 'Optional', 'Type', 'TypeOf', 'Like', 'As', 'Static',
+        'RaiseEvent', 'Implements', 'Enum', 'EndIf' }) do
+        assert.is_nil(result[word], text .. ' → ' .. word)
+      end
+    end
+    assert.is_not_nil(items('Lo').Loop)
+    assert.is_not_nil(items('Op').Option)
+    assert.is_not_nil(items('En').End)
+    -- Siguen siendo palabras clave para los diagnósticos.
+    local native = require('asp.vbscript_builtins')
+    assert.are.equal('keywords', native.lookup('integer').group)
+    assert.is_true(native.lookup('TypeOf').vba_only)
+    assert.is_nil(native.lookup('Function').vba_only)
+  end)
+
+  it('acota el parámetro activo de Array, que es variádica', function()
+    local result = signature.help(0, query('x = Join(Array(1, 2, 3, '))
+    assert.are.equal('Array([arglist])', result.signatures[1].label)
+    assert.are.equal(0, result.activeParameter)
+    -- En las demás, un argumento de más queda fuera de rango.
+    assert.are.equal(1, signature.help(0, query('x = Len("a", ')).activeParameter)
+  end)
+
+  it('una Function del usuario sombrea a la nativa homónima en hover y firmas', function()
+    query('Function Round(valor, decimales)')
+    query('  Round = valor')
+    query('End Function')
+    local result = signature.help(0, query('x = Round(1, '))
+    assert.are.equal(2, #result.signatures)
+    assert.are.equal('Function Round(valor, decimales)', result.signatures[1].label)
+    assert.are.equal('Round(expression[, numdecimalplaces])', result.signatures[2].label)
+    assert.are.equal(0, result.activeSignature)
+    assert.are.equal(1, result.activeParameter)
+    local value = hover.hover(0, pos('x = Round(', 4)).contents.value
+    assert.is_truthy(value:find('```vbscript\nFunction Round(valor, decimales)\n```', 1, true))
+    assert.is_truthy(value:find('Sombrea la función nativa `Round(expression', 1, true))
+    -- Sin declaración del usuario, la nativa.
+    assert.is_truthy(hover.hover(0, pos('Len(')).contents.value:find('```vbscript\nLen(string)', 1, true))
+    assert.are.equal(1, #signature.help(0, query('x = Fix(')).signatures)
+  end)
+
   it('Mid activa el segundo parámetro tras la primera coma', function()
     local result = signature.help(0, query('x = Mid(s, '))
     assert.are.equal(1, result.activeParameter)
@@ -605,5 +650,36 @@ describe('alcance y cachés de ayuda', function()
       textDocument = { uri = vim.uri_from_bufnr(0) }, position = { line = -1, character = -1 },
     })
     assert.is_nil(result)
+  end)
+end)
+
+describe('hover de una Function que devuelve un objeto COM', function()
+  local hover = require('asp.hover')
+
+  after_each(function() vim.cmd('bwipeout!') end)
+
+  local function pos(text, shift)
+    for i, line in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do
+      local col = line:find(text, 1, true)
+      if col then return { line = i - 1, character = col - 1 + (shift or 0) } end
+    end
+    error('texto no encontrado: ' .. text)
+  end
+
+  it('en su declaración muestra la firma y el tipo de retorno', function()
+    vim.cmd.edit('tests/fixtures/proyecto/lib/db.inc')
+    local value = hover.hover(0, pos('Function AbrirConexion', #'Function ')).contents.value
+    assert.are.equal('```vbscript\nFunction AbrirConexion()\n```\n\nRetorno: `ADODB.Connection`.', value)
+    -- Dentro del cuerpo, el nombre es la variable de retorno.
+    value = hover.hover(0, pos('Set AbrirConexion', #'Set ')).contents.value
+    assert.is_truthy(value:find('**AbrirConexion** (`ADODB.Connection`)', 1, true))
+  end)
+
+  it('desde una página que la llama, también muestra el retorno y el archivo', function()
+    vim.cmd.edit('tests/fixtures/proyecto/default.asp')
+    local value = hover.hover(0, pos('AbrirConexion')).contents.value
+    assert.is_truthy(value:find('Function AbrirConexion()', 1, true))
+    assert.is_truthy(value:find('Retorno: `ADODB.Connection`.', 1, true))
+    assert.is_truthy(value:find('Archivo: `db.inc`.', 1, true))
   end)
 end)

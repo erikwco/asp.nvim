@@ -4,11 +4,12 @@ local M = {}
 -- https://learn.microsoft.com/en-us/previous-versions/d1wf56tt(v=vs.85)
 -- Se conservan los grupos y los nombres que usan los diagnósticos.
 -- Cada entrada puede ser un nombre o una tabla { nombre, ...metadatos }.
-local function fn(signature, returns, doc, docs)
+-- `variadic`: el último parámetro recibe todos los argumentos que siguen.
+local function fn(signature, returns, doc, docs, variadic)
   return {
     signature:match('^([%w_]+)'), signature = signature,
     params = require('asp.signature_info').parameters(signature, docs),
-    returns = returns, doc = doc,
+    returns = returns, doc = doc, variadic = variadic,
   }
 end
 
@@ -20,7 +21,7 @@ M.groups = {
       { 'Número del que se obtiene el valor absoluto.' }),
     fn('Array([arglist])', 'Variant()',
       'Crea un array con los valores indicados; sin argumentos crea un array vacío.',
-      { 'Valores separados por comas.' }),
+      { 'Valores separados por comas.' }, true),
     fn('Asc(string)', 'Integer',
       'Código ANSI del primer carácter de una cadena no vacía.',
       { 'Cadena cuyo primer carácter se convierte.' }),
@@ -451,6 +452,16 @@ M.groups = {
   objects = { 'Err', 'ObjectContext', 'ASPError', 'RegExp', 'Debug' },
 }
 
+-- Palabras reservadas de VBA que VBScript no admite: siguen en `keywords`
+-- para que los diagnósticos no las tomen por variables, pero completion no
+-- las ofrece (`Dim x As Integer` es un error de sintaxis en VBScript).
+M.vba_only = {
+  'As', 'Boolean', 'Byte', 'Currency', 'Double', 'EndIf', 'Enum', 'Event',
+  'Implements', 'Integer', 'Like', 'Long', 'LSet', 'Optional', 'ParamArray',
+  'RaiseEvent', 'RSet', 'Shared', 'Single', 'Static', 'Type', 'TypeOf',
+  'Variant',
+}
+
 -- Clases que acepta `New` además de las declaradas con Class.
 M.classes = { 'RegExp' }
 
@@ -465,6 +476,8 @@ for group, entries in pairs(M.groups) do
     index[info.name:lower()] = info
   end
 end
+
+for _, name in ipairs(M.vba_only) do index[name:lower()].vba_only = true end
 
 local classes = {}
 for _, name in ipairs(M.classes) do classes[name:lower()] = true end
