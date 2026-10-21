@@ -137,8 +137,9 @@ end
 local CODE_QUERY = [[ (code) @code ]]
 
 local file_cache = {}
--- ruta → {stamp, names}: ocurrencias de identificadores de un archivo de
--- disco que se ven a nivel de página, agrupadas por nombre en minúsculas
+-- ruta → {stamp, names} o {stamp, words}: ocurrencias de identificadores
+-- de un archivo de disco que se ven a nivel de página, agrupadas por nombre
+-- en minúsculas, o solo sus palabras si todavía no hizo falta parsearlo
 -- (ver page_occurrences). Separada de file_cache porque workspace/symbol
 -- llena esa con todo el proyecto y no necesita las ocurrencias.
 local occurrence_cache = {}
@@ -160,7 +161,7 @@ function M.invalidate(abs_path)
   end
 end
 
----Lee y parsea un archivo de disco sin necesidad de un buffer abierto.
+---Parsea el contenido de un archivo sin necesidad de un buffer abierto.
 ---Técnica clave (también el fix del backlog de parseo en frío de ~33s en la
 ---indexación): parsear el contenido con un parser STRING de aspclassic (solo
 ---capa top — barato), recolectar los nodos `(code)`, y crear un parser
@@ -168,17 +169,10 @@ end
 ---región combinada, igual que el injection "combined" normal) — así solo se
 ---parsea VBScript, sin injections de html/js/css/regex.
 ---
----El contenido sale de asp.pages.read (sin BOM, latin1 convertido) para que
----las columnas coincidan con las del buffer y con los usos de páginas.
----
----Lanza si el archivo no se puede leer. Sin bloques de código devuelve el
----contenido y nil.
----@param abs_path string
----@return string content
+---Sin bloques de código devuelve nil.
+---@param content string
 ---@return TSNode|nil vroot
-local function parse_file(abs_path)
-  local content = assert(require('asp.pages').read(abs_path))
-
+local function parse_content(content)
   -- Capa plantilla: solo top layer, sin injections (barato).
   local tpl = vim.treesitter.get_string_parser(content, 'aspclassic')
   local troot = tpl:parse()[1]:root()
@@ -187,7 +181,7 @@ local function parse_file(abs_path)
   for _, node in cq:iter_captures(troot, content) do
     table.insert(code_nodes, node)
   end
-  if #code_nodes == 0 then return content, nil end
+  if #code_nodes == 0 then return nil end
 
   -- Capa vbscript SOLO en los rangos de código: nada de html/js/regex.
   -- set_included_regions espera una lista de REGIONES (cada región es una
@@ -199,7 +193,21 @@ local function parse_file(abs_path)
   -- parse(true).
   local vp = vim.treesitter.get_string_parser(content, 'vbscript')
   vp:set_included_regions({ code_nodes })
-  return content, vp:parse(true)[1]:root()
+  return vp:parse(true)[1]:root()
+end
+
+---Lee y parsea un archivo de disco (ver parse_content). El contenido sale
+---de asp.pages.read (sin BOM, latin1 convertido) para que las columnas
+---coincidan con las del buffer y con los usos de páginas.
+---
+---Lanza si el archivo no se puede leer. Sin bloques de código devuelve el
+---contenido y nil.
+---@param abs_path string
+---@return string content
+---@return TSNode|nil vroot
+local function parse_file(abs_path)
+  local content = assert(require('asp.pages').read(abs_path))
+  return content, parse_content(content)
 end
 
 ---Declaraciones de un archivo en disco (ver parse_file), cacheadas por
@@ -399,53 +407,74 @@ end
 
 local IDENT_QUERY = [[ (identifier) @id ]]
 
----Ocurrencias de un archivo de disco que se ven a nivel de página,
----agrupadas por nombre en minúsculas: `names[nombre]` es una lista plana
----{fila, col_inicio, col_fin, ...} (un identificador no cruza líneas).
----Deja afuera las que caen en un Sub/Function/Property que declara ese
----nombre como local o parámetro: ahí el nombre es otra variable, igual
----que con `shadowed` en el buffer.
----
----Se cachea por mtime y tamaño con TODOS los nombres del archivo, no solo
----el buscado: así, con la caché caliente, buscar cualquier otro símbolo en
----el sitio no vuelve a leer ni parsear nada. Las declaraciones que salen
----del mismo parseo alimentan también la caché de M.collect_file.
----@param abs_path string normalizada
----@return table<string, integer[]>
-local function page_occurrences(abs_path)
-  local stamp = stamp_of(abs_path)
-  if not stamp then
-    occurrence_cache[abs_path] = nil
-    return {}
+-- Scopes e identificadores en una sola pasada. iter_captures los entrega
+-- por posición de inicio, y en un empate primero el patrón anterior: cada
+-- identificador cae en el último scope abierto que todavía no terminó.
+-- Así no hace falta subir con node:parent() desde cada identificador, que
+-- se llevaba la mayor parte del tiempo de un archivo con mucho código.
+local OCCURRENCE_QUERY = [[
+[(sub_statement) (function_statement) (property_statement)] @scope
+(identifier) @id
+]]
+
+---Palabras distintas de un contenido en minúsculas, separadas por
+---espacios. Un identificador VBScript solo tiene letras, dígitos y `_`, así
+---que siempre queda dentro de una de ellas: buscarlo en este texto da lo
+---mismo que buscarlo en el contenido, que es mucho más grande.
+---@param lower string
+---@return string
+local function words_of(lower)
+  local seen, list = {}, {}
+  for word in lower:gmatch('[%w_]+') do
+    if not seen[word] then
+      seen[word] = true
+      list[#list + 1] = word
+    end
   end
-  local hit = occurrence_cache[abs_path]
-  if hit and hit.stamp == stamp then return hit.names end
+  return table.concat(list, ' ')
+end
 
-  local ok, names = pcall(function()
-    local content, vroot = parse_file(abs_path)
-    if not vroot then return {} end
-    local entries = collect_from_roots({ vroot }, content)
-    local locals = {}
-    for _, e in ipairs(entries) do
-      e.file = abs_path
-      if e.scope_id then
-        locals[e.scope_id] = locals[e.scope_id] or {}
-        locals[e.scope_id][e.name:lower()] = true
-      end
+---Ocurrencias de un contenido que se ven a nivel de página, agrupadas por
+---nombre en minúsculas (ver page_occurrences). Llena también la caché de
+---declaraciones de M.collect_file con el mismo parseo.
+---@param abs_path string
+---@param content string
+---@param stamp string
+---@return table<string, integer[]>
+local function parse_occurrences(abs_path, content, stamp)
+  local vroot = parse_content(content)
+  if not vroot then return {} end
+  local entries = collect_from_roots({ vroot }, content)
+  local locals = {}
+  for _, e in ipairs(entries) do
+    e.file = abs_path
+    if e.scope_id then
+      locals[e.scope_id] = locals[e.scope_id] or {}
+      locals[e.scope_id][e.name:lower()] = true
     end
-    local cached = file_cache[abs_path]
-    if not cached or cached.stamp ~= stamp then
-      file_cache[abs_path] = { stamp = stamp, entries = entries }
-    end
+  end
+  local cached = file_cache[abs_path]
+  if not cached or cached.stamp ~= stamp then
+    file_cache[abs_path] = { stamp = stamp, entries = entries }
+  end
 
-    local out = {}
-    local iq = vim.treesitter.query.parse('vbscript', IDENT_QUERY)
-    for _, node in iq:iter_captures(vroot, content) do
+  local out = {}
+  local query = vim.treesitter.query.parse('vbscript', OCCURRENCE_QUERY)
+  -- Pila de scopes abiertos: su id y el byte donde terminan.
+  local scopes, stops = {}, {}
+  for id, node in query:iter_captures(vroot, content) do
+    local r0, c0, start = node:start()
+    while stops[1] and stops[#stops] <= start do
+      scopes[#scopes], stops[#stops] = nil, nil
+    end
+    if query.captures[id] == 'scope' then
+      local _, _, stop = node:end_()
+      scopes[#scopes + 1], stops[#stops + 1] = node:id(), stop
+    else
       local name = vim.treesitter.get_node_text(node, content):lower()
-      local scope = nearest_ancestor(node, SCOPE_TYPES)
-      local shadowing = scope and locals[scope:id()]
+      local shadowing = scopes[1] and locals[scopes[#scopes]]
       if not (shadowing and shadowing[name]) then
-        local r0, c0, _, c1 = node:range()
+        local _, c1 = node:end_()
         local list = out[name]
         if not list then
           list = {}
@@ -456,21 +485,68 @@ local function page_occurrences(abs_path)
         list[#list + 1] = c1
       end
     end
-    return out
-  end)
-  -- Un fallo de lectura no se cachea: la próxima consulta reintenta.
-  if not ok then return {} end
+  end
+  return out
+end
+
+---Ocurrencias de página de `wanted` en un archivo de disco: una lista
+---plana {fila, col_inicio, col_fin, ...} (un identificador no cruza
+---líneas), o nil. Deja afuera las que caen en un Sub/Function/Property que
+---declara ese nombre como local o parámetro: ahí el nombre es otra
+---variable, igual que con `shadowed` en el buffer.
+---
+---Solo parsea los archivos que mencionan `wanted` en su texto. Al
+---parsear guarda TODOS los nombres del archivo, por mtime y tamaño: así,
+---con la caché caliente, buscar cualquier otro símbolo en el sitio no
+---vuelve a leer ni parsear nada. De un archivo que no lo menciona guarda
+---solo sus palabras (ver words_of), para saber sin releerlo si más tarde
+---hay que parsearlo por otro nombre.
+---
+---`contents` trae lo que la consulta ya leyó, empezando por el barrido
+---del sitio: un archivo que está ahí no se vuelve a leer, y lo que se lee
+---acá se agrega para contarlo.
+---@param abs_path string normalizada
+---@param wanted string ya en minúsculas
+---@param contents table<string, string>
+---@return integer[]|nil
+local function page_occurrences(abs_path, wanted, contents)
+  local stamp = stamp_of(abs_path)
+  if not stamp then
+    occurrence_cache[abs_path] = nil
+    return nil
+  end
+  local hit = occurrence_cache[abs_path]
+  if hit and hit.stamp == stamp then
+    if hit.names then return hit.names[wanted] end
+    if not hit.words:find(wanted, 1, true) then return nil end
+  end
+
+  local content = contents[abs_path]
+  if not content then
+    -- Un fallo de lectura no se cachea: la próxima consulta reintenta.
+    content = require('asp.pages').read(abs_path)
+    if not content then return nil end
+    contents[abs_path] = content
+  end
+  local lower = content:lower()
+  if not lower:find(wanted, 1, true) then
+    occurrence_cache[abs_path] = { stamp = stamp, words = words_of(lower) }
+    return nil
+  end
+  local ok, names = pcall(parse_occurrences, abs_path, content, stamp)
+  if not ok then return nil end
   occurrence_cache[abs_path] = { stamp = stamp, names = names }
-  return names
+  return names[wanted]
 end
 
 ---Ocurrencias de página de `wanted` en un archivo de disco (ver
 ---page_occurrences).
 ---@param abs_path string
 ---@param wanted string ya en minúsculas
+---@param contents table<string, string>
 ---@return table[] Location[]
-local function occurrences_in_file(abs_path, wanted)
-  local hits = page_occurrences(vim.fs.normalize(abs_path))[wanted]
+local function occurrences_in_file(abs_path, wanted, contents)
+  local hits = page_occurrences(vim.fs.normalize(abs_path), wanted, contents)
   if not hits then return {} end
   local uri = vim.uri_from_fname(abs_path)
   local out = {}
@@ -498,10 +574,11 @@ end
 ---@param binding table|nil
 ---@param wanted string
 ---@param graph string[] buffer_graph(bufnr).order
+---@param contents table<string, string> ver asp.pages.sweep
 ---@return string[]|nil rutas reales del sitio
 ---@return string|nil ruta real del buffer
 ---@return integer|nil archivos recorridos por el barrido
-local function site_files(bufnr, binding, wanted, graph)
+local function site_files(bufnr, binding, wanted, graph, contents)
   local name = vim.api.nvim_buf_get_name(bufnr)
   if name == '' then return nil end
   local root = require('asp.pages').scan_root_for(name)
@@ -517,7 +594,7 @@ local function site_files(bufnr, binding, wanted, graph)
     if item.resolved then table.insert(targets, vim.uv.fs_realpath(item.resolved) or item.resolved) end
   end
   local site = require('asp.site')
-  local index = site.index(root)
+  local index = site.index(root, contents)
   return site.closure(index, starts, { [self] = targets }), self, index.count
 end
 
@@ -604,8 +681,12 @@ function M.references(bufnr, position, opts)
     -- sitio); después el resto del sitio, ordenado. Se deduplica por ruta
     -- real porque el grafo usa la ruta del buffer y el sitio, la real.
     local files = vim.list_extend({}, graph)
+    -- Contenido leído en esta consulta, por ruta: el barrido lo deja para
+    -- no volver a leer los archivos que hay que parsear (ver
+    -- page_occurrences) y se suelta al terminar.
+    local contents = {}
     -- Si el sitio falla, quedan el buffer y su grafo: el handler no lanza.
-    local ok, site, self, swept = pcall(site_files, bufnr, binding, wanted, graph)
+    local ok, site, self, swept = pcall(site_files, bufnr, binding, wanted, graph, contents)
     if ok and site then
       local taken = { [self] = true }
       for _, file in ipairs(graph) do
@@ -616,7 +697,7 @@ function M.references(bufnr, position, opts)
       end
     end
     for _, file in ipairs(files) do
-      vim.list_extend(out, occurrences_in_file(file, wanted))
+      vim.list_extend(out, occurrences_in_file(file, wanted, contents))
     end
     if ok and swept then require('asp.pages').notify_slow(swept, started) end
   end

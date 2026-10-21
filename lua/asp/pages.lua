@@ -167,7 +167,7 @@ function M.read(path)
   return content
 end
 
-local function collect_file(path, root)
+local function collect_file(path, root, contents)
   local stat = vim.uv.fs_stat(path)
   if not stat or stat.type ~= 'file' then
     file_cache[path] = nil
@@ -176,13 +176,14 @@ local function collect_file(path, root)
   local mtime = stat.mtime.sec .. ':' .. stat.mtime.nsec
   local hit = file_cache[path]
   if hit and hit.mtime == mtime and hit.size == stat.size and hit.root == root then
-    return hit.entries
+    return hit.entries, false
   end
   local content = M.read(path)
-  if not content then return {} end
+  if not content then return {}, false end
+  if contents then contents[path] = content end
   local entries = scan_file(content, path, root)
   file_cache[path] = { mtime = mtime, size = stat.size, root = root, entries = entries }
-  return entries
+  return entries, true
 end
 
 ---@param abs_path string
@@ -216,10 +217,17 @@ end
 ---
 ---Una entrada sin cambios conserva su tabla entre barridos: asp.site
 ---compara esas tablas para saber si su índice de includes sigue vigente.
+---
+---Si se pasa `contents`, recibe el contenido de cada fuente que este
+---barrido leyó, por ruta real: asp.symbols lo reutiliza durante la misma
+---consulta para no volver a leer esos archivos. Sin `contents` no se
+---retiene ningún contenido.
 ---@param root string raíz de scan_root_for
+---@param contents? table<string, string>
 ---@return string[] files rutas reales, ordenadas
 ---@return table<string, table[]> entries por archivo
-function M.sweep(root)
+---@return integer read fuentes leídas de disco en este barrido
+function M.sweep(root, contents)
   root = vim.uv.fs_realpath(root) or root
   local files, dirs, next_dir = {}, { root }, 1
   while next_dir <= #dirs do
@@ -243,17 +251,19 @@ function M.sweep(root)
     end
   end
   table.sort(files)
-  local entries, roots = {}, {}
+  local entries, roots, read = {}, {}, 0
   for _, file in ipairs(files) do
     local dir = vim.fs.dirname(file)
     if roots[dir] == nil then roots[dir] = require('asp.includes').virtual_root_for(file) or false end
-    entries[file] = collect_file(file, roots[dir])
+    local fresh
+    entries[file], fresh = collect_file(file, roots[dir], contents)
+    if fresh then read = read + 1 end
   end
   local prefix = root:gsub('/$', '') .. '/'
   for path in pairs(file_cache) do
     if path:sub(1, #prefix) == prefix and not entries[path] then file_cache[path] = nil end
   end
-  return files, entries
+  return files, entries, read
 end
 
 ---Aviso INFO de una consulta que recorrió el sitio: con 2.000 archivos o

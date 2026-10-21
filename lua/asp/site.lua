@@ -59,9 +59,10 @@ end
 ---por ruta distinta y sin leer archivos, y rearma las aristas solo si
 ---alguno cambió.
 ---@param root string raíz de asp.pages.scan_root_for
+---@param contents? table<string, string> ver asp.pages.sweep
 ---@return table { includes, includers, sources, count }
-function M.index(root)
-  local files, entries = require('asp.pages').sweep(root)
+function M.index(root, contents)
+  local files, entries = require('asp.pages').sweep(root, contents)
   local key = vim.uv.fs_realpath(root) or root
   local index = indexes[key]
   if not current(index, files, entries) then

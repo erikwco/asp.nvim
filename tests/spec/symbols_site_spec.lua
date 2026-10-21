@@ -327,6 +327,87 @@ describe('asp.symbols references en un sitio temporal', function()
     assert.are.same({}, read_files())
   end)
 
+  it('parsea solo los archivos que mencionan el nombre y no relee lo que leyó el barrido', function()
+    write('web.config', {})
+    local lib = write('lib.inc', { '<%', 'Function Calcular(x)', '  Calcular = x * 2', 'End Function',
+      'Sub Otra()', 'End Sub', '%>' })
+    local a = { '<!--#include file="lib.inc" -->', '<% Response.Write Calcular(1) %>' }
+    local b = { '<!--#include file="lib.inc" -->', '<% Otra %>' }
+    write('a.asp', a)
+    write('b.asp', b)
+    local names = {
+      [table.concat(a, '\n') .. '\n'] = 'a.asp',
+      [table.concat(b, '\n') .. '\n'] = 'b.asp',
+    }
+    vim.cmd.edit(lib)
+    local calcular, otra = pos_of('Calcular'), pos_of('Otra')
+    local parsed, original_parser = {}, vim.treesitter.get_string_parser
+    vim.treesitter.get_string_parser = function(source, lang, ...)
+      if lang == 'vbscript' then table.insert(parsed, names[source] or source) end
+      return original_parser(source, lang, ...)
+    end
+    local function query(pos)
+      parsed = {}
+      local refs = short(symbols.references(0, pos), temp)
+      local counts = reads
+      reads = {}
+      return refs, parsed, counts
+    end
+
+    local ok, err = pcall(function()
+      -- El barrido lee cada archivo una vez y b.asp, que no menciona
+      -- Calcular, no se parsea.
+      local refs, files, counts = query(calcular)
+      assert.are.same({ 'lib.inc:1:9', 'lib.inc:2:2', 'a.asp:1:18' }, refs)
+      assert.are.same({ 'a.asp' }, files)
+      assert.are.same({ ['a.asp'] = 1, ['b.asp'] = 1, ['lib.inc'] = 1 }, counts)
+
+      -- Otro nombre: solo b.asp lo menciona. Se relee y se parsea solo esa.
+      refs, files, counts = query(otra)
+      assert.are.same({ 'lib.inc:4:4', 'b.asp:1:3' }, refs)
+      assert.are.same({ 'b.asp' }, files)
+      assert.are.same({ ['b.asp'] = 1 }, counts)
+
+      -- En caliente, ninguno de los dos lee ni parsea.
+      for _, pos in ipairs({ calcular, otra }) do
+        refs, files, counts = query(pos)
+        assert.are.same({}, files)
+        assert.are.same({}, counts)
+      end
+    end)
+    vim.treesitter.get_string_parser = original_parser
+    assert(ok, err)
+  end)
+
+  it('desde disco parsea solo la plantilla, sin inyecciones, y la capa VBScript', function()
+    write('web.config', {})
+    local lib = write('lib.inc', LIB)
+    write('a.asp', {
+      '<!--#include file="lib.inc" -->',
+      '<html><head><style>p { color: red }</style>',
+      '<script>function Calcular() { return 1 }</script></head>',
+      '<body onclick="Calcular()"><%= Calcular(1) %></body></html>',
+    })
+    vim.cmd.edit(lib)
+    local pos = pos_of('Calcular')
+    local parsers, original_parser = {}, vim.treesitter.get_string_parser
+    vim.treesitter.get_string_parser = function(source, lang, ...)
+      local parser = original_parser(source, lang, ...)
+      table.insert(parsers, { lang = lang, parser = parser })
+      return parser
+    end
+    local ok, refs = pcall(symbols.references, 0, pos)
+    vim.treesitter.get_string_parser = original_parser
+    assert.is_true(ok, tostring(refs))
+    assert.are.same({ 'lib.inc:1:9', 'lib.inc:2:2', 'a.asp:3:31' }, short(refs, temp))
+    local langs = {}
+    for _, p in ipairs(parsers) do
+      langs[p.lang] = true
+      assert.are.same({}, p.parser:children(), p.lang)
+    end
+    assert.are.same({ aspclassic = true, vbscript = true }, langs)
+  end)
+
   it('sin raíz de sitio se queda en el buffer y su grafo', function()
     local lib = write('lib.inc', LIB)
     page('a.asp')
