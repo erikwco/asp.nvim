@@ -34,6 +34,57 @@ local function refs_at(path, text, nth)
   return symbols.references(0, pos_of(text, nth))
 end
 
+-- Vacía las cachés de páginas, símbolos e includes de los archivos de
+-- `base`, para que cualquier lectura de disco se note.
+local function forget(base)
+  for _, path in ipairs(vim.fs.find(function() return true end, { path = base, type = 'file', limit = math.huge })) do
+    require('asp.pages').invalidate(path)
+    symbols.invalidate(path)
+    require('asp.includes').invalidate(path)
+  end
+end
+
+-- Cuenta, mientras corre `fn`, las llamadas a asp.site.index y a
+-- asp.includes.buffer_graph y las lecturas de archivos bajo `base`. Los
+-- espías no lanzan: un error quedaría atrapado por el pcall con que
+-- references protege el recorrido del sitio. Se cuenta solo dentro de
+-- asp.symbols.references, así que no entra lo que hagan los diagnósticos
+-- u otras consultas programadas en el mismo ciclo.
+local function count_site_work(base, fn)
+  local site, includes = require('asp.site'), require('asp.includes')
+  local original = {
+    index = site.index, buffer_graph = includes.buffer_graph,
+    references = symbols.references, open = io.open,
+  }
+  local inside, work = false, { index = 0, buffer_graph = 0, reads = {} }
+  site.index = function(...)
+    if inside then work.index = work.index + 1 end
+    return original.index(...)
+  end
+  includes.buffer_graph = function(...)
+    if inside then work.buffer_graph = work.buffer_graph + 1 end
+    return original.buffer_graph(...)
+  end
+  io.open = function(path, ...)
+    if inside and type(path) == 'string' and path:sub(1, #base) == base then
+      table.insert(work.reads, path)
+    end
+    return original.open(path, ...)
+  end
+  symbols.references = function(...)
+    inside = true
+    local ok, refs, binding = pcall(original.references, ...)
+    inside = false
+    if not ok then error(refs) end
+    return refs, binding
+  end
+  local ok, result = pcall(fn)
+  site.index, includes.buffer_graph = original.index, original.buffer_graph
+  symbols.references, io.open = original.references, original.open
+  assert.is_true(ok, tostring(result))
+  return result, work
+end
+
 describe('asp.symbols references con alcance de sitio', function()
   local buffers
 
@@ -101,22 +152,20 @@ describe('asp.symbols references con alcance de sitio', function()
       short(refs_at(FIX .. '/sin_include.asp', 'RespuestaRapida', 2), FIX))
   end)
 
-  it('buffer_only no recorre el sitio ni lee disco', function()
-    local site = require('asp.site')
-    local original_index, original_open = site.index, io.open
-    local reads = {}
-    site.index = function() error('no debe recorrer el sitio') end
+  it('buffer_only no recorre el sitio ni lee disco, con las cachés frías', function()
     vim.cmd.edit(FIX .. '/includes/helpers.asp')
     local pos = pos_of('RespuestaRapida')
-    io.open = function(path, ...)
-      if path:sub(1, #FIX) == FIX then table.insert(reads, path) end
-      return original_open(path, ...)
-    end
-    local ok, refs = pcall(symbols.references, 0, pos, { buffer_only = true })
-    io.open, site.index = original_open, original_index
-    assert.is_true(ok, tostring(refs))
+    forget(FIX)
+    local refs, work = count_site_work(FIX, function()
+      return symbols.references(0, pos, { buffer_only = true })
+    end)
     assert.are.same({ 'includes/helpers.asp:6:4' }, short(refs, FIX))
-    assert.are.same({}, reads)
+    assert.are.same({ index = 0, buffer_graph = 0, reads = {} }, work)
+    -- La misma consulta sin buffer_only sí recorre: los espías la ven.
+    forget(FIX)
+    local _, full = count_site_work(FIX, function() return symbols.references(0, pos) end)
+    assert.are.same({ 1, 1 }, { full.index, full.buffer_graph })
+    assert.is_true(#full.reads > 0)
   end)
 
   it('si el sitio falla conserva el buffer y su grafo de includes', function()
@@ -456,12 +505,10 @@ describe('asp-ls references y documentHighlight con alcance de sitio', function(
 
   it('documentHighlight sigue limitado al buffer y no recorre el sitio', function()
     open(FIX .. '/includes/helpers.asp')
-    local site = require('asp.site')
-    local original = site.index
-    site.index = function() error('no debe recorrer el sitio') end
-    local ok, result = pcall(request, 'documentHighlight', pos_of('RespuestaRapida'))
-    site.index = original
-    assert.is_true(ok, tostring(result))
+    local pos = pos_of('RespuestaRapida')
+    forget(FIX)
+    local result, work = count_site_work(FIX, function() return request('documentHighlight', pos) end)
+    assert.are.same({ index = 0, buffer_graph = 0, reads = {} }, work)
     assert.are.same({ {
       range = {
         start = { line = 6, character = 4 },
