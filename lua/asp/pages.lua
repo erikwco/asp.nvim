@@ -144,6 +144,24 @@ local function scan_file(content, from_abs, root)
   return entries
 end
 
+---Literales de páginas y recursos de un buffer, con las mismas reglas y la
+---misma raíz que el barrido del sitio: `target_abs` es la ruta candidata,
+---exista o no. Sin las directivas include, que ya revisa asp.includes.
+---Para los diagnósticos de páginas inexistentes (asp.diagnostics).
+---@param bufnr integer
+---@param lines string[] líneas del buffer
+---@return table[] {target_abs, lnum, col, end_lnum, end_col}
+function M.buffer_literals(bufnr, lines)
+  local from = vim.api.nvim_buf_get_name(bufnr)
+  if from == '' then return {} end
+  local root = require('asp.includes').virtual_root_for(from) or false
+  local out = {}
+  for _, entry in ipairs(scan_file(table.concat(lines, '\n'), from, root)) do
+    if not entry.include then table.insert(out, entry) end
+  end
+  return out
+end
+
 ---Contenido de una fuente con las columnas UTF-8 que tendrá su buffer: sin
 ---BOM y convertido de latin1 si no es UTF-8 válido. Lo comparten el
 ---barrido de páginas y las ocurrencias VBScript de disco (asp.symbols),

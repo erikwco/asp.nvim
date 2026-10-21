@@ -94,7 +94,7 @@ de un símbolo local se limitan a su scope.
 
 Definición y referencias siguen los `<!--#include file/virtual="..."-->`
 de forma recursiva y toleran ciclos. Los includes que no resuelven se
-marcan con un warning en su línea. La raíz de los includes `virtual=` se
+marcan con un warning en su línea ([Diagnósticos](#diagnósticos)). La raíz de los includes `virtual=` se
 autodetecta mediante `web.config` o `.git` y puede fijarse con
 `require('asp').setup({ virtual_root = '/ruta/al/sitio' })`.
 
@@ -160,7 +160,8 @@ exteriores, así que `"otra.asp?id=" & id` también resuelve.
 Las rutas de páginas que empiezan con `/` usan esa misma raíz virtual.
 Las demás son relativas al directorio del archivo actual. Se normalizan
 los separadores `\` a `/`. El destino debe existir y ser un archivo;
-si no existe, la consulta devuelve `nil` sin agregar diagnósticos.
+si no existe, la consulta devuelve `nil` y el literal se marca con un
+[diagnóstico](#diagnósticos).
 Se descartan `http://`, `https://`, `//`, `mailto:` y `javascript:`.
 
 `gf` y `C-w f` usan `includeexpr` para resolver el nombre que Neovim extrae.
@@ -256,7 +257,107 @@ vim.api.nvim_create_autocmd('LspAttach', {
 El ejemplo se registra cuando se adjunta `asp-ls`, también en `.inc` y
 extensiones en mayúsculas.
 
+### Diagnósticos
+
+asp.nvim publica diagnósticos con `vim.diagnostic` (fuente `asp-ls`) en
+cinco familias. El campo `code` de cada uno dice su familia:
+
+- `includes`: directivas `<!--#include -->` que no resuelven y ciclos de
+  includes.
+- `syntax`: errores de sintaxis de VBScript, un diagnóstico por cada
+  nodo `ERROR` o `MISSING` de la capa VBScript, con su rango. Solo dentro
+  de los bloques `<% %>` y `<%= %>`: nunca sobre HTML ni JavaScript. Un
+  error que sigue en el bloque siguiente se recorta al bloque donde empieza.
+- `undeclared`: variables sin declarar cuando hay `Option Explicit` en la
+  página o en alguno de sus includes. Un nombre está declarado si lo
+  declara su Sub, Function o Property (también como parámetro), su clase,
+  la página o cualquier archivo del grafo de includes, con `Dim`, `Const`,
+  `Public`, `Private`, `Sub`, `Function`, `Property` o `Class`. En la
+  página también cuentan `ReDim` y la variable de `For` y `For Each`. Se mira
+  solo el nombre de la izquierda de `obj.Prop.Metodo`, sin distinguir
+  mayúsculas. No se reportan los intrínsecos de ASP, `Err`,
+  `ObjectContext`, `ASPError`, ni las funciones, constantes y palabras
+  clave nativas de VBScript (`Len`, `Mid`, `CDate`, `vbCrLf`, `Me`...).
+- `unknown_call`: llamadas a algo que no está declarado en la página ni en
+  su grafo de includes y que no es nativo: `Nombre(args)`, `Call Nombre`,
+  `Nombre arg1, arg2` como sentencia y `New Clase`. Un `x(1)` sobre un
+  `Dim x(10)` es un índice, no una llamada. `New` solo acepta clases
+  declaradas con `Class` y `RegExp`. Como `undeclared`, solo con
+  `Option Explicit`.
+- `missing_page`: literales de páginas y recursos (`.asp`, `.inc`, `.htm`,
+  `.html`, `.js`, `.css`) cuyo destino no existe en disco. Usa la misma
+  detección y la misma raíz virtual que la
+  [navegación de páginas](#páginas-y-recursos). No marca literales con
+  `<%` o `%>`, los que se concatenan con `&` o `+`, las URLs absolutas, los
+  nombres sin base (`".asp"`) ni los literales dentro de comentarios HTML
+  o VBScript.
+
+Si la página o alguno de sus includes usa `Eval`, `Execute` o
+`ExecuteGlobal`, no se revisan `undeclared` ni `unknown_call`: queda un
+único HINT en la línea del primer uso, o en la directiva del include que
+lo trae. Tampoco se revisan si algún include no resuelve: el nombre podría
+estar declarado ahí.
+
+Sin `Option Explicit`, VBScript declara una variable al asignarla, así que
+un `x(0)` puede ser un arreglo creado así. Además, un archivo sin
+`Option Explicit` suele ser una librería que llama a lo que declaran los
+demás includes de la página que la incluye, y esos no se ven desde la
+librería. Por eso esas dos familias necesitan `Option Explicit`.
+
+#### Configuración
+
+Cada familia acepta `'ERROR'`, `'WARN'`, `'INFO'`, `'HINT'`, un entero de
+`vim.diagnostic.severity` o `false` para apagarla. `diagnostics = false`
+apaga todas. Un valor inválido avisa una vez y usa el de por defecto.
+
+```lua
+require('asp').setup({
+  diagnostics = {
+    syntax = 'HINT',       -- por defecto: HINT
+    undeclared = 'WARN',   -- por defecto: WARN
+    unknown_call = 'WARN', -- por defecto: WARN
+    missing_page = 'WARN', -- por defecto: WARN
+    includes = 'WARN',     -- por defecto: WARN
+  },
+})
+```
+
+`syntax` es HINT por defecto porque la gramática marca como error
+construcciones válidas de VBScript: `x Is Nothing`, `Case 1, 2`,
+`Const A = 1, B = 2`, un `Case Else` vacío y `.Campo`
+dentro de un `With`. Las variables y llamadas dentro de un error no se
+revisan, y los nombres de una línea con un error cuentan como declarados
+en todo el buffer actual: un error que llega al final del archivo, como el de
+`Case 1, 2`, deja sin revisar lo que sigue. En el código de los fixtures
+y de tres páginas reales no hubo ningún falso positivo.
+
+Esa recuperación de nombres no se aplica a los includes ni cubre siempre
+las declaraciones partidas con `_`. Por ejemplo, `Const A = 1, B = 2`
+en un include puede hacer que un uso de `B` se marque como sin declarar.
+`Case Is > 5` es sintaxis de VBA, no de VBScript.
+
+#### Cuándo se actualizan
+
+Al abrir la página, al guardarla y 500 ms después de la última edición
+(`TextChanged` e `InsertLeave`). Guardar un `.asp`, `.inc`, `.htm`,
+`.html`, `.js` o `.css` vuelve a revisar las demás páginas abiertas.
+
+`undeclared` y `unknown_call` usan el buffer con sus cambios sin guardar,
+pero leen los includes desde disco: un include recién creado o editado
+cuenta cuando se guarda.
+
+Si se llama a `setup` con páginas ya abiertas, las severidades nuevas se
+aplican en el próximo refresh. Se puede adelantar con
+`require('asp.diagnostics').refresh(0)` en el buffer actual.
+
 ### Rendimiento
+
+Los diagnósticos parsean solo el VBScript del buffer, con las regiones de
+sus bloques `<% %>`, sin las capas HTML ni JavaScript. Los includes salen
+de las cachés del grafo y de los símbolos, por mtime y tamaño. En una
+página de ~20 KB con 20 includes, un refresh tarda ~5,6 ms en caliente,
+sin leer disco, y ~21 ms en frío.
+[Mediciones](tests/bench/diagnostics.md).
 
 Las consultas VBScript sobre archivos de disco, como includes y símbolos
 del proyecto, parsean sólo VBScript. En el buffer que tenés abierto,
@@ -323,6 +424,20 @@ Una página cambiada se relee sola.
 [Mediciones](tests/bench/symbols_site.md).
 
 ## Limitaciones conocidas
+
+- Diagnósticos de VBScript: no ven lo que declara `global.asa` (objetos
+  `<OBJECT>`, type libraries con `METADATA`) ni los bloques
+  `<script runat="server">`. Bajo `Option Explicit`, sus nombres y las
+  constantes de ADO sin `adovbs.inc` se marcan como sin declarar. La
+  variable de un `For` cuenta como declarada aunque VBScript exige su
+  `Dim`. Una página con `<%@ Language="JScript" %>` no se revisa como
+  VBScript. Los identificadores de varios `<%= %>` en una misma línea se
+  fusionan en la región combinada y no se revisan.
+- Páginas inexistentes: la detección es la de la navegación, por texto.
+  No reconoce comentarios de JavaScript y marca cualquier literal con una
+  de esas extensiones, aunque no sea un enlace, como un archivo que se va a
+  crear con `Server.MapPath`. En un filesystem sensible a mayúsculas,
+  `"Otra.asp"` no encuentra `otra.asp`, aunque IIS sí lo serviría.
 
 - La navegación de páginas toma las comillas más cercanas a cada lado del
   cursor en una sola línea y exige que sean del mismo tipo.

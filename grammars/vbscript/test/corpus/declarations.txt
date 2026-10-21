@@ -1,0 +1,14 @@
+==================
+declaracion con array fijo, array dinamico y escalar
+==================
+Dim a(10), b(), x
+---
+
+(source_file
+  (dim_statement
+    (identifier)
+    (expression
+      (primary_expression
+        (number_literal)))
+    (identifier)
+    (identifier)))

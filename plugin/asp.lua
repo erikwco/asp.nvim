@@ -17,6 +17,11 @@ vim.api.nvim_create_autocmd('FileType', {
       require('asp.lsp').start(args.buf)
     end)
 
+    -- Diagnósticos: al abrir (diferido), al guardar (abajo) y con espera
+    -- tras cada edición (asp.diagnostics.attach).
+    pcall(function()
+      require('asp.diagnostics').attach(args.buf)
+    end)
     vim.schedule(function()
       pcall(function()
         require('asp.diagnostics').refresh(args.buf)
@@ -27,11 +32,12 @@ vim.api.nvim_create_autocmd('FileType', {
 
 -- Patrones case-insensitive (IIS no distingue mayúsculas). *.js: los `.js`
 -- de <script src> que lee asp.js desde disco; .htm/.html: fuentes del
--- barrido de usos de página (asp.pages).
+-- barrido de usos de página (asp.pages); .css: destino de los diagnósticos
+-- de páginas inexistentes.
 vim.api.nvim_create_autocmd('BufWritePost', {
   pattern = {
     '*.[aA][sS][pP]', '*.[iI][nN][cC]', '*.[hH][tT][mM]',
-    '*.[hH][tT][mM][lL]', '*.[jJ][sS]',
+    '*.[hH][tT][mM][lL]', '*.[jJ][sS]', '*.[cC][sS][sS]',
   },
   group = vim.api.nvim_create_augroup('asp_nvim_writes', { clear = true }),
   callback = function(args)
@@ -41,8 +47,16 @@ vim.api.nvim_create_autocmd('BufWritePost', {
       require('asp.symbols').invalidate(path)
       require('asp.js').invalidate(path)
       require('asp.includes').invalidate(path)
+      local diagnostics = require('asp.diagnostics')
       if vim.bo[args.buf].filetype == 'asp' then
-        require('asp.diagnostics').refresh(args.buf)
+        diagnostics.refresh(args.buf)
+      end
+      -- El archivo guardado puede ser un include, o el destino de un
+      -- enlace, de otra página abierta.
+      for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+        if buf ~= args.buf and vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].filetype == 'asp' then
+          diagnostics.schedule(buf)
+        end
       end
     end)
   end,

@@ -22,7 +22,6 @@ module.exports = grammar({
 
   conflicts: $ => [
     [$.function_call, $.primary_expression],
-    [$.dim_statement],
     [$.block, $._statement],
   ],
 
@@ -196,11 +195,14 @@ module.exports = grammar({
 
     dim_statement: $ => seq(
       choice(ci('Dim'), ci('Public'), ci('Private'), ci('Static')),
-      $.identifier,
-      optional($._array_dim),
+      $._dim_variable,
       optional(seq('=', $.expression)),
-      repeat(seq(',', $.identifier, optional($._array_dim))),
+      repeat(seq(',', $._dim_variable)),
     ),
+
+    _dim_variable: $ => prec.right(2, seq(
+      $.identifier, optional($._array_dim),
+    )),
 
     _array_dim: $ => seq('(', optional(seq($.expression, repeat(seq(',', $.expression)))), ')'),
 
