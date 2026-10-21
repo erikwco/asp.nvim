@@ -322,9 +322,9 @@ El nombre nuevo tiene que ser un identificador válido (VBScript:
 palabra clave, un nativo ni un intrínseco (en VBScript, sin distinguir
 mayúsculas) ni una palabra reservada de JavaScript. Se excluyen también
 `eval` y `arguments`, que no pueden declarar nombres en JS estricto.
-También se rechaza si
-ya hay una declaración con ese nombre en el mismo alcance: en el buffer y,
-para un símbolo de página de VBScript, en su grafo de includes.
+También se rechaza si ya hay una declaración con ese nombre en el mismo
+alcance: en el buffer y, para un símbolo de página de VBScript, en su grafo
+de includes.
 
 Límites:
 
@@ -339,9 +339,14 @@ Límites:
   `ExecuteGlobal`, los nombres armados en runtime, los strings de
   JavaScript ni las páginas fuera de la raíz del sitio que incluyen la
   librería.
-- Como las referencias, no ve los identificadores de varios `<%= %>` en
-  una misma línea (`<td><%=a%></td><td><%=b%></td>`): esos usos no
-  cambian. Poné cada `<%= %>` en su propia línea antes de renombrar.
+- Como las referencias, puede fundir identificadores de bloques `<%= %>`
+  sin espacios en su código (`<td><%=a%></td><td><%=b%></td>`), incluso
+  si el HTML entre ellos tiene saltos de línea. Esos usos no cambian.
+  Separalos dentro del código (`<%= a %>`, `<%= b %>`) antes de renombrar.
+- Los comentarios con apóstrofo no cambian. Como las referencias del
+  buffer, puede contar nombres dentro de comentarios `Rem` del archivo
+  actual y renombrarlos. Los `Rem` de archivos consultados en disco se
+  excluyen.
 - Solo detecta los choques con declaraciones del mismo alcance: no avisa
   si un local nuevo tapa un nombre de página que la Sub también usa, ni
   si un global de JS choca con uno de un `.js` externo.
@@ -531,8 +536,8 @@ Una página cambiada se relee sola.
   constantes de ADO sin `adovbs.inc` se marcan como sin declarar. La
   variable de un `For` cuenta como declarada aunque VBScript exige su
   `Dim`. Una página con `<%@ Language="JScript" %>` no se revisa como
-  VBScript. Los identificadores de varios `<%= %>` en una misma línea se
-  fusionan en la región combinada y no se revisan.
+  VBScript. Los identificadores de bloques `<%= %>` sin espacios en su
+  código pueden fusionarse en la región combinada y no se revisan.
 - Páginas inexistentes: la detección es la de la navegación, por texto.
   No reconoce comentarios de JavaScript y marca cualquier literal con una
   de esas extensiones, aunque no sea un enlace, como un archivo que se va a
@@ -568,13 +573,14 @@ Una página cambiada se relee sola.
 - `gf` y `C-w f` solo reconocen rutas con `/` como separador. Neovim corta
   el nombre en `\` en Unix. `C-]` y `vim.lsp.buf.definition()` sí normalizan
   `\` a `/`.
-- Varios bloques `<%= %>` en una misma línea (p. ej.
+- Varios bloques `<%= %>` sin espacios en su código (p. ej.
   `<td><%=a%></td><td><%=b%></td>`) se fusionan en una sola región por la
   injection combinada de VBScript (necesaria para que construcciones
   cruzadas como `<% If %>...<% End If %>` parseen como un solo programa);
   como resultado, hover/definición/referencias no resuelven identificadores
-  dentro de esos bloques adyacentes, y el rename no los cambia. Poné cada
-  `<%= %>` en su propia línea para navegación LSP completa.
+  dentro de esos bloques adyacentes, y el rename no los cambia. Los saltos
+  de línea en el HTML no los separan; agregá espacios dentro del código
+  (`<%= a %>`, `<%= b %>`).
 - JavaScript entre archivos: de cada `.js` de `<script src>` y de cada
   include sólo se ven sus declaraciones globales. Gana el buffer, luego
   los `<script src>` en orden y después los includes en el orden del

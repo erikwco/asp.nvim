@@ -263,9 +263,9 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       dígito al comienzo. No puede ser una palabra clave, un nativo ni un
       intrínseco (en VBScript, sin distinguir mayúsculas) ni una palabra
       reservada de JS, ni eval o arguments (inválidos en JS estricto).
-      Se rechaza si ya hay una declaración con ese
-      nombre en el mismo alcance: en el buffer y, para un símbolo de
-      página de VBScript, en su grafo de includes. No avisa si un local
+      Se rechaza si ya hay una declaración con ese nombre en el mismo
+      alcance: en el buffer y, para un símbolo de página de VBScript,
+      en su grafo de includes. No avisa si un local
       nuevo tapa un nombre de página que la Sub usa, ni si un global de
       JS choca con uno de un .js externo.
 
@@ -279,9 +279,13 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
 
       No cambia los nombres dentro de strings de Eval, Execute o
       ExecuteGlobal, los armados en runtime, los strings de JS, las
-      páginas fuera de la raíz del sitio que incluyen la librería ni los
-      identificadores de varios `<%= %>` en una misma línea. Las
-      posiciones de los demás archivos salen del disco: si alguno está
+      páginas fuera de la raíz del sitio que incluyen la librería.
+      Los identificadores de bloques `<%= %>` sin espacios en su código
+      pueden fundirse aunque el HTML tenga saltos de línea; esos usos no
+      cambian. Separalos dentro del código: `<%= a %>`, `<%= b %>`.
+      Omite comentarios con apóstrofo. Puede renombrar nombres dentro de
+      Rem del buffer actual, como references; los Rem de disco se omiten.
+      Las posiciones de los demás archivos salen del disco: si alguno está
       abierto con cambios sin guardar, el rename se rechaza hasta
       guardarlo.
 
@@ -495,8 +499,8 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       constantes de ADO sin adovbs.inc se marcan como sin declarar. La
       variable de un For cuenta como declarada aunque VBScript exige su
       Dim. Una página con <%@ Language="JScript" %> no se revisa como
-      VBScript. Los identificadores de varios <%= %> en una línea no se
-      revisan.
+      VBScript. Los identificadores de bloques <%= %> sin espacios en su
+      código pueden fusionarse en la región combinada y no se revisan.
 
       missing_page detecta por texto, como la navegación: no reconoce
       comentarios de JavaScript y marca cualquier literal con esas
@@ -533,11 +537,11 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       corta el nombre en `\` en Unix. `C-]` y `vim.lsp.buf.definition()`
       sí normalizan `\` a `/`.
 
-      Varios `<%= %>` en una misma línea (p. ej. `<%=a%><%=b%>`) se
+      Varios `<%= %>` sin espacios en su código (`<%=a%><%=b%>`) se
       fusionan por la injection combinada de VBScript (necesaria para
       `<% If %>...<% End If %>` cruzando bloques); hover/definición/
-      referencias de identificadores no resuelven ahí. Un `<%= %>` por
-      línea sí funciona.
+      referencias de identificadores no resuelven ahí. Los saltos de línea
+      en el HTML no los separan; agregá espacios en el código: `<%= a %>`.
 
                                                               *asp-javascript*
 JavaScript de cliente ~

@@ -495,6 +495,131 @@ describe('asp.rename rename', function()
     end)
   end)
 
+  for _, origin in ipairs({ 'pagina.asp', 'lib.inc', 'otra.asp' }) do
+    it('aplica el rename de sitio desde ' .. origin .. ' con el buffer actual modificado', function()
+      local lib = '\239\187\191<%\r\nFunction Mezclar(a, b)\r\n  Mezclar = a + b\r\nEnd Function\r\n%>\r\n'
+      local nested = '<!--#include file="lib.inc"-->\r\n<% Response.Write "Canci\243n " & MeZcLaR(1, 2) %>\r\n'
+      local page = {
+        '<!--#include file="anidado.inc"-->', '<%', 'Dim x',
+        'Call MEZCLAR(1, 2)', 'Mezclar 3, 4',
+        'x = Mezclar(5, 6) : x = mezclAR(7, 8)', 'x = Mezclar',
+        'obj.Mezclar 3, 4', "' Mezclar no cambia", '%>', '<p><%= Mezclar(1, 2) %></p>',
+      }
+      local files = {
+        ['lib.inc'] = lib, ['anidado.inc'] = nested,
+        ['pagina.asp'] = table.concat(page, '\r\n') .. '\r\n',
+        ['otra.asp'] = '<!--#include file="anidado.inc"-->\n<% Response.Write mEzClAr(2, 3) %>\n',
+        ['ajena.asp'] = '<% Function Mezclar(a, b) : Mezclar = a + b : End Function %>\n',
+      }
+      in_temp(files, function(dir)
+        vim.cmd.edit(dir .. '/' .. origin)
+        vim.api.nvim_buf_set_lines(0, 0, 0, false, { '<!-- sin guardar -->' })
+        local word = origin == 'lib.inc' and 'Mezclar' or (origin == 'otra.asp' and 'mEzClAr' or 'MEZCLAR')
+        local edit = assert(rename.rename(0, pos_in(word, word), 'Combinar'))
+        vim.lsp.util.apply_workspace_edit(edit, 'utf-8')
+        local expected = {
+          ['lib.inc'] = { '<%', 'Function Combinar(a, b)', '  Combinar = a + b', 'End Function', '%>' },
+          ['anidado.inc'] = { '<!--#include file="lib.inc"-->', '<% Response.Write "Canción " & Combinar(1, 2) %>' },
+          ['otra.asp'] = { '<!--#include file="anidado.inc"-->', '<% Response.Write Combinar(2, 3) %>' },
+          ['pagina.asp'] = {
+            '<!--#include file="anidado.inc"-->', '<%', 'Dim x',
+            'Call Combinar(1, 2)', 'Combinar 3, 4',
+            'x = Combinar(5, 6) : x = Combinar(7, 8)', 'x = Combinar',
+            'obj.Mezclar 3, 4', "' Mezclar no cambia", '%>', '<p><%= Combinar(1, 2) %></p>',
+          },
+        }
+        table.insert(expected[origin], 1, '<!-- sin guardar -->')
+        for file, lines in pairs(expected) do
+          assert.are.same(lines, buffer_lines(dir .. '/' .. file))
+          local f = assert(io.open(dir .. '/' .. file, 'rb'))
+          local bytes = f:read('*a'); f:close()
+          assert.are.equal(files[file], bytes)
+        end
+        local _, b = buffer_lines(dir .. '/lib.inc')
+        assert.is_true(vim.bo[b].bomb)
+        assert.are.equal('dos', vim.bo[b].fileformat)
+        _, b = buffer_lines(dir .. '/anidado.inc')
+        assert.are.equal('latin1', vim.bo[b].fileencoding)
+        assert.are.equal('dos', vim.bo[b].fileformat)
+        assert.are.equal(-1, vim.fn.bufnr(dir .. '/ajena.asp'))
+      end)
+    end)
+  end
+
+  it('aplica parámetros, For y Set sin tocar homónimos de página ni de otra Sub', function()
+    local lines = {
+      '<%', 'Dim total, obj', 'total = 1', 'Sub Uno(total)', '  Dim i',
+      '  For i = 1 To total', '    Set obj = Nothing', '    total = total + i',
+      '  Next', '  Call Dos(total)', '  Dos total', 'End Sub',
+      'Sub Dos(total)', '  Response.Write total', 'End Sub', '%>', '<p><%= total %></p>',
+    }
+    in_temp({ ['pagina.asp'] = table.concat(lines, '\n') .. '\n' }, function(dir)
+      vim.cmd.edit(dir .. '/pagina.asp')
+      local function apply(text, word, new)
+        vim.lsp.util.apply_workspace_edit(assert(rename.rename(0, pos_in(text, word), new)), 'utf-8')
+      end
+      apply('Sub Uno(total)', 'total', 'cantidad')
+      apply('For i', 'i', 'indice')
+      apply('Set obj', 'obj', 'registro')
+      apply('Dim total', 'total', 'suma')
+      assert.are.same({
+        '<%', 'Dim suma, registro', 'suma = 1', 'Sub Uno(cantidad)', '  Dim indice',
+        '  For indice = 1 To cantidad', '    Set registro = Nothing', '    cantidad = cantidad + indice',
+        '  Next', '  Call Dos(cantidad)', '  Dos cantidad', 'End Sub',
+        'Sub Dos(total)', '  Response.Write total', 'End Sub', '%>', '<p><%= suma %></p>',
+      }, buffer_lines(dir .. '/pagina.asp'))
+    end)
+  end)
+
+  it('aplica scopes JS, let, const y clases sin editar métodos, strings ni scripts de servidor', function()
+    local lines = {
+      '<script>', 'let total = 1;', 'const limite = 10;',
+      'function usar(total) { let local = total; return local + limite; }',
+      'function otra(local) { return local; }', 'class Caja { usar(total) { return total; } }',
+      'var caja = new Caja();', 'console.log(total, limite, "total", caja.usar(2));', '</script>',
+      '<script runat="server">function servidor() { return total; }</script>',
+    }
+    in_temp({ ['pagina.asp'] = table.concat(lines, '\n') .. '\n' }, function(dir)
+      vim.cmd.edit(dir .. '/pagina.asp')
+      local param = pos_in('function usar(total)', 'total')
+      local edit, err = rename.rename(0, param, 'local')
+      assert.is_nil(edit)
+      assert.is_truthy(err.message:find('mismo alcance', 1, true))
+      for _, case in ipairs({ { 'class Caja', 'usar' }, { 'caja.usar', 'usar' }, { 'servidor()', 'servidor' } }) do
+        assert.is_nil(rename.prepare(0, pos_in(case[1], case[2])))
+      end
+      local function apply(text, word, new)
+        vim.lsp.util.apply_workspace_edit(assert(rename.rename(0, pos_in(text, word), new)), 'utf-8')
+      end
+      apply('function usar(total)', 'total', 'dato')
+      apply('let total', 'total', '$Total')
+      apply('const limite', 'limite', 'MAXIMO')
+      apply('class Caja', 'Caja', 'Contenedor')
+      assert.are.same({
+        '<script>', 'let $Total = 1;', 'const MAXIMO = 10;',
+        'function usar(dato) { let local = dato; return local + MAXIMO; }',
+        'function otra(local) { return local; }', 'class Contenedor { usar(total) { return total; } }',
+        'var caja = new Contenedor();', 'console.log($Total, MAXIMO, "total", caja.usar(2));', '</script>',
+        '<script runat="server">function servidor() { return total; }</script>',
+      }, buffer_lines(dir .. '/pagina.asp'))
+    end)
+  end)
+
+  it('acepta varios <%= %> de una línea cuando el código conserva espacios separadores', function()
+    in_temp({
+      ['pagina.asp'] = '<%\nDim total\ntotal = 1\n%>\n<p><%= total %></p><p><%= total %></p>\n',
+    }, function(dir)
+      vim.cmd.edit(dir .. '/pagina.asp')
+      local pos = pos_in('<%= total', 'total')
+      assert.are.equal('total', rename.prepare(0, pos).placeholder)
+      local edit = assert(rename.rename(0, pos, 'saldo'))
+      assert.are.same({ ['pagina.asp'] = 4 }, counts(edit, dir))
+      vim.lsp.util.apply_workspace_edit(edit, 'utf-8')
+      assert.are.same({ '<%', 'Dim saldo', 'saldo = 1', '%>', '<p><%= saldo %></p><p><%= saldo %></p>' },
+        buffer_lines(dir .. '/pagina.asp'))
+    end)
+  end)
+
   it('latin1 y BOM: los edits caen en la columna del buffer', function()
     in_temp({
       -- latin1: "Cálculo", "Canción número", "Validación".
