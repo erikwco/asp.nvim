@@ -357,7 +357,6 @@ M.groups = {
     { 'vbVerticalTab', value = 'Chr(11)', doc = 'Tabulador vertical.' },
     { 'vbBinaryCompare', value = '0', doc = 'Comparación binaria de cadenas.' },
     { 'vbTextCompare', value = '1', doc = 'Comparación textual de cadenas.' },
-    { 'vbDatabaseCompare', value = '2', doc = 'Comparación de base de datos; constante conservada por compatibilidad, no admitida en VBScript.' },
     { 'vbSunday', value = '1', doc = 'Domingo.' },
     { 'vbMonday', value = '2', doc = 'Lunes.' },
     { 'vbTuesday', value = '3', doc = 'Martes.' },
