@@ -160,7 +160,7 @@ local function server(dispatchers)
             renameProvider = { prepareProvider = true },
             positionEncoding = 'utf-8',
           },
-          serverInfo = { name = 'asp-ls', version = '0.6.0' },
+          serverInfo = { name = 'asp-ls', version = '0.7.0' },
         })
       elseif method == 'shutdown' then
         respond(nil, nil)

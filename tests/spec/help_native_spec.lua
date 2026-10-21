@@ -77,9 +77,51 @@ describe('catálogos de ayuda VBScript y COM', function()
     assert.are.equal('Match', com.member('Matches', 'Item').returns)
   end)
 
+  it('cubre los miembros frecuentes en ASP de ADO, FSO, MSXML, CDO y Stream', function()
+    local expected = {
+      Recordset = { 'CursorLocation', 'CursorType', 'LockType', 'PageSize', 'AbsolutePage',
+        'PageCount', 'AbsolutePosition', 'RecordCount', 'BOF', 'Find', 'Supports', 'CancelUpdate',
+        'Update', 'AddNew', 'Delete', 'MoveFirst', 'MoveLast', 'MovePrevious', 'GetRows', 'Requery' },
+      FileSystemObject = { 'GetBaseName', 'GetParentFolderName', 'GetTempName', 'GetExtensionName',
+        'GetFileName', 'BuildPath', 'CopyFolder', 'MoveFolder', 'MoveFile', 'CopyFile', 'DriveExists',
+        'GetSpecialFolder', 'GetAbsolutePathName' },
+      DOMDocument = { 'parseError', 'getElementsByTagName', 'createTextNode', 'createElement',
+        'appendChild', 'save', 'async', 'setProperty' },
+      XMLNode = { 'getAttribute', 'setAttribute', 'attributes', 'firstChild', 'childNodes',
+        'nodeName', 'nodeValue', 'text', 'removeChild' },
+      Message = { 'ReplyTo', 'Sender', 'Cc', 'Bcc', 'AddAttachment', 'CreateMHTMLBody' },
+      Stream = { 'LineSeparator', 'Mode', 'CopyTo', 'SetEOS', 'Charset', 'Position', 'Size',
+        'LoadFromFile', 'SaveToFile' },
+      ServerXMLHTTP = { 'setOption', 'setTimeouts', 'getResponseHeader', 'getAllResponseHeaders' },
+    }
+    for type_name, names in pairs(expected) do
+      for _, name in ipairs(names) do
+        assert.is_not_nil(com.member(type_name, name), type_name .. '.' .. name)
+      end
+    end
+    assert.are.equal('ParseError', com.member('DOMDocument', 'parseError').returns)
+    assert.are.equal('0', com.member('ParseError', 'errorCode').doc:match('(%d) si'))
+    assert.are.equal('XMLNodes', com.member('DOMDocument', 'getElementsByTagName').returns)
+    assert.are.equal('NamedNodeMap', com.member('XMLNode', 'attributes').returns)
+    assert.are.equal('Folder', com.member('FileSystemObject', 'GetSpecialFolder').returns)
+    assert.are.equal('Boolean', com.member('Recordset', 'Supports').returns)
+    assert.are.same({ 'Criteria', 'SkipRows', 'SearchDirection', 'Start' },
+      vim.tbl_map(function(p) return p.name end, com.member('Recordset', 'Find').params))
+    assert.is_true(com.member('Recordset', 'Find').params[2].optional)
+    assert.is_truthy(com.member('Recordset', 'CursorLocation').doc:find('adUseClient (3)', 1, true))
+    assert.is_truthy(com.member('Stream', 'LineSeparator').doc:find('adCRLF (-1, por defecto)', 1, true))
+  end)
+
+  it('MSXML no limita attributes a los elementos', function()
+    local member = com.member('XMLNode', 'attributes')
+    assert.are.equal('NamedNodeMap', member.returns)
+    assert.is_truthy(member.doc:find('declaración XML', 1, true))
+    assert.is_truthy(member.doc:find('tipo de nodo', 1, true))
+  end)
+
   it('documenta según Microsoft los separadores de CDO y la semilla de Rnd', function()
     -- CDO separa destinatarios con comas; el punto y coma es de MAPI.
-    for _, field in ipairs({ 'To', 'CC', 'BCC' }) do
+    for _, field in ipairs({ 'To', 'CC', 'BCC', 'ReplyTo' }) do
       assert.is_truthy(com.member('Message', field).doc:find('por comas', 1, true), field)
     end
     -- Un argumento negativo repite siempre el mismo número, no reinicia.
@@ -187,6 +229,19 @@ describe('ayuda nativa y COM', function()
     assert.is_nil(result.Replace)
   end)
 
+  it('infiere el error de análisis, las listas de nodos y los elementos de MSXML', function()
+    query('Set doc = Server.CreateObject("MSXML2.DOMDocument.6.0")')
+    query('Set errorXml = doc.parseError')
+    query('Set nodos = doc.getElementsByTagName("item")')
+    query('Set raiz = doc.documentElement')
+    local p = query('Response.Write errorXml.')
+    assert.are.equal('ParseError', types.infer(0, p, 'errorXml').id)
+    assert.are.equal('XMLNodes', types.infer(0, p, 'nodos').id)
+    assert.are.equal('XMLNode', types.infer(0, p, 'raiz').id)
+    assert.is_not_nil(items('errorXml.rea').reason)
+    assert.is_not_nil(items('raiz.getAttr').getAttribute)
+  end)
+
   it('filtra miembros COM por prefijo', function()
     local result = items('rs.moVeN')
     assert.is_not_nil(result.MoveNext)
@@ -210,6 +265,51 @@ describe('ayuda nativa y COM', function()
     assert.is_not_nil(items('FuncionI').FuncionIncluida)
     local value = hover.hover(0, pos('Response.Write', #('Response.'))).contents.value
     assert.is_truthy(value:find('Response.Write(variant)', 1, true))
+  end)
+
+  it('completion no ofrece las palabras clave de VBA que VBScript no admite', function()
+    for _, text in ipairs({ 'Dim x As In', 'Dim x As Lo', 'Function F(Opt', 'Ty', 'Like', 'As', 'Sta',
+      'RaiseE', 'Impl', 'En' }) do
+      local result = items(text)
+      for _, word in ipairs({ 'Integer', 'Long', 'Optional', 'Type', 'TypeOf', 'Like', 'As', 'Static',
+        'RaiseEvent', 'Implements', 'Enum', 'EndIf' }) do
+        assert.is_nil(result[word], text .. ' → ' .. word)
+      end
+    end
+    assert.is_not_nil(items('Lo').Loop)
+    assert.is_not_nil(items('Op').Option)
+    assert.is_not_nil(items('En').End)
+    -- Siguen siendo palabras clave para los diagnósticos.
+    local native = require('asp.vbscript_builtins')
+    assert.are.equal('keywords', native.lookup('integer').group)
+    assert.is_true(native.lookup('TypeOf').vba_only)
+    assert.is_nil(native.lookup('Function').vba_only)
+  end)
+
+  it('acota el parámetro activo de Array, que es variádica', function()
+    local result = signature.help(0, query('x = Join(Array(1, 2, 3, '))
+    assert.are.equal('Array([arglist])', result.signatures[1].label)
+    assert.are.equal(0, result.activeParameter)
+    -- En las demás, un argumento de más queda fuera de rango.
+    assert.are.equal(1, signature.help(0, query('x = Len("a", ')).activeParameter)
+  end)
+
+  it('una Function del usuario sombrea a la nativa homónima en hover y firmas', function()
+    query('Function Round(valor, decimales)')
+    query('  Round = valor')
+    query('End Function')
+    local result = signature.help(0, query('x = Round(1, '))
+    assert.are.equal(2, #result.signatures)
+    assert.are.equal('Function Round(valor, decimales)', result.signatures[1].label)
+    assert.are.equal('Round(expression[, numdecimalplaces])', result.signatures[2].label)
+    assert.are.equal(0, result.activeSignature)
+    assert.are.equal(1, result.activeParameter)
+    local value = hover.hover(0, pos('x = Round(', 4)).contents.value
+    assert.is_truthy(value:find('```vbscript\nFunction Round(valor, decimales)\n```', 1, true))
+    assert.is_truthy(value:find('Sombrea la función nativa `Round(expression', 1, true))
+    -- Sin declaración del usuario, la nativa.
+    assert.is_truthy(hover.hover(0, pos('Len(')).contents.value:find('```vbscript\nLen(string)', 1, true))
+    assert.are.equal(1, #signature.help(0, query('x = Fix(')).signatures)
   end)
 
   it('Mid activa el segundo parámetro tras la primera coma', function()
@@ -557,5 +657,36 @@ describe('alcance y cachés de ayuda', function()
       textDocument = { uri = vim.uri_from_bufnr(0) }, position = { line = -1, character = -1 },
     })
     assert.is_nil(result)
+  end)
+end)
+
+describe('hover de una Function que devuelve un objeto COM', function()
+  local hover = require('asp.hover')
+
+  after_each(function() vim.cmd('bwipeout!') end)
+
+  local function pos(text, shift)
+    for i, line in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do
+      local col = line:find(text, 1, true)
+      if col then return { line = i - 1, character = col - 1 + (shift or 0) } end
+    end
+    error('texto no encontrado: ' .. text)
+  end
+
+  it('en su declaración muestra la firma y el tipo de retorno', function()
+    vim.cmd.edit('tests/fixtures/proyecto/lib/db.inc')
+    local value = hover.hover(0, pos('Function AbrirConexion', #'Function ')).contents.value
+    assert.are.equal('```vbscript\nFunction AbrirConexion()\n```\n\nRetorno: `ADODB.Connection`.', value)
+    -- Dentro del cuerpo, el nombre es la variable de retorno.
+    value = hover.hover(0, pos('Set AbrirConexion', #'Set ')).contents.value
+    assert.is_truthy(value:find('**AbrirConexion** (`ADODB.Connection`)', 1, true))
+  end)
+
+  it('desde una página que la llama, también muestra el retorno y el archivo', function()
+    vim.cmd.edit('tests/fixtures/proyecto/default.asp')
+    local value = hover.hover(0, pos('AbrirConexion')).contents.value
+    assert.is_truthy(value:find('Function AbrirConexion()', 1, true))
+    assert.is_truthy(value:find('Retorno: `ADODB.Connection`.', 1, true))
+    assert.is_truthy(value:find('Archivo: `db.inc`.', 1, true))
   end)
 end)

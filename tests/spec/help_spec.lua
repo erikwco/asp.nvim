@@ -22,6 +22,14 @@ describe('doc/asp.txt', function()
     end
   end)
 
+  it('el changelog de 0.7.0 deja los marcadores del cambio 7a', function()
+    local entry = text:match('0%.6%.0 → 0%.7%.0 ~(.-)0%.5%.3 → 0%.6%.0 ~')
+    assert.is_not_nil(entry)
+    for _, marker in ipairs({ 'Resaltado semántico', 'Deudas de gramática', ':checkhealth asp' }) do
+      assert.is_truthy(entry:find(marker, 1, true), marker)
+    end
+  end)
+
   it('cierra cada línea dentro de 78 columnas', function()
     for ln in text:gmatch('[^\n]*') do
       assert.is_true(vim.fn.strdisplaywidth(ln) <= 78,

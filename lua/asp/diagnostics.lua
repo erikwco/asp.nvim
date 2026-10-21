@@ -7,6 +7,11 @@ M.ns = vim.api.nvim_create_namespace('asp_includes')
 -- Espera del refresco tras editar (TextChanged/InsertLeave), en ms.
 M.debounce_ms = 500
 
+-- La decisión de revisar Call/New sin Option Explicit depende también de
+-- quién incluye el buffer, aunque su propio grafo no cambie al guardar.
+local site_checks = {}
+local page_checks = {}
+
 -- Familias y severidad por defecto. La de sintaxis es HINT porque la
 -- gramática vbscript marca como error construcciones válidas comunes
 -- (`x Is Nothing`, `Case 1, 2`, `Const A = 1, B = 2`, `.Campo` dentro de
@@ -244,13 +249,34 @@ local function starts_statement(lines, use)
   return not (prev:find('%s_%s*$') or prev:find('^_%s*$'))
 end
 
+---¿Otro archivo del sitio incluye el del buffer? Entonces sus nombres
+---pueden venir de los demás includes de esa página, que no se ven desde
+---él. Usa el índice de includes de asp.site, el mismo barrido y la misma
+---caché que las referencias. Sin raíz del sitio no se puede saber y se
+---asume que sí.
+---@param bufnr integer
+---@return boolean
+local function included_elsewhere(bufnr)
+  local path = vim.api.nvim_buf_get_name(bufnr)
+  local root = path ~= '' and require('asp.pages').scan_root_for(path)
+  if not root then return true end
+  local real = vim.uv.fs_realpath(path)
+  if not real then return false end
+  local includers = require('asp.site').index(root).includers[real]
+  local included = includers ~= nil and #includers > 0
+  site_checks[bufnr] = { root = root, path = real, included = included }
+  return included
+end
+
 ---Familias undeclared y unknown_call: usos de identificadores VBScript
 ---contra las declaraciones del buffer y de su grafo de includes.
 ---
----Solo con Option Explicit en la página o en su grafo. Sin él, asignar
----declara (`x = Array(1)` hace de `x(0)` un índice) y el archivo suele ser
----una librería que llama a lo que declaran los demás includes de la página
----que la incluye, invisibles desde ella.
+---Con Option Explicit en la página o en su grafo se revisan todos los usos.
+---Sin él, asignar declara (`x = Array(1)` hace de `x(0)` un índice), así
+---que solo se revisan `Call X` y `New X`, formas que no pueden ser una
+---variable, y solo si ningún otro archivo incluye este: una librería
+---llama a lo que declaran los demás includes de la página que la incluye,
+---invisibles desde ella.
 local function vbscript_family(ctx, undeclared, unknown_call)
   local tree, g = tree_of(ctx), graph_of(ctx)
   if not tree or tree.jscript or not g then return {} end
@@ -270,7 +296,9 @@ local function vbscript_family(ctx, undeclared, unknown_call)
       dynamic = vim.tbl_extend('force', facts[i].dynamic, { file = file })
     end
   end
-  if not option_explicit then return {} end
+  -- Sin Option Explicit, el código dinámico puede declarar cualquier cosa
+  -- y no hay revisión que explicar con el HINT.
+  if not option_explicit and (dynamic or not unknown_call) then return {} end
 
   if dynamic then
     local lnum, col, where = dynamic.lnum, dynamic.col, ''
@@ -329,6 +357,19 @@ local function vbscript_family(ctx, undeclared, unknown_call)
     end
   end
 
+  -- Sin Option Explicit, `Set fp = GetRef("F")` declara fp y `Call fp(1)`
+  -- es válido.
+  if not option_explicit then
+    for _, assignment in ipairs(require('asp.types').scan({ tree.root }, ctx.vcontent)) do
+      declare(assignment.name, assignment.scope_id, assignment.class_id)
+    end
+    for _, file in ipairs(g.order) do
+      for _, assignment in ipairs(symbols.file_help(file).assignments) do
+        if not assignment.scope_id and not assignment.class_id then page[assignment.name] = true end
+      end
+    end
+  end
+
   local builtins, intrinsics = require('asp.vbscript_builtins'), require('asp.intrinsics')
   local function known(use)
     local lower = use.lower
@@ -345,11 +386,28 @@ local function vbscript_family(ctx, undeclared, unknown_call)
     if (use.use or use.call or use.stmt) and not in_error then
       local line = ctx.lines[use.lnum + 1]
       local before = line:sub(1, use.col)
+      local row = use.lnum
+      while before:match('^%s*$') and row > 0 do
+        local continued = ctx.lines[row]:match('^(.-)%s_%s*$')
+        if not continued then break end
+        before, row = continued .. before, row - 1
+      end
+      local after = line:sub(use.end_col + 1)
+      row = use.lnum + 2
+      while after:match('^%s+_%s*$') and ctx.lines[row] do
+        after, row = ctx.lines[row], row + 1
+      end
       local prev = before:match('([%a_][%w_]*)%s*$')
+      prev = prev and prev:lower()
       -- `nombre(` es llamada o índice aunque el árbol diga otra cosa: la
       -- gramática lee `x = f(1) + g(2)` como `x = f` seguido de `(1) + g(2)`.
-      local call = use.call or line:find('^%s*%(', use.end_col + 1) ~= nil
-      if prev and prev:lower() == 'new' then
+      local call = (prev == 'call' and not after:find('^%s*%.'))
+        or use.call or after:find('^%s*%(') ~= nil
+      if not option_explicit and not ((prev == 'new' or prev == 'call')
+          and not after:find('^%s*%.')) then
+        -- Sin Option Explicit: ni variables ni `Call obj.Metodo`, cuyo
+        -- objeto pudo declararse al asignarlo.
+      elseif prev == 'new' then
         -- `New` toma clases: una Function homónima no sirve.
         if unknown_call and not classes[use.lower] and not builtins.is_class(use.lower) then
           table.insert(out, diag('unknown_call', unknown_call, use.lnum, use.col, use.lnum, use.end_col,
@@ -360,12 +418,13 @@ local function vbscript_family(ctx, undeclared, unknown_call)
           table.insert(out, diag('unknown_call', unknown_call, use.lnum, use.col, use.lnum, use.end_col,
             ('"%s" no es una Sub, Function ni variable de la página ni de sus includes'):format(use.name)))
         end
-      elseif undeclared and not known(use) then
+      elseif option_explicit and undeclared and not known(use) then
         table.insert(out, diag('undeclared', undeclared, use.lnum, use.col, use.lnum, use.end_col,
           ('variable "%s" sin declarar (Option Explicit)'):format(use.name)))
       end
     end
   end
+  if not option_explicit and #out > 0 and included_elsewhere(ctx.bufnr) then return {} end
   return out
 end
 
@@ -430,6 +489,7 @@ local function missing_page_family(ctx, severity)
   end
 
   local exists, out = {}, {}
+  page_checks[ctx.bufnr] = exists
   for _, lit in ipairs(literals) do
     local line = ctx.lines[lit.lnum + 1] or ''
     local text = line:sub(lit.col + 1, lit.end_col)
@@ -465,6 +525,8 @@ M.last_errors = {}
 ---@param bufnr integer
 function M.refresh(bufnr)
   bufnr = bufnr == 0 and vim.api.nvim_get_current_buf() or bufnr
+  site_checks[bufnr] = nil
+  page_checks[bufnr] = nil
   if not vim.api.nvim_buf_is_valid(bufnr) or not vim.api.nvim_buf_is_loaded(bufnr) then return end
   local ok_cfg, cfg = pcall(M.config)
   if not ok_cfg then
@@ -530,10 +592,72 @@ function M.schedule(bufnr)
   end)
 end
 
----Cantidad de refrescos pendientes (para los tests).
----@return integer
-function M.pending()
+---Cantidad de refrescos pendientes, o si `bufnr` tiene uno (para los
+---tests).
+---@param bufnr? integer
+---@return integer|boolean
+function M.pending(bufnr)
+  if bufnr then return timers[bufnr] ~= nil end
   return vim.tbl_count(timers)
+end
+
+---Páginas abiertas, salvo `except`, cuyos diagnósticos puede cambiar el
+---guardado de `path`: las que lo incluyen, directa o transitivamente (por
+---su grafo de includes, con las directivas de su buffer), y las que tienen
+---publicado un diagnóstico de includes o de páginas inexistentes, porque
+---el archivo guardado puede ser el que faltaba. También las librerías cuya
+---revisión de Call/New cambia al agregar o quitar un incluidor del sitio.
+---Comprueba destinos antes válidos para detectar borrados desde disco.
+---Ninguna se refresca acá: el llamador decide cuándo.
+---@param path string
+---@param except? integer
+---@return integer[]
+function M.affected(path, except)
+  local names = { [vim.fs.normalize(path)] = true }
+  local real = vim.uv.fs_realpath(path)
+  if real then names[real] = true end
+  local out, sites, exists = {}, {}, {}
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if buf ~= except and vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].filetype == 'asp' then
+      local hit = false
+      local check = site_checks[buf]
+      if check then
+        if not sites[check.root] then sites[check.root] = require('asp.site').index(check.root) end
+        local includers = sites[check.root].includers[check.path]
+        hit = check.included ~= (includers ~= nil and #includers > 0)
+      end
+      for _, d in ipairs(vim.diagnostic.get(buf, { namespace = M.ns })) do
+        if d.code == 'includes' or d.code == 'missing_page' then
+          hit = true
+          break
+        end
+      end
+      if not hit then
+        for target, previous in pairs(page_checks[buf] or {}) do
+          if exists[target] == nil then
+            local stat = vim.uv.fs_stat(target)
+            exists[target] = stat ~= nil and stat.type == 'file'
+          end
+          if exists[target] ~= previous then
+            hit = true
+            break
+          end
+        end
+      end
+      if not hit then
+        local ok, g = pcall(require('asp.includes').buffer_graph, buf)
+        hit = ok and #g.unresolved > 0 or false
+        for _, file in ipairs(ok and g.order or {}) do
+          if names[file] then
+            hit = true
+            break
+          end
+        end
+      end
+      if hit then table.insert(out, buf) end
+    end
+  end
+  return out
 end
 
 ---Refresca `bufnr` con espera tras cada edición (TextChanged e
@@ -551,6 +675,8 @@ function M.attach(bufnr)
     buffer = bufnr,
     callback = function()
       cancel(bufnr)
+      site_checks[bufnr] = nil
+      page_checks[bufnr] = nil
       pcall(vim.api.nvim_del_augroup_by_id, group)
     end,
   })

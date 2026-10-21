@@ -9,12 +9,28 @@ local function md(value)
   return { contents = { kind = 'markdown', value = value } }
 end
 
--- Primera línea de la declaración del usuario y, si viene de un include,
--- el nombre de su archivo.
-local function declaration(entry)
+-- Primera línea de la declaración del usuario, el tipo COM que devuelve
+-- si es una Function que lo crea y, si viene de un include, el nombre de su
+-- archivo. `native` es la función nativa homónima que sombrea.
+local function declaration(bufnr, entry, native)
   local value = ('```vbscript\n%s\n```'):format(entry.declaration)
+  local returns = require('asp.types').returns(bufnr, entry)
+  if returns then value = value .. '\n\nRetorno: `' .. returns.name .. '`.' end
+  if native then
+    value = value .. '\n\nSombrea la función nativa `' .. native.signature .. '`.'
+  end
   if entry.file then value = value .. '\n\nArchivo: `' .. vim.fn.fnamemodify(entry.file, ':t') .. '`.' end
   return md(value)
+end
+
+-- ¿`node` es el nombre en la declaración de una Function?
+local function function_name(node)
+  local parent = node:parent()
+  if not parent or parent:type() ~= 'function_statement' then return false end
+  for child in parent:iter_children() do
+    if child:type() == 'identifier' then return child:equal(node) end
+  end
+  return false
 end
 
 -- ¿El nodo es el MIEMBRO de un member_expression? Devuelve el texto del
@@ -64,14 +80,16 @@ function M.hover(bufnr, position)
   if node:parent() and node:parent():type() == 'member_expression' then
     for _, entry in ipairs(symbols.help(bufnr).entries) do
       if entry.class_id and not entry.scope_id and entry.name:lower() == text:lower() then
-        return declaration(entry)
+        return declaration(bufnr, entry)
       end
     end
     local entry = symbols.named(bufnr, position, text)
-    return entry and declaration(entry) or nil
+    return entry and declaration(bufnr, entry) or nil
   end
 
-  local inferred = require('asp.types').infer(bufnr, position, text)
+  -- En su declaración, el nombre de una Function es la Function, no la
+  -- variable de retorno que asigna su cuerpo.
+  local inferred = not function_name(node) and require('asp.types').infer(bufnr, position, text)
   if inferred then
     return md(('**%s** (`%s`)\n\n%s'):format(text, inferred.name, inferred.doc))
   end
@@ -82,14 +100,16 @@ function M.hover(bufnr, position)
   end
 
   local native = require('asp.vbscript_builtins').lookup(text)
-  if native and native.group == 'functions' then
-    return md(signature_info.markdown(native))
-  elseif native and native.group == 'constants' then
+  if native and native.group == 'constants' then
     return md(('```vbscript\n%s = %s\n```\n\n%s'):format(native.name, native.value, native.doc))
   end
-
   local entry = symbols.named(bufnr, position, text)
-  if entry then return declaration(entry) end
+  if native and native.group == 'functions' then
+    -- Una Sub o Function del usuario homónima sombrea a la nativa.
+    if entry and entry.params then return declaration(bufnr, entry, native) end
+    return md(signature_info.markdown(native))
+  end
+  if entry then return declaration(bufnr, entry) end
   return nil
 end
 

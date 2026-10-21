@@ -6,9 +6,25 @@ local FUNCTIONS = {
   arrow_function = true, method_definition = true,
 }
 
+-- Default o rest que envuelve directamente al nombre de un parámetro.
+local WRAPPERS = { assignment_pattern = 'left', object_assignment_pattern = 'left', rest_pattern = true }
+
+---`(parámetro) alfa = 1`: el nombre con su default o su `...`, en una
+---línea. Los nombres de un patrón (`{ a, b } = {}`) muestran solo el suyo.
+local function parameter(entry, source)
+  local node, parent = entry.decl, entry.decl:parent()
+  local field = parent and WRAPPERS[parent:type()]
+  if field == true or (field and parent:field(field)[1] and parent:field(field)[1]:equal(node)) then
+    node = parent
+  end
+  local text = vim.treesitter.get_node_text(node, source):gsub('%s*\n%s*', ' ')
+  return { name = entry.name, kind = 6, detail = '(parámetro) ' .. text }
+end
+
 -- Se extrae antes de detach: la caché de disco conserva texto y offsets,
 -- sin retener los árboles ni necesitar otra lectura para mostrar ayuda.
 function M.declaration(entry, source)
+  if entry.parameter then return parameter(entry, source) end
   local decl, fn = entry.decl, entry.decl
   local kind = ({ [5] = 7, [6] = 2, [12] = 3 })[entry.kind] or 6
   if decl:type() == 'variable_declarator' then
@@ -29,6 +45,14 @@ function M.declaration(entry, source)
   local detail = vim.trim(header:match('^[^\n]*'))
   if callable and fn:type() == 'arrow_function' then detail = detail .. ' ...' end
   local info = { name = entry.name, kind = kind, detail = detail }
+  if fn and fn:type() == 'new_expression' then
+    local ctor = fn:field('constructor')[1]
+    if ctor and ctor:type() == 'identifier' then
+      local row, col = ctor:start()
+      info.constructor = { name = vim.treesitter.get_node_text(ctor, source),
+        position = { line = row, character = col } }
+    end
+  end
   if callable then
     -- La firma completa mantiene los parámetros multilínea y los patrones;
     -- detail conserva la primera línea que se muestra en hover/completion.
