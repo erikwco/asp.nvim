@@ -773,6 +773,35 @@ describe('asp.rename rename', function()
     end)
   end)
 
+  it('JS: renombra los usos globales de defaults sin tocar los locales del cuerpo', function()
+    local code = {
+      'function a(x = total) { var total = 2; return x + total; }',
+      'const b = (x = () => total) => { let total = 3; return x() + total; };',
+      'function c({ [total]: x }) { const total = 4; return x + total; }',
+    }
+    local expected = {
+      'function a(x = saldo) { var total = 2; return x + total; }',
+      'const b = (x = () => saldo) => { let total = 3; return x() + total; };',
+      'function c({ [saldo]: x }) { const total = 4; return x + total; }',
+    }
+    in_temp({
+      ['pagina.asp'] = '<script src="app.js"></script>\n<script>\nlet total = 5;\n'
+        .. table.concat(code, '\n') .. '\n</script>\n',
+      ['app.js'] = table.concat(code, '\n') .. '\n',
+    }, function(dir)
+      vim.cmd.edit(dir .. '/pagina.asp')
+      local pos = pos_in('let total', 'total')
+      local edit = assert(rename.rename(0, pos, 'saldo'))
+      assert.are.same({ ['pagina.asp'] = 4, ['app.js'] = 3 }, counts(edit, dir))
+      vim.lsp.util.apply_workspace_edit(edit, 'utf-8')
+      assert.are.same(expected, buffer_lines(dir .. '/app.js'))
+      local page = { '<script src="app.js"></script>', '<script>', 'let saldo = 5;' }
+      vim.list_extend(page, expected)
+      page[#page + 1] = '</script>'
+      assert.are.same(page, buffer_lines(dir .. '/pagina.asp'))
+    end)
+  end)
+
   it('acepta varios <%= %> de una línea cuando el código conserva espacios separadores', function()
     in_temp({
       ['pagina.asp'] = '<%\nDim total\ntotal = 1\n%>\n<p><%= total %></p><p><%= total %></p>\n',

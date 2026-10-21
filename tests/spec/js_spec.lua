@@ -355,6 +355,27 @@ describe('asp.js casos borde', function()
     assert.are.same({ [1] = true, [7] = true }, lines)
   end)
 
+  it('los defaults de parámetros no ven las declaraciones del cuerpo', function()
+    setup({
+      '<script>',
+      'let total = 5;',
+      'function a(x = total) { var total = 2; return x + total; }',
+      'const b = (x = () => total) => { let total = 3; return x() + total; };',
+      'function c({ [total]: x }) { const total = 4; return x + total; }',
+      'const d = function total(x = total) { var total = 6; return x; };',
+      'function e(total = 2, x = total) { var total; return total + x; }',
+      '</script>',
+    })
+    local global = pos_in('let total', 'total')
+    for _, text in ipairs({ 'function a', 'const b', 'function c' }) do
+      assert.are.same(global, def_pos(nth(text, 'total', 1)), text)
+      assert.are.same(nth(text, 'total', 2), def_pos(nth(text, 'total', 3)), text)
+    end
+    assert.are.same(nth('const d', 'total', 1), def_pos(nth('const d', 'total', 2)))
+    assert.are.same(nth('function e', 'total', 1), def_pos(nth('function e', 'total', 2)))
+    assert.are.equal(4, #js.references(0, global))
+  end)
+
   it('los nombres desestructurados de var, let y const son declaraciones de su scope', function()
     setup({
       '<script>',

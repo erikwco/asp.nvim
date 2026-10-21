@@ -610,7 +610,9 @@ Una página cambiada se relee sola.
   resuelven; no se recogen como declaración el parámetro de `catch (e)`
   ni la variable de `for (const x of xs)`. Los parámetros con default,
   rest o desestructurados y los nombres desestructurados de `var`, `let`
-  y `const` sí. Sin hover ni completion para JS.
+  y `const` sí. Los defaults ven los parámetros y los alcances externos,
+  sin las declaraciones del cuerpo de su función. Sin hover ni completion
+  para JS.
 - JavaScript en manejadores `on*`: no se modela el parámetro implícito
   `event` ni la cadena de scopes del elemento y su formulario
   (`onclick="submit()"` no resuelve a `form.submit`). No se decodifican

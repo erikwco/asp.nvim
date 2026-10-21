@@ -404,7 +404,8 @@ end
 ---  * 'name': en un binding propio de la function expression, visible sólo
 ---    dentro de ella y por debajo de sus parámetros y locales
 ---    (`function f(f) { return f; }` devuelve el parámetro).
----  * 'inner': en ese mismo scope (variables, clases, parámetros).
+---  * 'inner': en ese mismo scope (variables, clases).
+---  * 'parameter': en ese scope, visible también en los defaults.
 ---
 ---nil si el identificador es un uso.
 ---
@@ -444,10 +445,10 @@ local function classify(n)
     end
   elseif pt == 'formal_parameters' then
     -- El scope más interno es la función dueña de los parámetros.
-    return 13, n, 'inner'
+    return 13, n, 'parameter'
   elseif pt == 'arrow_function' and is_field(p, 'parameter', n) then
     -- `x => ...`: parámetro único sin paréntesis (no hay formal_parameters).
-    return 13, n, 'inner'
+    return 13, n, 'parameter'
   end
   return nil
 end
@@ -493,6 +494,11 @@ local function index(data, scopes, items)
       s.key = next_scope
       s.parent = stack[#stack]
       data.parent[s.key] = s.parent and s.parent.key or 0
+      local params = s.node:field('parameters')[1]
+      if params then
+        local _, _, stop = params:end_()
+        data.parameter_ends[s.key] = stop
+      end
       stack[#stack + 1] = s
       next_scope = next_scope + 1
     end
@@ -513,7 +519,7 @@ local function index(data, scopes, items)
       })
     else
       local occ = {
-        name = name, node = it.node, scope = inner and inner.key or 0,
+        name = name, node = it.node, byte = it.sb, scope = inner and inner.key or 0,
         shorthand = SHORTHANDS[it.node:type()],
       }
       local kind, decl, where = classify(it.node)
@@ -530,6 +536,7 @@ local function index(data, scopes, items)
           decl = decl,
           scope = s and s.node,
           global = key == 0,
+          parameter = where == 'parameter',
           url = it.url,
           slot = slots[key],
         }
@@ -554,6 +561,7 @@ local function new_data()
     bindings = {},    -- clave de scope → nombre → declaración
     fnames = {},      -- ídem, sólo los nombres de function expression
     parent = {},      -- clave de scope → clave del que lo envuelve
+    parameter_ends = {}, -- clave de scope → byte final de sus parámetros
     srcs = {},        -- `src` de los <script>, sin resolver (externals)
   }
 end
@@ -909,7 +917,12 @@ local function resolve(data, occ)
   local key = occ.scope
   while key do
     local b, f = data.bindings[key], data.fnames[key]
-    local hit = (b and b[occ.name]) or (f and f[occ.name])
+    local hit = b and b[occ.name]
+    -- Un default, también dentro de una función anidada, no ve las
+    -- declaraciones del cuerpo de la función que recibe ese parámetro.
+    local stop = data.parameter_ends[key]
+    if hit and not hit.parameter and stop and occ.byte < stop then hit = nil end
+    hit = hit or (f and f[occ.name])
     if hit then return hit end
     key = data.parent[key]
   end
