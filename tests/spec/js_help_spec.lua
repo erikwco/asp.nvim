@@ -456,6 +456,16 @@ describe('asp.js ayuda de cliente', function()
     end
   end)
 
+  it('las comas de una sustitución no avanzan el argumento de la llamada exterior', function()
+    local p = query('buscarGlobal(`${1, 2}`, ')
+    for _, text in ipairs({ 'buscarGlobal(`${1, 2}`, ',
+      'buscarGlobal(`a ${`b ${1, 2}`} ${3, 4}`, ',
+      'buscarGlobal(`${/}/.test("}"), 2}`, ' }) do
+      vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { text })
+      assert.are.equal(1, help.signature(0, { line = p.line, character = #text }).activeParameter, text)
+    end
+  end)
+
   it('desestructurar una función no convierte sus propiedades en funciones', function()
     query('const { length } = (a, b) => a;\nlength(')
     local p = pos('length(', #'length(')

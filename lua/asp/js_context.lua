@@ -26,7 +26,8 @@ function M.mask(ctx)
         blank(1)
         return i + 1
       elseif char == '$' and source:sub(i + 2, i + 2) == '{' and i + 2 <= cursor then
-        blank(2)
+        blank(1)
+        parts[#parts + 1] = '{'
         local after = code(i + 2, true)
         if after == nil or after == CURSOR then return after end
         i = after
@@ -94,7 +95,7 @@ function M.mask(ctx)
         blank(stop - i)
         i = stop
       elseif closing and char == '}' and depth == 0 then
-        blank(1)
+        parts[#parts + 1] = '}'
         return i + 1
       else
         if char == '{' then
