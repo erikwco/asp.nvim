@@ -311,6 +311,21 @@ describe('diagnósticos de VBScript', function()
         assert.are.same({ 'Ausente' }, texts(of(ds, 'unknown_call')))
       end)
     end)
+
+    it('Rem tras Then o Else es un comentario de la rama', function()
+      in_temp({
+        ['p.asp'] = {
+          '<%', 'Option Explicit', 'Dim valor, thenRem, elseRem',
+          'If True Then Rem Execute "ejemplo"', 'valor = 1',
+          'Else Rem texto libre: sin declarar', 'valor = 2', 'End If',
+          'thenRem = valor : elseRem = thenRem', 'suelta = elseRem', '%>',
+        },
+      }, function(dir)
+        local ds = diags_at(dir .. '/p.asp')
+        assert.are.same({ 'suelta' }, texts(ds))
+        assert.are.equal('undeclared', ds[1].code)
+      end)
+    end)
   end)
 
   describe('páginas inexistentes', function()

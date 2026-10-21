@@ -7,8 +7,11 @@ local function rem_col(line)
     local s, e = line:find('[Rr][Ee][Mm]', init)
     if not s then return nil end
     local before = line:sub(1, s - 1)
-    if not line:sub(e + 1, e + 1):match('[%w_]')
-      and (before:match('^%s*$') or before:match(':%s*$') or before:match('<%%%s*$')) then
+    local word = before:match('([%a_][%w_]*)%s*$')
+    local branch = word and (word:lower() == 'then' or word:lower() == 'else')
+    if not line:sub(s - 1, s - 1):match('[%w_]')
+      and not line:sub(e + 1, e + 1):match('[%w_]')
+      and (branch or before:match('^%s*$') or before:match(':%s*$') or before:match('<%%%s*$')) then
       return s - 1
     end
     init = e + 1
