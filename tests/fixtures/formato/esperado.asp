@@ -83,13 +83,15 @@ End Sub
             <p>cero</p>
         <% End If %>
         <% total = 0 %>
-        <%
-        For i = 1 To 3
-        %>
-            <p><%= i %></p>
-        <%
-        Next
-        %>
+        <div>
+            <%
+            For i = 1 To 3
+            %>
+                <p><%= i %></p>
+            <%
+            Next
+            %>
+        </div>
         <script>
             function hola() {
                 return 1;

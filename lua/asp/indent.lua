@@ -384,18 +384,22 @@ local function compute(buf, lnum)
   end
 
   -- HTML: si la línea anterior es VBScript, se mide desde su `<%`; si es
-  -- HTML, desde lo que diga HtmlIndent.
+  -- HTML, desde lo que diga HtmlIndent. Una etiqueta de cierre siempre se
+  -- alinea con su apertura, que HtmlIndent busca por nombre.
   local base, base_key, from_html
-  if not prev_info or prev_info.kind == 'html' then
+  local closing_tag = prev_info and prev_info.kind ~= 'html' and getline(buf, row):find('^%s*</') ~= nil
+  if not prev_info or prev_info.kind == 'html' or closing_tag then
     base, from_html = html_indent(st, buf, lnum)
-    base_key = prev_info and prev_info.key
+    base_key = closing_tag and info.key or prev_info and prev_info.key
   else
     base = vim.fn.indent(prev_info.open + 1)
     base_key = row_info(st, buf, prev_info.open).key
   end
 
   local delta
-  if fallback then
+  if closing_tag then
+    delta = 0
+  elseif fallback then
     -- Sólo cuenta el VBScript: una línea de código, o el bloque <% %> con
     -- que empieza una línea HTML.
     local function code_at(r, kind)
