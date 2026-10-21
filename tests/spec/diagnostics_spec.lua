@@ -92,10 +92,10 @@ describe('diagnósticos de VBScript', function()
   end)
 
   describe('sintaxis', function()
-    it('marca el ERROR de VBScript con HINT y su rango real', function()
+    it('marca el ERROR de VBScript con WARN y su rango real', function()
       local ds = of(diags_at(DIAG .. '/sintaxis.asp'), 'syntax')
       assert.are.equal(1, #ds)
-      assert.are.equal(vim.diagnostic.severity.HINT, ds[1].severity)
+      assert.are.equal(vim.diagnostic.severity.WARN, ds[1].severity)
       assert.are.equal('asp-ls', ds[1].source)
       -- La forma exacta del ERROR depende de la versión de tree-sitter.
       assert.are.equal(8, ds[1].lnum)

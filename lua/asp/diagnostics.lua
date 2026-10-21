@@ -7,13 +7,13 @@ M.ns = vim.api.nvim_create_namespace('asp_includes')
 -- Espera del refresco tras editar (TextChanged/InsertLeave), en ms.
 M.debounce_ms = 500
 
--- Familias y severidad por defecto. La de sintaxis es HINT porque la
--- gramática vbscript marca como error construcciones válidas comunes
--- (`x Is Nothing`, `Case 1, 2`, `Const A = 1, B = 2`, `.Campo` dentro de
--- un With): ver la sección de diagnósticos de :help asp.
+-- Familias y severidad por defecto. La de sintaxis fue HINT mientras la
+-- gramática vbscript marcaba construcciones válidas (`x Is Nothing`,
+-- `Case 1, 2`, `Const A = 1, B = 2`, `.Campo` en un With): ver la sección
+-- de diagnósticos de :help asp.
 local DEFAULTS = {
   includes = 'WARN',
-  syntax = 'HINT',
+  syntax = 'WARN',
   undeclared = 'WARN',
   unknown_call = 'WARN',
   missing_page = 'WARN',
