@@ -238,6 +238,16 @@ describe('asp.js ayuda de cliente', function()
     assert.are.same({ 'primero', 'segundo = 2', '...resto' }, labels(result))
   end)
 
+  it('signatureHelp deja activo el rest con argumentos de más', function()
+    local p = query('buscarGlobal(1, 2, 3, 4, ')
+    assert.are.equal(2, help.signature(0, p).activeParameter)
+    vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { 'console.log(1, 2, ' })
+    assert.are.equal(0, help.signature(0, { line = p.line, character = #'console.log(1, 2, ' }).activeParameter)
+    -- Sin rest no hay parámetro activo que elegir.
+    vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { 'buscarIncluida(1, 2, ' })
+    assert.are.equal(2, help.signature(0, { line = p.line, character = #'buscarIncluida(1, 2, ' }).activeParameter)
+  end)
+
   it('signatureHelp desde un archivo externo conserva patrones y el archivo', function()
     local result = help.signature(0, query('externaFlecha({ nombre: "a" }, '))
     assert.are.same({ '{ nombre }', '...otros' }, labels(result))
@@ -268,7 +278,8 @@ describe('asp.js ayuda de cliente', function()
   end)
 
   it('signatureHelp cuenta sólo comas a profundidad cero, también en varias líneas', function()
-    local result = help.signature(0, query('buscarGlobal(\n  [1, 2], { a: 1, b: 2 },\n  `a,b`, "c,d", /e,f/, buscarExterna(1, 2), '))
+    -- Sin rest: el índice de más no se recorta al último parámetro.
+    local result = help.signature(0, query('buscarIncluida(\n  [1, 2], { a: 1, b: 2 },\n  `a,b`, "c,d", /e,f/, buscarExterna(1, 2), '))
     assert.are.equal(6, result.activeParameter)
   end)
 

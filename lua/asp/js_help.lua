@@ -85,10 +85,17 @@ local function signature(bufnr, position)
   if not call.name:find('.', 1, true) then entry = js.named(bufnr, position, call.name) end
   entry = entry or catalog(bufnr, position, call.name)
   if not entry or not entry.signature then return nil end
+  -- Los argumentos de más caen en un rest final (`...args`). Fuera de la
+  -- lista, Neovim 0.12 no resalta ninguno y la spec LSP elige el primero.
+  local active, last = call.parameter, entry.parameters[#entry.parameters]
+  if last and active >= #entry.parameters
+    and entry.signature:sub(last.label[1] + 1, last.label[2]):match('^%.%.%.') then
+    active = #entry.parameters - 1
+  end
   return {
     signatures = { { label = entry.signature, parameters = entry.parameters,
       documentation = { kind = 'markdown', value = info.markdown(entry) } } },
-    activeSignature = 0, activeParameter = call.parameter,
+    activeSignature = 0, activeParameter = active,
   }
 end
 
