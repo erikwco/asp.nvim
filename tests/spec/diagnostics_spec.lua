@@ -244,6 +244,28 @@ describe('diagnósticos de VBScript', function()
       end)
     end)
 
+    it('sin Option Explicit reconoce GetRef de includes y respeta el scope de Set', function()
+      in_temp({
+        ['init.inc'] = { '<% Set fp = GetRef("Propia") %>' },
+        ['p.asp'] = { '<!--#include file="init.inc" -->', '<%',
+          'Sub Propia()', 'End Sub', 'Call fp(1)',
+          'Sub A()', 'Set localA = GetRef("Propia")', 'Call localA(1)', 'End Sub',
+          'Sub B()', 'Call localA(1)', 'End Sub', '%>' },
+      }, function(dir)
+        assert.are.same({ 'localA' }, texts(of(diags_at(dir .. '/p.asp'), 'unknown_call')))
+      end)
+    end)
+
+    it('Call con continuación no reporta variables sin Option Explicit', function()
+      in_temp({
+        ['p.asp'] = { '<%', 'Call obj _', '  .Metodo(1)', 'Call obj. _', '  Metodo(1)', '%>' },
+      }, function(dir)
+        local ds = diags_at(dir .. '/p.asp')
+        assert.are.same({}, of(ds, 'undeclared'))
+        assert.are.same({}, of(ds, 'unknown_call'))
+      end)
+    end)
+
     it('sin Option Explicit, Execute o un include roto apagan Call y New', function()
       in_temp({
         ['dinamica.asp'] = { '<%', 'Execute "Sub Fantasma(): End Sub"', 'Call Fantasma()', '%>' },

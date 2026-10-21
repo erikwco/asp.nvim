@@ -360,7 +360,12 @@ local function vbscript_family(ctx, undeclared, unknown_call)
   -- es válido.
   if not option_explicit then
     for _, assignment in ipairs(require('asp.types').scan({ tree.root }, ctx.vcontent)) do
-      page[assignment.name] = true
+      declare(assignment.name, assignment.scope_id, assignment.class_id)
+    end
+    for _, file in ipairs(g.order) do
+      for _, assignment in ipairs(symbols.file_help(file).assignments) do
+        if not assignment.scope_id and not assignment.class_id then page[assignment.name] = true end
+      end
     end
   end
 
@@ -400,7 +405,7 @@ local function vbscript_family(ctx, undeclared, unknown_call)
           table.insert(out, diag('unknown_call', unknown_call, use.lnum, use.col, use.lnum, use.end_col,
             ('"%s" no es una Sub, Function ni variable de la página ni de sus includes'):format(use.name)))
         end
-      elseif undeclared and not known(use) then
+      elseif option_explicit and undeclared and not known(use) then
         table.insert(out, diag('undeclared', undeclared, use.lnum, use.col, use.lnum, use.end_col,
           ('variable "%s" sin declarar (Option Explicit)'):format(use.name)))
       end
