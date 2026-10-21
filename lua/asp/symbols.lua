@@ -117,6 +117,11 @@ local function collect_from_roots(roots, source)
   return entries
 end
 
+---Declaraciones de árboles VBScript ya parseados (ver collect_from_roots).
+---Los diagnósticos (asp.diagnostics) la usan con su propio árbol VBScript
+---del buffer: comparten así los scope_id/class_id con su recorrido.
+M.collect_roots = collect_from_roots
+
 ---@param bufnr integer
 ---@return table[] entries
 function M.collect(bufnr)
@@ -210,29 +215,54 @@ local function parse_file(abs_path)
   return content, parse_content(content)
 end
 
+-- Indicios de un archivo sin bloques de código o que no se pudo leer.
+local NO_FACTS = { option_explicit = false, page_decls = {} }
+
+---Entrada de file_cache de un archivo de disco: sus declaraciones y sus
+---indicios para los diagnósticos (asp.vbscript_scan.facts), sacados del
+---mismo parseo (ver parse_file) y cacheados por mtime y tamaño. Nil si el
+---archivo no existe.
+---@param abs_path string
+---@return table|nil {stamp, entries, facts}
+local function load_file(abs_path)
+  abs_path = vim.fs.normalize(abs_path)
+  local stamp = stamp_of(abs_path)
+  if not stamp then return nil end
+  local hit = file_cache[abs_path]
+  if hit and hit.stamp == stamp then return hit end
+
+  local ok, entries, facts = pcall(function()
+    local content, vroot = parse_file(abs_path)
+    if not vroot then return {}, NO_FACTS end
+    local out = collect_from_roots({ vroot }, content)
+    for _, e in ipairs(out) do
+      e.file = abs_path
+    end
+    return out, require('asp.vbscript_scan').facts(vroot, content)
+  end)
+  hit = { stamp = stamp, entries = ok and entries or {}, facts = ok and facts or NO_FACTS }
+  file_cache[abs_path] = hit
+  return hit
+end
+
 ---Declaraciones de un archivo en disco (ver parse_file), cacheadas por
 ---mtime y tamaño.
 ---@param abs_path string
 ---@return table[] entries (con campo file)
 function M.collect_file(abs_path)
-  abs_path = vim.fs.normalize(abs_path)
-  local stamp = stamp_of(abs_path)
-  if not stamp then return {} end
-  local hit = file_cache[abs_path]
-  if hit and hit.stamp == stamp then return hit.entries end
+  local hit = load_file(abs_path)
+  return hit and hit.entries or {}
+end
 
-  local ok, entries = pcall(function()
-    local content, vroot = parse_file(abs_path)
-    if not vroot then return {} end
-    local out = collect_from_roots({ vroot }, content)
-    for _, e in ipairs(out) do
-      e.file = abs_path
-    end
-    return out
-  end)
-  entries = ok and entries or {}
-  file_cache[abs_path] = { stamp = stamp, entries = entries }
-  return entries
+---Indicios de un archivo en disco para los diagnósticos: Option Explicit,
+---primer Eval/Execute/ExecuteGlobal y nombres de página declarados con
+---ReDim o For (ver asp.vbscript_scan.facts). Comparten caché y parseo con
+---M.collect_file.
+---@param abs_path string
+---@return table { option_explicit, dynamic?, page_decls }
+function M.file_facts(abs_path)
+  local hit = load_file(abs_path)
+  return hit and hit.facts or NO_FACTS
 end
 
 -- ¿(row,col) cae dentro del rango [start,end] de `node`? Misma semántica que
@@ -436,7 +466,7 @@ end
 
 ---Ocurrencias de un contenido que se ven a nivel de página, agrupadas por
 ---nombre en minúsculas (ver page_occurrences). Llena también la caché de
----declaraciones de M.collect_file con el mismo parseo.
+---declaraciones e indicios de M.collect_file con el mismo parseo.
 ---@param abs_path string
 ---@param content string
 ---@param stamp string
@@ -455,7 +485,10 @@ local function parse_occurrences(abs_path, content, stamp)
   end
   local cached = file_cache[abs_path]
   if not cached or cached.stamp ~= stamp then
-    file_cache[abs_path] = { stamp = stamp, entries = entries }
+    file_cache[abs_path] = {
+      stamp = stamp, entries = entries,
+      facts = require('asp.vbscript_scan').facts(vroot, content),
+    }
   end
 
   local out = {}
