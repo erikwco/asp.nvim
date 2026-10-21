@@ -165,6 +165,34 @@ describe('diagnósticos de VBScript', function()
       end)
     end)
 
+    it('conserva todas las declaraciones al mezclar arrays y escalares', function()
+      in_temp({
+        ['p.asp'] = {
+          '<%', 'Option Explicit', 'Dim a(10), b(), x', 'ReDim Preserve b(10)',
+          'a(1) = 3', 'x = a(1)', 'b(0) = x', 'suelta = x',
+          'Sub Probar()', 'Dim c(2), d(), local', 'local = c(0)', 'End Sub',
+          'local = 1', '%>',
+        },
+      }, function(dir)
+        local ds = diags_at(dir .. '/p.asp')
+        assert.are.same({ 'suelta', 'local' }, texts(ds))
+        assert.are.equal('undeclared', ds[1].code)
+        assert.are.equal('undeclared', ds[2].code)
+      end)
+    end)
+
+    it('recoge arrays y escalares declarados juntos en includes', function()
+      in_temp({
+        ['inc/arrays.inc'] = { '<% Dim a(10), b(), valor %>' },
+        ['p.asp'] = {
+          '<!--#include file="inc/arrays.inc" -->', '<%', 'Option Explicit',
+          'valor = a(0)', 'ReDim b(2)', 'b(0) = valor', '%>',
+        },
+      }, function(dir)
+        assert.are.same({}, diags_at(dir .. '/p.asp'))
+      end)
+    end)
+
     it('sin Option Explicit no reporta variables ni llamadas', function()
       local ds = diags_at(DIAG .. '/sin_explicit.asp')
       assert.are.same({}, of(ds, 'undeclared'))
