@@ -59,25 +59,30 @@ function M.complete(bufnr, position)
     return {}
   end
 
-  -- ¿contexto miembro? Objeto . prefijo
+  -- ¿contexto miembro? Objeto . prefijo. Un objeto sin tipo conocido (una
+  -- clase del usuario, un COM fuera del catálogo o una cadena `a.b.`) cae
+  -- al contexto general, sin nativos ni palabras clave.
   local start, _, obj_name, prefix = before:find('([%a_][%w_]*)%s*%.%s*([%w_]*)$')
   if obj_name then
     local preceding = before:sub(1, start - 1)
-    if preceding:match('%.%s*$') or preceding:match('[%w_]$') then return {} end
-    local obj = intrinsics.object(obj_name)
-    local members = obj and intrinsics.members_of(obj_name)
-    if not obj then
-      obj = require('asp.types').infer(bufnr, position, obj_name)
-      members = obj and obj.members or {}
+    local chained = preceding:match('%.%s*$') or preceding:match('[%w_]$')
+    local members
+    if not chained and intrinsics.object(obj_name) then
+      members = intrinsics.members_of(obj_name)
+    elseif not chained then
+      local obj = require('asp.types').infer(bufnr, position, obj_name)
+      members = obj and obj.members
     end
-    local out = {}
-    local pfx = prefix:lower()
-    for _, m in ipairs(members) do
-      if pfx == '' or m.name:lower():sub(1, #pfx) == pfx then
-        table.insert(out, item(m.name, m.kind == 'property' and 10 or KIND_METHOD, m.signature, m.doc))
+    if members then
+      local out = {}
+      local pfx = prefix:lower()
+      for _, m in ipairs(members) do
+        if pfx == '' or m.name:lower():sub(1, #pfx) == pfx then
+          table.insert(out, item(m.name, m.kind == 'property' and 10 or KIND_METHOD, m.signature, m.doc))
+        end
       end
+      return out
     end
-    return out
   end
 
   -- contexto general: objetos intrínsecos + símbolos del buffer y del grafo.
@@ -97,7 +102,7 @@ function M.complete(bufnr, position)
     add(name, KIND_MODULE, 'objeto intrínseco ASP')
   end
   for _, group in ipairs({ 'functions', 'constants', 'keywords' }) do
-    if group ~= 'keywords' or #pfx >= 2 then
+    if not obj_name and (group ~= 'keywords' or #pfx >= 2) then
       for _, entry in ipairs(native.groups[group]) do
         local info = native.lookup(type(entry) == 'table' and entry[1] or entry)
         add(info.name, group == 'functions' and 3 or (group == 'constants' and 21 or 14),

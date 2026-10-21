@@ -249,8 +249,10 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
   completion ~
       Funciones nativas, constantes y símbolos de la página y sus
       includes. Palabras clave desde dos letras de prefijo. Miembros
-      intrínsecos y COM tras `Objeto.`. ProgIDs dentro de `CreateObject("`
-      o `Server.CreateObject("`, filtrados sin distinguir mayúsculas.
+      intrínsecos y COM tras `Objeto.`; sin tipo conocido, los símbolos
+      del proyecto, sin nativos ni palabras clave. ProgIDs dentro de
+      `CreateObject("` o `Server.CreateObject("`, filtrados sin
+      distinguir mayúsculas.
 
   signatureHelp ~                                          *asp-signatures*
       Firmas de funciones nativas, miembros intrínsecos y COM, y Subs,

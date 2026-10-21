@@ -221,7 +221,9 @@ conservan la precedencia.
   del usuario en la página y sus includes transitivos, con el archivo de origen.
 - Completion ofrece funciones nativas, constantes y símbolos VBScript de la
   página y sus includes. Las palabras clave aparecen desde dos letras de prefijo.
-  Después de `Objeto.` ofrece miembros intrínsecos o COM. Dentro de
+  Después de `Objeto.` ofrece miembros intrínsecos o COM; si el objeto no
+  tiene tipo conocido (una clase tuya, un COM fuera del catálogo), ofrece los
+  símbolos del proyecto, sin nativos ni palabras clave. Dentro de
   `CreateObject("` y `Server.CreateObject("` ofrece ProgIDs del catálogo.
 - `vim.lsp.buf.signature_help()` muestra firmas de funciones nativas,
   miembros intrínsecos y COM, y Subs, Functions y Properties del usuario.

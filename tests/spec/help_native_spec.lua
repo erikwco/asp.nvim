@@ -254,7 +254,22 @@ describe('ayuda nativa y COM', function()
   it('no ofrece ayuda nativa en strings o miembros desconocidos', function()
     assert.are.same({}, items('Response.Write "Rep'))
     assert.is_nil(signature.help(0, query('desconocido.Mid(s, ')))
-    assert.are.same({}, items('desconocido.'))
+    local result = items('desconocido.')
+    assert.is_nil(result.Len)
+    assert.is_nil(result.vbCrLf)
+    assert.is_nil(result.MoveNext)
+  end)
+
+  it('sin tipo COM, Objeto. ofrece los símbolos como antes', function()
+    vim.api.nvim_buf_set_lines(0, -2, -2, false, {
+      'Class Persona', 'Public Nombre', 'Function Saludar(otro)', 'End Function', 'End Class',
+      'Set persona1 = New Persona',
+    })
+    assert.is_not_nil(items('persona1.Sa').Saludar)
+    local all = items('desconocido.')
+    assert.is_not_nil(all.MiSub)
+    assert.is_not_nil(all.Response)
+    assert.is_not_nil(all.FuncionIncluida)
   end)
 
   it('responde signatureHelp por LSP y anuncia los disparadores', function()
@@ -439,7 +454,9 @@ describe('alcance y cachés de ayuda', function()
 
   it('no ofrece miembros por confundir una cadena con una variable', function()
     code({ 'Set rs = CreateObject("ADODB.Recordset")', 'otro.rs.' })
-    assert.are.same({}, completion.complete(0, { line = 2, character = 8 }))
+    for _, entry in ipairs(completion.complete(0, { line = 2, character = 8 })) do
+      assert.are_not.equal('MoveNext', entry.label)
+    end
     code({ 'Set rs = CreateObject("ADODB.Recordset")', 'otro.rs.Len' })
     assert.is_nil(hover.hover(0, { line = 2, character = 9 }))
   end)
