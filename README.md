@@ -681,13 +681,16 @@ conoce las continuaciones ` _` ni anida el HTML dentro de un
 
 asp.nvim cachea lo que saca del árbol por `changedtick`. Neovim no lo
 incrementa durante `=`, así que en `gg=G` asp.nvim no vuelve a parsear
-y su parte crece lineal con la página. En una página sintética de 307 KB, `gg=G` tarda ~6,4 s en frío,
-con ~0,1 s de asp.nvim y ~2,3 s de `HtmlIndent()`. Neovim usa los
+y su parte crece lineal con la página. En una página sintética de 307 KB,
+`gg=G` tarda ~6,9 s en frío, con ~0,1 s de asp.nvim y ~2,7 s de
+`HtmlIndent()`. Neovim usa los
 otros ~4 s para reajustar los rangos de las capas inyectadas en cada
 línea editada; ese costo lo paga cualquier edición masiva del buffer.
 En una página real de 318 KB con 6.850 líneas de JavaScript tarda
 ~16 s, casi todo en el indent de JavaScript de Vim. La misma página con
-`ft=html` tarda ~20 s. `o` tarda entre 1 y 15 ms.
+`ft=html` tarda ~20 s. El indentexpr al abrir con `o` tarda ~1–2 ms en
+VBScript de la página real y ~18 ms en la sintética; en HTML llega a
+~45 ms con Neovim 0.10. Son tiempos del indentexpr, no de toda la tecla.
 [Mediciones](tests/bench/indent.md).
 
 ### Límites

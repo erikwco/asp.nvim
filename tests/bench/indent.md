@@ -2,7 +2,8 @@
 
 Medición local del 21 de octubre de 2026 en macOS, Apple M4 Pro de 14
 núcleos, con Neovim 0.12.6 Release y 0.10.4. Load average de 2,0 a 2,5
-durante la serie.
+durante la serie. Las tablas siguientes corresponden a la implementación
+inicial. Los resultados de la revisión cruzada aparecen al final.
 
 ## Página sintética de 307 KB
 
@@ -77,3 +78,24 @@ Para repetir la medición sintética desde la raíz del repo:
 nvim --headless -u tests/minimal_init.lua -l tests/bench/indent.lua
 BLOQUES=100 nvim --headless -u tests/minimal_init.lua -l tests/bench/indent.lua
 ```
+
+## Revisión cruzada del 21 de octubre
+
+Tras preservar el contenido de pre y textarea, una repetición de la página
+sintética dio 6.903 ms en frío y 2.814 ms en caliente en 0.12.6. En 0.10.4
+dio 6.512 y 2.645 ms. Ambas segundas pasadas conservaron todas las líneas.
+La parte de asp.nvim fue de 93 y 102 ms, respectivamente. El indentexpr
+de `o`, mediana de siete inserciones, dio 18 ms en código en ambas
+versiones y 17/45 ms en HTML. El script mide el indentexpr, no el tiempo
+completo de procesar la tecla.
+
+La página real A dio 16.188 ms en frío y 16.058 ms en caliente, con
+32 ms de asp.nvim en la primera pasada. Las páginas B y C dieron
+2.321/2.303 ms y 608/609 ms. Se conservaron las cinco diferencias del
+comentario JS de B, reproducidas también con ft=html.
+
+La apertura de A, cinco procesos nuevos por versión alternando main y
+el PR, pasó de una mediana de 8,20 ms a 13,82 ms en Neovim 0.12.6.
+Los rangos fueron 8,11–8,25 y 13,69–14,09 ms. Se midió `:edit` hasta
+terminar FileType, sin esperar los diagnósticos diferidos. No es una
+medición de todo el arranque del editor.
