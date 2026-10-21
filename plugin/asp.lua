@@ -59,10 +59,8 @@ vim.api.nvim_create_autocmd('BufWritePost', {
       end
       -- El archivo guardado puede ser un include, o el destino de un
       -- enlace, de otra página abierta.
-      for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-        if buf ~= args.buf and vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].filetype == 'asp' then
-          diagnostics.schedule(buf)
-        end
+      for _, buf in ipairs(diagnostics.affected(path, args.buf)) do
+        diagnostics.schedule(buf)
       end
     end)
   end,

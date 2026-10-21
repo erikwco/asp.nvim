@@ -247,10 +247,89 @@ describe('diagnósticos de VBScript', function()
       end)
     end)
 
-    it('sin Option Explicit no reporta variables ni llamadas', function()
+    it('sin Option Explicit no reporta variables ni llamadas sin Call', function()
       local ds = diags_at(DIAG .. '/sin_explicit.asp')
       assert.are.same({}, of(ds, 'undeclared'))
       assert.are.same({}, of(ds, 'unknown_call'))
+    end)
+
+    it('sin Option Explicit reporta Call X y New X inexistentes', function()
+      in_temp({
+        ['inc/util.inc'] = { '<%', 'Sub DeInclude()', 'End Sub', 'Class Carro', 'End Class', '%>' },
+        ['p.asp'] = {
+          '<!--#include file="inc/util.inc" -->',
+          '<%',
+          'Call Fantasma(1)',
+          'Call OtroFantasma',
+          'Set o = New NoClase',
+          'Set c = New Carro',
+          'Set re = New RegExp',
+          'NoExiste 1',
+          'x = Desconocida(1)',
+          'Set conn = Server.CreateObject("ADODB.Connection")',
+          'Call conn.Open("dsn")',
+          'Set fp = GetRef("Propia")',
+          'Call fp(1)',
+          'Call Propia(): Call DeInclude()',
+          'Call MsgBox("x")',
+          'Sub Propia()',
+          'End Sub',
+          '%>',
+        },
+      }, function(dir)
+        local ds = diags_at(dir .. '/p.asp')
+        assert.are.same({ 'Fantasma', 'OtroFantasma', 'NoClase' }, texts(of(ds, 'unknown_call')))
+        assert.are.same({}, of(ds, 'undeclared'))
+        assert.is_truthy(of(ds, 'unknown_call')[3].message:find('clase', 1, true))
+      end)
+    end)
+
+    it('sin Option Explicit no revisa una librería que otra página incluye', function()
+      in_temp({
+        ['inc/log.inc'] = { '<%', 'Sub Registrar(texto)', 'End Sub', '%>' },
+        ['inc/funciones.inc'] = { '<%', 'Sub Guardar()', '  Call Registrar("guardar")', 'End Sub', '%>' },
+        ['huerfana.inc'] = { '<%', 'Call Registrar("x")', '%>' },
+        ['p.asp'] = { '<!--#include file="inc/log.inc" -->', '<!--#include file="inc/funciones.inc" -->' },
+      }, function(dir)
+        assert.are.same({}, of(diags_at(dir .. '/inc/funciones.inc'), 'unknown_call'))
+        vim.cmd('bwipeout!')
+        assert.are.same({ 'Registrar' }, texts(of(diags_at(dir .. '/huerfana.inc'), 'unknown_call')))
+      end)
+    end)
+
+    it('sin Option Explicit reconoce GetRef de includes y respeta el scope de Set', function()
+      in_temp({
+        ['init.inc'] = { '<% Set fp = GetRef("Propia") %>' },
+        ['p.asp'] = { '<!--#include file="init.inc" -->', '<%',
+          'Sub Propia()', 'End Sub', 'Call fp(1)',
+          'Sub A()', 'Set localA = GetRef("Propia")', 'Call localA(1)', 'End Sub',
+          'Sub B()', 'Call localA(1)', 'End Sub', '%>' },
+      }, function(dir)
+        assert.are.same({ 'localA' }, texts(of(diags_at(dir .. '/p.asp'), 'unknown_call')))
+      end)
+    end)
+
+    it('Call con continuación no reporta variables sin Option Explicit', function()
+      in_temp({
+        ['p.asp'] = { '<%', 'Call obj _', '  .Metodo(1)', 'Call obj. _', '  Metodo(1)', '%>' },
+      }, function(dir)
+        local ds = diags_at(dir .. '/p.asp')
+        assert.are.same({}, of(ds, 'undeclared'))
+        assert.are.same({}, of(ds, 'unknown_call'))
+      end)
+    end)
+
+    it('sin Option Explicit, Execute o un include roto apagan Call y New', function()
+      in_temp({
+        ['dinamica.asp'] = { '<%', 'Execute "Sub Fantasma(): End Sub"', 'Call Fantasma()', '%>' },
+        ['rota.asp'] = { '<!--#include file="falta.inc" -->', '<% Call Fantasma() %>' },
+      }, function(dir)
+        local ds = diags_at(dir .. '/dinamica.asp')
+        assert.are.same({}, of(ds, 'unknown_call'))
+        assert.are.same({}, of(ds, 'dynamic'))
+        vim.cmd('bwipeout!')
+        assert.are.same({}, of(diags_at(dir .. '/rota.asp'), 'unknown_call'))
+      end)
     end)
 
     it('Option Explicit en un include también activa la revisión', function()
@@ -465,7 +544,88 @@ describe('diagnósticos de VBScript', function()
     end)
   end)
 
+  it('Call y New sin Option Explicit admiten continuación de línea', function()
+    in_temp({ ['p.asp'] = { '<%', 'Call _', '  Ausente()', 'Set x = New _', '  Falta',
+      'Call obj _', '  .Metodo()', '%>' } }, function(dir)
+      local ds = of(diags_at(dir .. '/p.asp'), 'unknown_call')
+      assert.are.equal(2, #ds)
+      assert.is_truthy(ds[1].message:find('Ausente', 1, true))
+      assert.is_truthy(ds[2].message:find('Falta', 1, true))
+    end)
+  end)
+
   describe('refresco', function()
+    it('un guardado detecta includes y enlaces renombrados o borrados desde disco', function()
+      in_temp({
+        ['hoja.inc'] = { '<% Dim hoja %>' },
+        ['medio.inc'] = { '<!--#include file="hoja.inc" -->' },
+        ['destino.asp'] = { '<p>destino</p>' },
+        ['p.asp'] = { '<!--#include file="medio.inc" -->', '<a href="destino.asp">Ir</a>' },
+        ['ajena.asp'] = { '<p>ajena</p>' },
+      }, function(dir)
+        assert.are.same({}, diags_at(dir .. '/p.asp'))
+        local page = vim.api.nvim_get_current_buf()
+        diags_at(dir .. '/ajena.asp')
+        local saved = vim.api.nvim_get_current_buf()
+        local ok, err = pcall(function()
+          vim.wait(20, function() return false end)
+          assert(vim.uv.fs_rename(dir .. '/hoja.inc', dir .. '/renombrada.inc'))
+          vim.cmd('silent write')
+          assert.is_true(diagnostics().pending(page))
+          assert.is_true(vim.wait(2000, function()
+            return #of(vim.diagnostic.get(page), 'includes') == 1
+          end))
+          assert(vim.uv.fs_rename(dir .. '/renombrada.inc', dir .. '/hoja.inc'))
+          vim.cmd('silent write')
+          assert.is_true(vim.wait(2000, function() return #vim.diagnostic.get(page) == 0 end))
+          assert(vim.uv.fs_unlink(dir .. '/destino.asp'))
+          vim.cmd('silent write')
+          assert.is_true(diagnostics().pending(page))
+          assert.is_true(vim.wait(2000, function()
+            return #of(vim.diagnostic.get(page), 'missing_page') == 1
+          end))
+          vim.cmd.edit(dir .. '/destino.asp')
+          vim.api.nvim_buf_set_lines(0, 0, -1, false, { '<p>nuevo destino</p>' })
+          vim.cmd('silent write')
+          assert.is_true(vim.wait(2000, function() return #vim.diagnostic.get(page) == 0 end))
+          vim.cmd('bwipeout!')
+        end)
+        vim.api.nvim_buf_delete(page, { force = true })
+        vim.api.nvim_buf_delete(saved, { force = true })
+        assert(ok, err)
+      end)
+    end)
+
+    it('guardar un incluidor actualiza Call sin Option Explicit en una librería abierta', function()
+      in_temp({
+        ['lib.inc'] = { '<% Call Externa() %>' },
+        ['p.asp'] = { '<% Sub Externa(): End Sub %>' },
+      }, function(dir)
+        assert.are.equal(1, #of(diags_at(dir .. '/lib.inc'), 'unknown_call'))
+        local lib = vim.api.nvim_get_current_buf()
+        diags_at(dir .. '/p.asp')
+        local page = vim.api.nvim_get_current_buf()
+        local ok, err = pcall(function()
+          vim.wait(20, function() return false end)
+          vim.api.nvim_buf_set_lines(page, 0, 0, false, { '<!--#include file="lib.inc" -->' })
+          vim.cmd('silent write')
+          assert.is_true(diagnostics().pending(lib))
+          assert.is_true(vim.wait(2000, function()
+            return #of(vim.diagnostic.get(lib), 'unknown_call') == 0
+          end))
+          vim.api.nvim_buf_set_lines(page, 0, 1, false, {})
+          vim.cmd('silent write')
+          assert.is_true(diagnostics().pending(lib))
+          assert.is_true(vim.wait(2000, function()
+            return #of(vim.diagnostic.get(lib), 'unknown_call') == 1
+          end))
+        end)
+        vim.api.nvim_buf_delete(lib, { force = true })
+        vim.api.nvim_buf_delete(page, { force = true })
+        assert(ok, err)
+      end)
+    end)
+
     it('ubica un include transitivo roto en la directiva de la página actual', function()
       local leaf = {}
       for _ = 1, 100 do leaf[#leaf + 1] = '' end
@@ -488,6 +648,43 @@ describe('diagnósticos de VBScript', function()
         assert.are.equal('<!--#include file="inc/base.inc" -->', text_of(inc[1]))
         assert.is_truthy(inc[1].message:find('hoja.inc:101', 1, true))
         assert.are.equal(1, #of(ds, 'syntax'))
+      end)
+    end)
+
+    it('guardar un archivo solo vuelve a revisar las páginas que dependen de él', function()
+      in_temp({
+        ['inc/comun.inc'] = { '<% Sub Comun() : End Sub %>' },
+        ['inc/medio.inc'] = { '<!--#include file="comun.inc" -->' },
+        ['directa.asp'] = { '<!--#include file="inc/comun.inc" -->', '<% Call Comun() %>' },
+        ['transitiva.asp'] = { '<!--#include file="inc/medio.inc" -->', '<% Call Comun() %>' },
+        ['ajena.asp'] = { '<% Dim x %>' },
+        ['enlace.asp'] = { '<a href="nueva.asp">x</a>' },
+        ['rota.asp'] = { '<!--#include file="inc/nuevo.inc" -->' },
+      }, function(dir)
+        local bufs, names = {}, { 'directa', 'transitiva', 'ajena', 'enlace', 'rota' }
+        for _, name in ipairs(names) do
+          diags_at(dir .. '/' .. name .. '.asp')
+          bufs[name] = vim.api.nvim_get_current_buf()
+        end
+        assert.are.equal(1, #of(vim.diagnostic.get(bufs.enlace), 'missing_page'))
+        assert.are.equal(1, #of(vim.diagnostic.get(bufs.rota), 'includes'))
+        vim.cmd.edit(dir .. '/inc/comun.inc')
+        local saved = vim.api.nvim_get_current_buf()
+        local ok, err = pcall(function()
+          assert.are.same({ bufs.directa, bufs.transitiva, bufs.enlace, bufs.rota },
+            diagnostics().affected(dir .. '/inc/comun.inc', saved))
+          vim.cmd('silent write')
+          for _, name in ipairs(names) do
+            assert.are.equal(name ~= 'ajena', diagnostics().pending(bufs[name]), name)
+          end
+          -- Un archivo que nadie incluye solo afecta a las que tienen un
+          -- include o un enlace sin resolver.
+          assert.are.same({ bufs.enlace, bufs.rota }, diagnostics().affected(dir .. '/inc/suelto.inc'))
+        end)
+        for _, buf in pairs(bufs) do vim.cmd('bwipeout! ' .. buf) end
+        vim.cmd('bwipeout! ' .. saved)
+        assert(ok, err)
+        assert.are.equal(0, diagnostics().pending())
       end)
     end)
 

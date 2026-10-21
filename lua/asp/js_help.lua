@@ -6,13 +6,50 @@ local info = require('asp.js_info')
 
 local keywords = {
   'function', 'return', 'const', 'let', 'var', 'if', 'else', 'for', 'while',
-  'new', 'this', 'true', 'false', 'null', 'undefined', 'typeof', 'async', 'await',
+  'do', 'switch', 'case', 'default', 'break', 'continue', 'try', 'catch',
+  'finally', 'throw', 'new', 'this', 'true', 'false', 'null', 'undefined',
+  'typeof', 'instanceof', 'delete', 'void', 'in', 'of', 'class', 'extends',
+  'super', 'static', 'import', 'export', 'yield', 'async', 'await',
+  'debugger', 'with',
 }
 
+-- Parámetro implícito de los atributos on*: el navegador envuelve su valor
+-- en `function (event) { ... }`.
+local EVENT = {
+  name = 'event', kind = 6, detail = 'event',
+  doc = 'Evento que disparó el manejador: el parámetro implícito de los atributos on*.',
+}
+
+-- Constructores cuyas instancias tienen miembros en el catálogo.
+local INSTANCES = { XMLHttpRequest = 'XMLHttpRequest.prototype' }
+
+---Ruta del catálogo para `path`, o nil si un binding del usuario la
+---sombrea. Un binding declarado como `var x = new XMLHttpRequest()` toma
+---los miembros de su prototipo; solo se mira el inicializador de la
+---declaración, sin seguir asignaciones posteriores. `object` indica que
+---`path` es el objeto cuyos miembros se piden, no un miembro.
+local function catalog_path(bufnr, position, path, object)
+  local root, rest = path:match('^([^.]+)(.*)$')
+  local binding = js.named(bufnr, position, root)
+  if not binding then return path end
+  if rest == '' and not object then return nil end
+  local ctor = binding.constructor
+  if not ctor then return nil end
+  if not binding.file and js.named(bufnr, ctor.position, ctor.name) then return nil end
+  local class = ctor.name
+  return INSTANCES[class] and INSTANCES[class] .. rest or nil
+end
+
 local function catalog(bufnr, position, path)
-  local root = path:match('^[^.]+')
-  if js.named(bufnr, position, root) then return nil end
-  return dom.lookup(path)
+  path = catalog_path(bufnr, position, path)
+  return path and dom.lookup(path) or nil
+end
+
+---¿La región es el valor de un atributo on*? Las demás son <script> o
+---URLs `javascript:`, precedidas por `>` o por el prefijo.
+local function in_handler(ctx)
+  local before = ctx.source:sub(math.max(1, ctx.range[3] - 64), ctx.range[3]):lower()
+  return before:match('%f[%w]on%a+%s*=%s*["\']?$') ~= nil
 end
 
 local function hover(bufnr, position)
@@ -58,11 +95,13 @@ local function complete(bufnr, position)
   end
   if before:match('%.%s*$') then
     local path = context.path((before:gsub('%.%s*$', '')))
-    if not path or js.named(bufnr, position, path:match('^[^.]+')) then return {} end
+    path = path and catalog_path(bufnr, position, path, true)
+    if not path then return {} end
     for _, entry in ipairs(dom.members(path) or {}) do add(entry) end
     return out
   end
   for _, entry in ipairs(js.visible(bufnr, position) or {}) do add(entry) end
+  if in_handler(ctx) then add(EVENT) end
   for _, entry in ipairs(dom.globals) do add(entry) end
   if #prefix >= 2 then
     for _, word in ipairs(keywords) do add({ name = word, kind = 14, detail = word }) end
@@ -70,17 +109,50 @@ local function complete(bufnr, position)
   return out
 end
 
+-- Posición {line, character} del byte `offset` (desde 1) de la máscara.
+local function point(ctx, offset)
+  local before = ctx.source:sub(ctx.range[3] + 1, ctx.range[3] + offset - 1)
+  local _, rows = before:gsub('\n', '')
+  return { line = ctx.range[1] + rows,
+    character = rows == 0 and ctx.range[2] + #before or #before - before:match('.*()\n') }
+end
+
+local BODY_BEFORE = { '%)%s*$', '=>%s*$', '%f[%w_$]else%s*$', '%f[%w_$]try%s*$',
+  '%f[%w_$]finally%s*$', '%f[%w_$]do%s*$', '%f[%w_$]class%f[^%w_$][^{}()]*$' }
+
+---¿La llave en `offset` de la máscara abre un bloque de sentencias, como
+---el cuerpo de `function () {` o de `() => {`, y no un objeto literal?
+---Decide el árbol; si esa zona es un ERROR (código a medio escribir), el
+---texto anterior a la llave: `)`, `=>`, `else`, `try`, `do` o una clase.
+local function opens_block(ctx, mask, offset)
+  if ctx.node then
+    local at = point(ctx, offset)
+    local brace = ctx.node:tree():root():descendant_for_range(at.line, at.character, at.line, at.character + 1)
+    local parent = brace and brace:type() == '{' and brace:parent()
+    local kind = parent and parent:type()
+    if kind == 'statement_block' or kind == 'class_body' or kind == 'switch_body' then return true end
+    if kind == 'object' or kind == 'object_pattern' then return false end
+  end
+  local before = mask:sub(1, offset - 1)
+  for _, pattern in ipairs(BODY_BEFORE) do
+    if before:match(pattern) then return true end
+  end
+  return false
+end
+
 local function signature(bufnr, position)
   local ctx = js.region_at(bufnr, position)
   if not ctx then return nil end
-  local call = context.active(context.mask(ctx))
+  local mask = context.mask(ctx)
+  local call = context.active(mask)
   if not call then return nil end
+  -- En el cuerpo de un callback se escriben sentencias, no argumentos.
+  for _, offset in ipairs(call.braces) do
+    if opens_block(ctx, mask, offset) then return nil end
+  end
   -- Resuelve en el scope donde se abre la llamada, no en el de un
   -- callback que el cursor pueda estar escribiendo entre sus argumentos.
-  local before = ctx.source:sub(ctx.range[3] + 1, ctx.range[3] + call.offset - 1)
-  local _, rows = before:gsub('\n', '')
-  position = { line = ctx.range[1] + rows,
-    character = rows == 0 and ctx.range[2] + #before or #before - before:match('.*()\n') }
+  position = point(ctx, call.offset)
   local entry
   if not call.name:find('.', 1, true) then entry = js.named(bufnr, position, call.name) end
   entry = entry or catalog(bufnr, position, call.name)

@@ -193,7 +193,7 @@ local function server(dispatchers)
       if method == 'initialize' then
         respond(nil, {
           capabilities = M.capabilities(),
-          serverInfo = { name = 'asp-ls', version = '0.6.0' },
+          serverInfo = { name = 'asp-ls', version = '0.7.0' },
         })
       elseif method == 'shutdown' then
         respond(nil, nil)

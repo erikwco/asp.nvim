@@ -1,10 +1,10 @@
 # asp.nvim
 
 Soporte de Classic ASP (VBScript + HTML + JavaScript) para Neovim:
-resaltado por regiones vía tree-sitter, plegado e indentación, y
-navegación LSP (ir a definición, referencias, renombrar, símbolos, hover,
-completion y signatureHelp) incluyendo la resolución de
-`<!--#include -->` cross-file. Ver |asp.nvim|
+resaltado por regiones vía tree-sitter, plegado e indentación,
+diagnósticos de VBScript y un servidor LSP propio (ir a definición,
+referencias, renombrar, símbolos, hover, completion y signatureHelp)
+que resuelve los `<!--#include -->` entre archivos. Ver |asp.nvim|
 (`:help asp`) para el detalle.
 
 El VBScript de `<% %>`/`<%= %>` se parsea con gramática propia
@@ -30,6 +30,15 @@ Navegación desde un `onclick` a su función JS, apertura de páginas y
 búsqueda de sus usos:
 
 ![JavaScript y páginas](demo/04-js-y-paginas.gif)
+
+Diagnósticos de una página con `Option Explicit`: variable sin declarar,
+llamada inexistente y enlace a una página que no existe:
+
+![Diagnósticos de VBScript](demo/05-diagnosticos.gif)
+
+Renombrar una Function de un include en todas las páginas que la usan:
+
+![Renombrar símbolos](demo/06-rename.gif)
 
 > Los GIFs se generan con [vhs](https://github.com/charmbracelet/vhs) desde
 > `demo/*.tape` — ver [`demo/README.md`](demo/README.md).
@@ -60,7 +69,9 @@ Podés localizar las copias con
 Compilá con `make parsers`, evitá que otro instalador sustituya esa copia
 y reiniciá Neovim después de corregir el orden de `runtimepath`.
 Si usás un instalador propio para esta gramática, incluí tanto `src/parser.c`
-como `src/scanner.c` en la compilación.
+como `src/scanner.c` en la compilación. `:checkhealth asp` avisa si hay
+varias copias, si el parser `vbscript` cargado no trae el scanner externo o
+si las queries del plugin no compilan con él.
 
 ### Resolver errores de ABI en Neovim 0.10
 
@@ -154,34 +165,45 @@ y `vim.lsp.buf.references()` reúne sus usos, incluidos los manejadores de
 esas páginas. Ver `:help asp-javascript`.
 
 Hover muestra la primera línea de la declaración o la firma de la función,
-sin su cuerpo. Si viene de un `.js` o include, indica `Archivo:`.
+sin su cuerpo. Si viene de un `.js` o include, indica `Archivo:`. Un
+parámetro se muestra como `(parámetro) alfa = 1`, con su default o su `...`.
 Completion ofrece los bindings del scope más cercano, luego los globales
 de la página y de sus externos, con prefijo sensible a mayúsculas. Las
-palabras clave aparecen desde dos letras. Funciona también en `on*` y en
-URLs `javascript:`.
+palabras clave aparecen desde dos letras, todas las de JavaScript. Funciona
+también en `on*` y en URLs `javascript:`; dentro de un `on*` ofrece además
+el parámetro implícito `event`.
 
 `vim.lsp.buf.signature_help()` muestra los parámetros del árbol, incluidos
 defaults, rest y patrones desestructurados. Detecta llamadas abiertas
 dentro de la región JS, incluso en varias líneas y con llamadas anidadas.
 Al contar argumentos ignora comas dentro de strings, templates, comentarios,
-expresiones regulares, paréntesis, arrays y objetos.
+expresiones regulares, paréntesis, arrays y objetos. Dentro del cuerpo de
+un callback, como en `f(function () { | })`, no muestra la firma de `f`:
+ahí se escriben sentencias. El árbol distingue esa llave de la de un objeto
+literal; en código a medio escribir, decide el texto anterior a la llave.
 
-El catálogo parcial DOM y ECMAScript tiene 102 entradas (84 miembros y 18
+El catálogo parcial DOM y ECMAScript tiene 166 entradas (131 miembros y 35
 globales, sin contar alias de `window`). Aporta firmas y documentación en
 español para `document`, `window`, `console`, `Math`, `JSON`, `localStorage`,
-`location`, `navigator`, `history`, `Array` y funciones como `parseInt`.
-Las tres ayudas usan ese catálogo. Los bindings del usuario lo sombrean.
-Se reconocen rutas explícitas como `window.location.reload` y
-`document.location.href`. Un `obj.` desconocido devuelve completion vacía.
-No hay inferencia de tipos, alias, retornos ni miembros dinámicos de
-formularios (`document.f`, `document.forms.f`, nombres o ids del HTML).
-Los métodos del usuario tienen hover en su declaración, sin resolver
-llamadas como `vista.pintar()`.
+`sessionStorage`, `location`, `navigator`, `history`, los constructores
+`Array`, `Object`, `Date`, `String`, `Number`, `Boolean`, `RegExp`, `Error` y
+`Promise` con sus miembros estáticos, y funciones como `parseInt`, `fetch`,
+`eval` o `escape`. Las tres ayudas usan ese catálogo. Los bindings del
+usuario lo sombrean. Se reconocen rutas explícitas como
+`window.location.reload` y `document.location.href`. Un `obj.` desconocido
+devuelve completion vacía. La única inferencia es la de una variable
+declarada como `var xhr = new XMLHttpRequest()`, que ofrece los miembros de
+la instancia (`open`, `send`, `readyState`, `onreadystatechange`...); solo
+mira esa declaración, no asignaciones posteriores. No hay inferencia de otros
+tipos, alias, retornos ni miembros dinámicos de formularios (`document.f`,
+`document.forms.f`, nombres o ids del HTML). Los métodos del usuario tienen
+hover en su declaración, sin resolver llamadas como `vista.pintar()`.
 
 El handler elige VBScript o JS por las regiones ya indexadas. No mezcla
-sus sugerencias ni ofrece ayuda dentro de strings o comentarios JS.
-Completion y signatureHelp tratan todo template, incluida `${...}`, como
-texto opaco. La ayuda reutiliza las cachés del buffer y de los externos;
+sus sugerencias ni ofrece ayuda dentro de strings o comentarios JS. De un
+template solo es texto lo literal: dentro de `${...}` hay completion y
+signatureHelp, también en un template sin cerrar. La ayuda reutiliza las
+cachés del buffer y de los externos;
 las consultas en caliente no leen contenido de disco ni vuelven a parsear.
 La medición reproducible está en [tests/bench/js_help.md](tests/bench/js_help.md).
 
@@ -263,8 +285,15 @@ conservan la precedencia.
   `Session`, `Application`), funciones nativas con sus parámetros y retorno,
   constantes con su valor y tipos y miembros COM. También muestra declaraciones
   del usuario en la página y sus includes transitivos, con el archivo de origen.
+  Una Function que crea un objeto COM (`Set AbrirConexion =
+  Server.CreateObject("ADODB.Connection")`) indica `Retorno:`, también sobre su
+  propia declaración. Una Sub o Function tuya con el nombre de una nativa
+  (`Function Round(...)`) la sombrea, como en VBScript: hover y firmas
+  muestran primero la tuya.
 - Completion ofrece funciones nativas, constantes y símbolos VBScript de la
-  página y sus includes. Las palabras clave aparecen desde dos letras de prefijo.
+  página y sus includes. Las palabras clave aparecen desde dos letras de
+  prefijo, sin las reservadas de VBA que VBScript no admite (`As`, `Integer`,
+  `Optional`, `TypeOf`, `Like`...).
   Después de `Objeto.` ofrece miembros intrínsecos o COM; si el objeto no
   tiene tipo conocido (una clase tuya, un COM fuera del catálogo), ofrece los
   símbolos del proyecto, sin nativos ni palabras clave. Dentro de
@@ -274,6 +303,8 @@ conservan la precedencia.
   `textDocument/signatureHelp` anuncia `(` y `,` como disparadores y `,`
   como redisparador. Cuenta argumentos fuera de strings y paréntesis anidados;
   también reconoce `MiSub a, b` y `Call MiSub a, b` al comienzo de una sentencia.
+  En `Array`, que acepta cualquier cantidad de argumentos, el parámetro activo
+  se queda en el último.
 
 La inferencia reconoce `Set x = Server.CreateObject("ProgID")`,
 `Set x = CreateObject("ProgID")` y `Set x = New RegExp`. También sigue un
@@ -287,7 +318,9 @@ mayúsculas; acepta versiones como `ADODB.Recordset.6.0` y
 nombre de página.
 
 El catálogo COM es parcial: ADO, FileSystemObject y sus tipos derivados,
-Dictionary, MSXML, CDO y RegExp. No inspecciona componentes instalados.
+Dictionary, MSXML (con `parseError` y los atributos de los nodos), CDO y
+RegExp, con los miembros más usados en ASP, como la paginación de un
+Recordset. No inspecciona componentes instalados.
 No infiere tipos para `Set x = funcionDelUsuario()`, ProgIDs calculados,
 alias de variables ni cadenas de varios retornos COM. No analiza el flujo
 de control ni cambios de tipo posteriores. Las llamadas activas se detectan
@@ -506,8 +539,8 @@ cinco familias. El campo `code` de cada uno dice su familia:
   su grafo de includes y que no es nativo: `Nombre(args)`, `Call Nombre`,
   `Nombre arg1, arg2` como sentencia y `New Clase`. Un `x(1)` sobre un
   `Dim x(10)` es un índice, no una llamada. `New` solo acepta clases
-  declaradas con `Class` y `RegExp`. Como `undeclared`, solo con
-  `Option Explicit`.
+  declaradas con `Class` y `RegExp`. Sin `Option Explicit` solo se revisan
+  `Call Nombre` y `New Clase` (ver abajo).
 - `missing_page`: literales de páginas y recursos (`.asp`, `.inc`, `.htm`,
   `.html`, `.js`, `.css`) cuyo destino no existe en disco. Usa la misma
   detección y la misma raíz virtual que la
@@ -523,10 +556,15 @@ lo trae. Tampoco se revisan si algún include no resuelve: el nombre podría
 estar declarado ahí.
 
 Sin `Option Explicit`, VBScript declara una variable al asignarla, así que
-un `x(0)` puede ser un arreglo creado así. Además, un archivo sin
-`Option Explicit` suele ser una librería que llama a lo que declaran los
-demás includes de la página que la incluye, y esos no se ven desde la
-librería. Por eso esas dos familias necesitan `Option Explicit`.
+un `x(0)` puede ser un arreglo creado así. Por eso `undeclared` necesita
+`Option Explicit`, y sin él `unknown_call` solo revisa `Call Nombre` y
+`New Clase`, que no pueden ser una variable. No cuenta `Call obj.Metodo` ni
+un nombre asignado con `Set` (`Set fp = GetRef("F")` y luego `Call fp(1)`).
+Tampoco revisa un archivo que otro del sitio incluye: una librería llama a lo
+que declaran los demás includes de la página, y esos no se ven desde ella.
+Para saberlo usa el índice de includes de las [referencias de
+sitio](#vbscript-e-includes), que en frío recorre el sitio una vez; solo se
+consulta si hay algo que reportar. Sin raíz del sitio no se revisa.
 
 #### Configuración
 
@@ -564,7 +602,17 @@ VBA, no de VBScript.
 
 Al abrir la página, al guardarla y 500 ms después de la última edición
 (`TextChanged` e `InsertLeave`). Guardar un `.asp`, `.inc`, `.htm`,
-`.html`, `.js` o `.css` vuelve a revisar las demás páginas abiertas.
+`.html`, `.js` o `.css` vuelve a revisar las páginas abiertas que lo
+incluyen, directa o transitivamente, y las que tienen un include o un
+enlace sin resolver, porque el archivo guardado puede ser el que faltaba.
+También detecta destinos borrados o renombrados desde disco y librerías cuya
+revisión de `Call`/`New` cambia porque se agregó o quitó una página que las
+incluye. Las demás páginas conservan sus diagnósticos.
+
+La primera revisión de un `Call` o `New` desconocido sin `Option Explicit`
+recorre el sitio para determinar si el archivo es una librería incluida por
+otra página. Ese barrido es síncrono; las consultas siguientes reutilizan
+el contenido de los archivos que no cambiaron.
 
 `undeclared` y `unknown_call` usan el buffer con sus cambios sin guardar,
 pero leen los includes desde disco: un include recién creado o editado
@@ -827,9 +875,10 @@ VBScript de la página real y ~18 ms en la sintética; en HTML llega a
   sin las declaraciones del cuerpo de su función. Hover, completion y
   signatureHelp cubren bindings y el catálogo DOM parcial; no infieren
   miembros de objetos del usuario ni formularios por nombre o id.
-- JavaScript en manejadores `on*`: no se modela el parámetro implícito
-  `event` ni la cadena de scopes del elemento y su formulario
-  (`onclick="submit()"` no resuelve a `form.submit`). No se decodifican
+- JavaScript en manejadores `on*`: el parámetro implícito `event` solo
+  aparece en completion, sin definición ni hover. No se modela la cadena
+  de scopes del elemento y su formulario (`onclick="submit()"` no resuelve
+  a `form.submit`). No se decodifican
   las entidades HTML (`&quot;`) ni los `%xx` de una URL `javascript:`:
   ahí el JS queda con un error de sintaxis y el resto resuelve igual.
   Un manejador con `language="vbscript"` (IE) se lee igual como JS. No
@@ -847,24 +896,37 @@ VBScript de la página real y ~18 ms en la sintética; en HTML llega a
 ## Documentación y estado
 
 - `:help asp` — referencia completa dentro de Neovim.
-- `:checkhealth asp` — diagnóstico de parsers y del servidor.
+- `:checkhealth asp` — parsers (con el scanner externo de `vbscript` y
+  sus queries), métodos de `asp-ls`, severidad de los diagnósticos,
+  plegado e indentación.
 - CI: la suite corre en Linux y macOS contra Neovim 0.10.4, estable y nightly.
   Windows no está en la matriz (el build usa `make`/`cc`/`.so`, Unix-only);
   soporte Windows es backlog, requeriría un path de build separado.
 
-La versión 0.6.0 incluye:
+La versión 0.7.0 incluye:
 
-- Resaltado de VBScript, HTML y JavaScript, con gramática VBScript propia.
-- Navegación VBScript en el archivo y a través del grafo de includes.
-- Apertura de páginas y recursos por literal, `gf` y `C-w f`.
-- Búsqueda de usos de páginas en todo el sitio.
-- Navegación JavaScript en el archivo, en `.js` e includes, en manejadores
+- Resaltado de VBScript, HTML y JavaScript, con gramática VBScript propia
+  y un scanner externo que distingue el If de bloque del de una línea.
+- Navegación VBScript en el archivo y a través del grafo de includes; las
+  referencias de un símbolo de página abarcan todo el sitio.
+- Navegación JavaScript en `<script>`, `.js` e includes, en manejadores
   `on*` y en URLs `javascript:`.
-- Hover de los objetos intrínsecos de ASP y de las firmas de tus funciones
-  y subs de VBScript. Completion de miembros intrínsecos y símbolos del proyecto.
-- Diagnósticos de includes y búsqueda de símbolos.
-- `documentHighlight` para las ocurrencias VBScript y JS del buffer actual.
+- Apertura de páginas y recursos por literal, `gf` y `C-w f`, y búsqueda
+  de sus usos en todo el sitio.
+- Diagnósticos de includes, sintaxis, variables sin declarar, llamadas
+  inexistentes y enlaces rotos, con severidad configurable por familia.
+- Hover, completion y signatureHelp de VBScript: intrínsecos de ASP,
+  funciones y constantes nativas, objetos COM con inferencia por `Set` y
+  `CreateObject`, y Subs y Functions del usuario.
+- Hover, completion y signatureHelp de JavaScript, con los bindings de la
+  página y sus externos y un catálogo DOM y ECMAScript.
+- Renombrar símbolos de VBScript y JavaScript, con `prepareRename`.
+- `documentHighlight` y búsqueda de símbolos del proyecto.
+- Plegado e indentación de VBScript y HTML por tree-sitter.
+- `:checkhealth asp` con parsers, scanner, queries, servidor y diagnósticos.
 - CI en Neovim 0.10.4, estable y nightly, sobre Linux y macOS.
+- Resaltado semántico (`textDocument/semanticTokens`) de VBScript y
+  JavaScript, con la misma resolución que la navegación.
 
 ## Desarrollo
 

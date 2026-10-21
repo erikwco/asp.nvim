@@ -142,4 +142,23 @@ function M.infer(bufnr, position, name)
   return resolve(name, scope, 1)
 end
 
+---Tipo COM que devuelve una Function del usuario: el de la primera
+---asignación `Set Nombre = ...` de su cuerpo, si es directa
+---(`Server.CreateObject`, `CreateObject` o `New RegExp`). Sale del mismo
+---parseo que la declaración: el del buffer o el de su include.
+---@param bufnr integer
+---@param entry table declaración de asp.symbols
+---@return table|nil tipo de asp.com
+function M.returns(bufnr, entry)
+  if entry.kind ~= 12 or not entry.params then return nil end
+  local symbols = require('asp.symbols')
+  local data = entry.file and symbols.file_help(entry.file) or symbols.help(bufnr)
+  local wanted = entry.name:lower()
+  for _, assignment in ipairs(data.assignments) do
+    if assignment.name == wanted and assignment.scope_id == entry.decl_id then
+      return assignment.type and com.object(assignment.type) or nil
+    end
+  end
+end
+
 return M

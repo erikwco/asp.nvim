@@ -60,6 +60,19 @@ describe('asp.js ayuda de cliente', function()
     assert.are.equal('```javascript\nlet total = 5\n```', help.hover(0, pos('return total', 7)).contents.value)
   end)
 
+  it('hover de un parámetro indica que lo es, con su default o su rest', function()
+    local function hover(text, shift) return help.hover(0, pos(text, shift)).contents.value end
+    assert.are.equal('```javascript\n(parámetro) primero\n```', hover('return primero', 7))
+    assert.are.equal('```javascript\n(parámetro) segundo = 2\n```', hover('segundo = 2'))
+    assert.are.equal('```javascript\n(parámetro) ...resto\n```', hover('resto)'))
+    assert.are.equal("```javascript\n(parámetro) color = 'azul'\n```", hover('return color', 7))
+    query('function patrones({ a, b } = {}, c = {\n  d: 1 }) { return a + c; }')
+    assert.are.equal('```javascript\n(parámetro) a\n```', hover('return a', 7))
+    assert.are.equal('```javascript\n(parámetro) c = { d: 1 }\n```', hover('a + c', 4))
+    local entry = items(pos('return a', #'return a')).a
+    assert.are.equal('(parámetro) a', entry.detail)
+  end)
+
   it('hover de la declaración de un método y una clase', function()
     assert.are.equal("```javascript\npintar(color = 'azul')\n```", help.hover(0, pos('pintar(')).contents.value)
     assert.are.equal('```javascript\nclass Vista\n```', help.hover(0, pos('class Vista', 6)).contents.value)
@@ -206,6 +219,97 @@ describe('asp.js ayuda de cliente', function()
     assert.is_nil(help.signature(0, pos('getElementById(', #'getElementById(')))
   end)
 
+  it('completion ofrece event sólo dentro de los manejadores on*', function()
+    local p = pos('onclick="buscarGlobal')
+    vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { '<button onclick="buscarGlobal(ev)">Buscar</button>' })
+    local entry = items(pos('(ev)', 3)).event
+    assert.are.equal(6, entry.kind)
+    assert.is_truthy(entry.documentation.value:find('parámetro implícito', 1, true))
+    assert.is_nil(items(query('ev')).event)
+    assert.is_nil(items(pos('javascript:buscarGlobal', #'javascript:')).event)
+  end)
+
+  it('completion ofrece todas las palabras clave de JavaScript', function()
+    local p = query('fi')
+    for _, word in ipairs({ 'switch', 'case', 'break', 'continue', 'default', 'do', 'try', 'catch',
+      'finally', 'throw', 'instanceof', 'delete', 'in', 'of', 'class', 'extends', 'super', 'static',
+      'import', 'export', 'yield' }) do
+      vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { word })
+      local entry = items({ line = p.line, character = #word })[word]
+      assert.are.equal(14, entry and entry.kind, word)
+    end
+  end)
+
+  it('completion, hover y firmas de los globales de ECMAScript, Storage y fetch', function()
+    local p = query('Dat')
+    assert.are.equal(3, items(p).Date.kind)
+    for object, member in pairs({ Object = 'keys', Date = 'now', Number = 'isInteger', Promise = 'all',
+      sessionStorage = 'getItem', String = 'fromCharCode' }) do
+      vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { object .. '.' })
+      assert.is_not_nil(items({ line = p.line, character = #object + 1 })[member], object .. '.' .. member)
+    end
+    for _, name in ipairs({ 'escape', 'unescape', 'eval', 'fetch', 'Boolean', 'RegExp', 'Error' }) do
+      vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { name .. '(' })
+      assert.is_not_nil(help.signature(0, { line = p.line, character = #name + 1 }), name)
+    end
+    vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { 'fetch(url, ' })
+    local result = help.signature(0, { line = p.line, character = #'fetch(url, ' })
+    assert.are.same({ 'resource', 'options' }, labels(result))
+    assert.are.equal(1, result.activeParameter)
+    vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { 'Array.from(x);' })
+    local value = help.hover(0, { line = p.line, character = #'Array.f' }).contents.value
+    assert.is_truthy(value:find('objeto tipo array', 1, true))
+  end)
+
+  it('un binding new XMLHttpRequest() ofrece los miembros de su instancia', function()
+    query('var xhr = new XMLHttpRequest();\nvar otro = {};\nxhr.open(\'GET\', url, ')
+    local row = pos('xhr.open(').line
+    local result = help.signature(0, { line = row, character = #"xhr.open('GET', url, " })
+    assert.are.same({ 'method', 'url', 'async', 'user', 'password' }, labels(result))
+    assert.are.equal(2, result.activeParameter)
+    assert.is_truthy(help.hover(0, { line = row, character = 5 }).contents.value:find('async es true', 1, true))
+    vim.api.nvim_buf_set_lines(0, row, row + 1, false, { 'xhr.' })
+    local entries = items({ line = row, character = 4 })
+    assert.are.equal(2, entries.send.kind)
+    assert.are.equal(10, entries.readyState.kind)
+    assert.are.equal(10, entries.onreadystatechange.kind)
+    vim.api.nvim_buf_set_lines(0, row, row + 1, false, { 'otro.' })
+    assert.are.same({}, help.complete(0, { line = row, character = 5 }))
+    vim.api.nvim_buf_set_lines(0, row, row + 1, false, { 'XMLHttpRequest.' })
+    assert.is_nil(items({ line = row, character = #'XMLHttpRequest.' }).send)
+  end)
+
+  it('infiere XHR solo en un inicializador directo y con constructor nativo', function()
+    local cases = {
+      { 'var xhr = new XMLHttpRequest.Custom();\nxhr.', false },
+      { 'var xhr = new XMLHttpRequest().response;\nxhr.', false },
+      { 'var { xhr } = new XMLHttpRequest();\nxhr.', false },
+      { 'function usar(xhr = new XMLHttpRequest()) { xhr.', false },
+      { 'function XMLHttpRequest() {}\nvar xhr = new XMLHttpRequest();\nxhr.', false },
+      { 'function usar(XMLHttpRequest) { var xhr = new XMLHttpRequest(); xhr.', false },
+      { 'var xhr = new Date();\nxhr.', false },
+      { 'var xhr = new\nXMLHttpRequest();\nxhr.', true },
+      { 'var xhr = new XMLHttpRequest();\nfunction usar(XMLHttpRequest) { xhr.', true },
+    }
+    for _, case in ipairs(cases) do
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, { '<script>', '// consulta global', '</script>' })
+      local p = query(case[1])
+      local line = vim.api.nvim_buf_get_lines(0, p.line, p.line + 1, false)[1]
+      local close = case[1]:find('function usar', 1, true) and ' }' or ''
+      vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { line .. 'send();' .. close })
+      assert.are.equal(case[2], items(p).send ~= nil, case[1])
+    end
+  end)
+
+  it('la ayuda distingue enteros seguros y promesas adoptadas', function()
+    query('Number.MAX_SAFE_INTEGER; Promise.resolve(valor);')
+    local integer = help.hover(0, pos('MAX_SAFE_INTEGER')).contents.value
+    assert.is_truthy(integer:find('entero seguro', 1, true))
+    local promise = help.hover(0, pos('resolve')).contents.value
+    assert.is_truthy(promise:find('adopta', 1, true))
+    assert.is_truthy(promise:find('rechazo', 1, true))
+  end)
+
   it('keywords sólo desde dos letras', function()
     local p = query('f')
     assert.is_nil(items(p)['function'])
@@ -331,8 +435,66 @@ describe('asp.js ayuda de cliente', function()
   end)
 
   it('signatureHelp resuelve el callee fuera del scope de sus callbacks', function()
-    local result = help.signature(0, query('buscarGlobal(() => { let buscarGlobal = 1; '))
+    local result = help.signature(0, query('buscarGlobal(buscarGlobal => buscarGlobal + '))
     assert.are.same({ 'primero', 'segundo = 2', '...resto' }, labels(result))
+  end)
+
+  it('signatureHelp no responde dentro del cuerpo de un callback', function()
+    local function restore(p, text)
+      vim.api.nvim_buf_set_lines(0, p.line - select(2, text:gsub('\n', '')), p.line + 1, false,
+        { '// consulta global' })
+    end
+    local closed = 'buscarGlobal(function () {\n  var x = 1;\n  \n});'
+    local p = query(closed)
+    assert.is_nil(help.signature(0, { line = p.line - 1, character = 2 }))
+    restore(p, closed)
+    for _, text in ipairs({ 'buscarGlobal(() => { let buscarGlobal = 1; ', 'buscarGlobal(1, { m() { ',
+      'buscarGlobal(async function* () {\n  ', 'buscarGlobal(class extends Vista { ' }) do
+      p = query(text)
+      assert.is_nil(help.signature(0, p), text)
+      restore(p, text)
+    end
+  end)
+
+  it('signatureHelp sigue dentro de un objeto literal y de una llamada en el callback', function()
+    local p = query('buscarGlobal({ clave: 1,  });')
+    local result = help.signature(0, { line = p.line, character = #'buscarGlobal({ clave: 1, ' })
+    assert.are.equal(0, result.activeParameter)
+    vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { 'buscarGlobal(2, { clave: [1, ' })
+    assert.are.equal(1, help.signature(0, { line = p.line, character = #'buscarGlobal(2, { clave: [1, ' })
+      .activeParameter)
+    local text = 'buscarGlobal(function () { buscarGlobal(1, '
+    vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { text })
+    assert.are.equal(1, help.signature(0, { line = p.line, character = #text }).activeParameter)
+  end)
+
+  it('las sustituciones ${...} de un template son código', function()
+    local text = 'var t = `Total: ${buscarGlobal(1, )}`;'
+    local p = query(text)
+    local cursor = { line = p.line, character = #'var t = `Total: ${buscarGlobal(1, ' }
+    assert.are.equal(1, help.signature(0, cursor).activeParameter)
+    vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { 'var t = `Total: ${bus}`;' })
+    assert.is_not_nil(items({ line = p.line, character = #'var t = `Total: ${bus' }).buscarGlobal)
+    for _, unclosed in ipairs({ '`a ${buscarGlobal(1, ', '`a ${ `b ${x}` + buscarGlobal(1, ',
+      "`a ${ { k: '}' }.k + buscarGlobal(1, " }) do
+      vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { unclosed })
+      local result = help.signature(0, { line = p.line, character = #unclosed })
+      assert.are.equal(1, result and result.activeParameter, unclosed)
+    end
+    for _, text_only in ipairs({ '`Total ${x} buscarGlobal(1, ', '`Total $', '`Total ${x}`.length + `$' }) do
+      vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { text_only })
+      assert.is_nil(help.signature(0, { line = p.line, character = #text_only }), text_only)
+    end
+  end)
+
+  it('las comas de una sustitución no avanzan el argumento de la llamada exterior', function()
+    local p = query('buscarGlobal(`${1, 2}`, ')
+    for _, text in ipairs({ 'buscarGlobal(`${1, 2}`, ',
+      'buscarGlobal(`a ${`b ${1, 2}`} ${3, 4}`, ',
+      'buscarGlobal(`${/}/.test("}"), 2}`, ' }) do
+      vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { text })
+      assert.are.equal(1, help.signature(0, { line = p.line, character = #text }).activeParameter, text)
+    end
   end)
 
   it('desestructurar una función no convierte sus propiedades en funciones', function()
@@ -458,12 +620,13 @@ describe('asp.js ayuda de cliente', function()
 end)
 
 describe('catálogo DOM parcial', function()
-  it('tiene entre 80 y 120 entradas documentadas y offsets válidos', function()
+  it('tiene entre 150 y 200 entradas documentadas y offsets válidos', function()
     local dom = require('asp.dom')
-    assert.is_true(dom.count >= 80 and dom.count <= 120, tostring(dom.count))
+    assert.is_true(dom.count >= 150 and dom.count <= 200, tostring(dom.count))
     local all = vim.list_extend({}, dom.globals)
     for _, object in ipairs({ 'document', 'window', 'console', 'Math', 'JSON', 'localStorage',
-      'location', 'navigator', 'history', 'Array' }) do
+      'sessionStorage', 'location', 'navigator', 'history', 'Array', 'Object', 'Date', 'String',
+      'Number', 'Promise', 'XMLHttpRequest.prototype' }) do
       vim.list_extend(all, dom.members(object))
     end
     for _, e in ipairs(all) do
