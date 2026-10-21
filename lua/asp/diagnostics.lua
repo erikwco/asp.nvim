@@ -10,6 +10,7 @@ M.debounce_ms = 500
 -- La decisión de revisar Call/New sin Option Explicit depende también de
 -- quién incluye el buffer, aunque su propio grafo no cambie al guardar.
 local site_checks = {}
+local page_checks = {}
 
 -- Familias y severidad por defecto. La de sintaxis es HINT porque la
 -- gramática vbscript marca como error construcciones válidas comunes
@@ -476,6 +477,7 @@ local function missing_page_family(ctx, severity)
   end
 
   local exists, out = {}, {}
+  page_checks[ctx.bufnr] = exists
   for _, lit in ipairs(literals) do
     local line = ctx.lines[lit.lnum + 1] or ''
     local text = line:sub(lit.col + 1, lit.end_col)
@@ -512,6 +514,7 @@ M.last_errors = {}
 function M.refresh(bufnr)
   bufnr = bufnr == 0 and vim.api.nvim_get_current_buf() or bufnr
   site_checks[bufnr] = nil
+  page_checks[bufnr] = nil
   if not vim.api.nvim_buf_is_valid(bufnr) or not vim.api.nvim_buf_is_loaded(bufnr) then return end
   local ok_cfg, cfg = pcall(M.config)
   if not ok_cfg then
@@ -592,6 +595,7 @@ end
 ---publicado un diagnóstico de includes o de páginas inexistentes, porque
 ---el archivo guardado puede ser el que faltaba. También las librerías cuya
 ---revisión de Call/New cambia al agregar o quitar un incluidor del sitio.
+---Comprueba destinos antes válidos para detectar borrados desde disco.
 ---Ninguna se refresca acá: el llamador decide cuándo.
 ---@param path string
 ---@param except? integer
@@ -600,7 +604,7 @@ function M.affected(path, except)
   local names = { [vim.fs.normalize(path)] = true }
   local real = vim.uv.fs_realpath(path)
   if real then names[real] = true end
-  local out, sites = {}, {}
+  local out, sites, exists = {}, {}, {}
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
     if buf ~= except and vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].filetype == 'asp' then
       local hit = false
@@ -617,7 +621,20 @@ function M.affected(path, except)
         end
       end
       if not hit then
+        for target, previous in pairs(page_checks[buf] or {}) do
+          if exists[target] == nil then
+            local stat = vim.uv.fs_stat(target)
+            exists[target] = stat ~= nil and stat.type == 'file'
+          end
+          if exists[target] ~= previous then
+            hit = true
+            break
+          end
+        end
+      end
+      if not hit then
         local ok, g = pcall(require('asp.includes').buffer_graph, buf)
+        hit = ok and #g.unresolved > 0 or false
         for _, file in ipairs(ok and g.order or {}) do
           if names[file] then
             hit = true
@@ -647,6 +664,7 @@ function M.attach(bufnr)
     callback = function()
       cancel(bufnr)
       site_checks[bufnr] = nil
+      page_checks[bufnr] = nil
       pcall(vim.api.nvim_del_augroup_by_id, group)
     end,
   })

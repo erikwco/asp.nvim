@@ -474,6 +474,47 @@ describe('diagnósticos de VBScript', function()
   end)
 
   describe('refresco', function()
+    it('un guardado detecta includes y enlaces renombrados o borrados desde disco', function()
+      in_temp({
+        ['hoja.inc'] = { '<% Dim hoja %>' },
+        ['medio.inc'] = { '<!--#include file="hoja.inc" -->' },
+        ['destino.asp'] = { '<p>destino</p>' },
+        ['p.asp'] = { '<!--#include file="medio.inc" -->', '<a href="destino.asp">Ir</a>' },
+        ['ajena.asp'] = { '<p>ajena</p>' },
+      }, function(dir)
+        assert.are.same({}, diags_at(dir .. '/p.asp'))
+        local page = vim.api.nvim_get_current_buf()
+        diags_at(dir .. '/ajena.asp')
+        local saved = vim.api.nvim_get_current_buf()
+        local ok, err = pcall(function()
+          vim.wait(20, function() return false end)
+          assert(vim.uv.fs_rename(dir .. '/hoja.inc', dir .. '/renombrada.inc'))
+          vim.cmd('silent write')
+          assert.is_true(diagnostics().pending(page))
+          assert.is_true(vim.wait(2000, function()
+            return #of(vim.diagnostic.get(page), 'includes') == 1
+          end))
+          assert(vim.uv.fs_rename(dir .. '/renombrada.inc', dir .. '/hoja.inc'))
+          vim.cmd('silent write')
+          assert.is_true(vim.wait(2000, function() return #vim.diagnostic.get(page) == 0 end))
+          assert(vim.uv.fs_unlink(dir .. '/destino.asp'))
+          vim.cmd('silent write')
+          assert.is_true(diagnostics().pending(page))
+          assert.is_true(vim.wait(2000, function()
+            return #of(vim.diagnostic.get(page), 'missing_page') == 1
+          end))
+          vim.cmd.edit(dir .. '/destino.asp')
+          vim.api.nvim_buf_set_lines(0, 0, -1, false, { '<p>nuevo destino</p>' })
+          vim.cmd('silent write')
+          assert.is_true(vim.wait(2000, function() return #vim.diagnostic.get(page) == 0 end))
+          vim.cmd('bwipeout!')
+        end)
+        vim.api.nvim_buf_delete(page, { force = true })
+        vim.api.nvim_buf_delete(saved, { force = true })
+        assert(ok, err)
+      end)
+    end)
+
     it('guardar un incluidor actualiza Call sin Option Explicit en una librería abierta', function()
       in_temp({
         ['lib.inc'] = { '<% Call Externa() %>' },
