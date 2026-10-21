@@ -309,8 +309,8 @@ muestra el motivo.
   `total` a `saldo`, `{total}` pasa a `{total: saldo}`, también en un
   parámetro desestructurado (`function f({total})`).
 
-No se renombran los miembros de objeto (`rs.EOF`, `obj.Total`,
-`Me.Total`, `obj.metodo` en JS), los objetos intrínsecos de ASP, las
+No se inicia el rename desde un acceso a miembro (`rs.EOF`, `obj.Total`,
+`Me.Total`, `obj.metodo` en JS). No se renombran los intrínsecos de ASP, las
 funciones, constantes y palabras clave nativas de VBScript, los globales
 de JS sin declaración (`document`, un global implícito), los nombres de
 VBScript sin declaración resoluble (sin `Dim` y sin `Option Explicit`),
@@ -345,8 +345,12 @@ dónde está el problema:
   (`Private total`), en el archivo actual o en cualquier otro que
   cambiaría, el rename se rechaza: las referencias todavía no separan ese
   miembro del nombre de página y sus `Me.total` quedarían sin cambiar. El
-  mensaje nombra la clase y el archivo; renombrá primero el miembro desde
-  adentro de la clase.
+  mensaje nombra la clase y el archivo. Renombrá primero el miembro desde
+  adentro de la clase si es una variable `Private`; si es público, a mano.
+- **Un miembro público de clase.** No se pueden resolver sus usos
+  `obj.total` desde fuera de la clase. El rename se rechaza desde
+  `prepareRename`, también para un `Dim` dentro de la clase, que es
+  público. Renombralo a mano.
 - **Un `<%= %>` fundido.** La inyección combinada funde los bloques
   `<%= %>` sin espacios en su código (`<td><%=a%></td><td><%=b%></td>`),
   aunque el HTML del medio tenga saltos de línea, y las referencias no
@@ -356,11 +360,15 @@ dónde está el problema:
 - **Un archivo a cambiar tiene cambios sin guardar.** Las posiciones de
   los demás archivos salen del disco: guardalo y volvé a renombrar.
 
+Una variable de clase declarada con `Private` se renombra desde su
+declaración o un uso suelto dentro de la clase. Cambia también sus usos
+`Me.total`, sin distinguir mayúsculas, con espacios y continuaciones `_`.
+Solo cambia el buffer dentro de esa clase; conserva los locales y las
+variables de página homónimos. Los métodos y las propiedades de clase se
+renombran a mano.
+
 Límites:
 
-- Un miembro de clase renombrado desde adentro de su clase cambia solo
-  como identificador suelto dentro de ella: sus usos `Me.total` y
-  `obj.total` no cambian y hay que ajustarlos a mano.
 - No cambia los nombres dentro de strings de `Eval`, `Execute` o
   `ExecuteGlobal`, los nombres armados en runtime, los strings de
   JavaScript ni las páginas fuera de la raíz del sitio que incluyen la

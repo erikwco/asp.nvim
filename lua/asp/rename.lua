@@ -35,6 +35,10 @@ local function node_range(node)
   return { start = { line = r0, character = c0 }, ['end'] = { line = r1, character = c1 } }
 end
 
+local function entry_range(r)
+  return { start = { line = r[1], character = r[2] }, ['end'] = { line = r[3], character = r[4] } }
+end
+
 -- ¿`pos` cae dentro de `range` (límites inclusivos)?
 local function contains(range, pos)
   local s, e = range.start, range['end']
@@ -175,6 +179,25 @@ local function fused_use(bufnr, name)
   return nil
 end
 
+local function vbscript_context(bufnr, position, name)
+  local symbols = require('asp.symbols')
+  local wanted = name:lower()
+  local refs, binding = symbols.references(bufnr, position, { buffer_only = true, skip_members = true })
+  local context = { refs = refs, binding = binding, entries = symbols.collect(bufnr), classes = {} }
+  local members = {}
+  for _, e in ipairs(context.entries) do
+    if e.class_id and not e.scope_id and e.name:lower() == wanted then members[e.class_id] = e end
+  end
+  for _, e in ipairs(context.entries) do
+    if members[e.decl_id] then
+      local class = { entry = e, member = members[e.decl_id], range = entry_range(e.range) }
+      table.insert(context.classes, class)
+      if not (binding and binding.scope_id) and contains(class.range, position) then context.class = class end
+    end
+  end
+  return context
+end
+
 ---Identificador VBScript bajo el cursor que se puede renombrar. Devuelve
 ---nil sin error si la posición no es un identificador VBScript.
 local function vbscript_target(bufnr, position)
@@ -187,7 +210,7 @@ local function vbscript_target(bufnr, position)
   if fused then return nil end
   local range = node_range(node)
   if symbols.is_member(node, bufnr) then
-    return fail(('`%s` es un miembro de objeto: asp-ls no renombra miembros'):format(name))
+    return fail(('`%s` es un miembro de objeto: el rename no se inicia desde un acceso con punto'):format(name))
   end
   local reason = vbscript_reserved(name)
   if reason then return fail(('`%s` es %s: no se renombra'):format(name, reason)) end
@@ -199,7 +222,18 @@ local function vbscript_target(bufnr, position)
   -- Un uso dentro de un identificador fundido quedaría sin cambiar.
   local row = fused_use(bufnr, name:lower())
   if row then return fail(fused_message(row, name)) end
-  return { lang = 'vbscript', name = name, range = range }
+  local context = vbscript_context(bufnr, position, name)
+  if context.class then
+    local member = context.class.member
+    local declared = symbols.identifier_at(bufnr, { line = member.selection[1], character = member.selection[2] })
+    local private = declared:parent():type() == 'dim_statement'
+      and member.declaration:lower():match('^private%f[^%w_]')
+    if not private then
+      return fail(('asp-ls solo renombra variables de clase declaradas con Private: no puede resolver '
+        .. 'los usos `obj.%s` desde fuera de la clase; renombrá `%s` a mano'):format(name, name))
+    end
+  end
+  return { lang = 'vbscript', name = name, range = range, context = context }
 end
 
 ---Identificador JS bajo el cursor que se puede renombrar. Devuelve nil
@@ -241,11 +275,6 @@ local function target(bufnr, position)
     return fail('es un literal de página: asp-ls no renombra archivos')
   end
   return fail('no hay un símbolo de VBScript o JavaScript para renombrar en esta posición')
-end
-
--- Rango de un entry de asp.symbols como rango LSP.
-local function entry_range(r)
-  return { start = { line = r[1], character = r[2] }, ['end'] = { line = r[3], character = r[4] } }
 end
 
 local function same_range(a, b)
@@ -380,38 +409,33 @@ local function class_message(bufnr, class, member, name)
   local owner = class and ('la clase `%s` (%s)'):format(class.name, where(bufnr, class))
     or ('una clase (%s)'):format(where(bufnr, member))
   return ('%s declara un miembro `%s` que asp-ls no separa del nombre de página: renombrá primero '
-    .. 'el miembro desde adentro de la clase (sus usos con punto, como `Me.%s`, se ajustan a mano)')
-    :format(owner, name, name)
+    .. 'el miembro; las variables Private se renombran desde adentro de la clase y los miembros públicos, a mano')
+    :format(owner, name)
+end
+
+local function self_member(node, bufnr, name)
+  local parent = node:parent()
+  if not parent or parent:type() ~= 'member_expression' then return false end
+  local text = vim.treesitter.get_node_text(parent, bufnr):lower():gsub('_[ \t]*\r?\n', '')
+  return text:match('^me[ \t]*%.[ \t]*' .. vim.pesc(name) .. '$') ~= nil
 end
 
 ---Ubicaciones VBScript a renombrar: references con alcance de sitio, sin
----los miembros de objeto (`obj.Total`, `Me.Total`).
+---miembros de objeto salvo los Me.x de una variable Private.
 ---
----Un miembro de clase solo es visible como identificador suelto dentro de
----su clase: con el cursor en una clase del buffer que declara ese nombre
----(y fuera de un local homónimo), se renombra el miembro y nada más que
----dentro de la clase. references no separa esos miembros de un nombre de
----página homónimo (ver "Heredado del resolver" en la spec): un rename de
+---Una variable Private se renombra dentro de su clase, incluidos sus
+---usos Me.x aunque un local homónimo oculte el nombre suelto.
+---references no separa esos miembros de un nombre de página homónimo
+---(ver "Heredado del resolver" en la spec): un rename de
 ---página que tocaría una de esas clases se rechaza, en el buffer o en
 ---cualquier otro archivo que cambiaría, para no renombrar la declaración
 ---del miembro y dejar sus `Me.x` sin cambiar.
 local function vbscript_locations(bufnr, position, t, new_name)
   local symbols = require('asp.symbols')
   local wanted = t.name:lower()
-  local refs, binding = symbols.references(bufnr, position, { buffer_only = true, skip_members = true })
-  local entries = symbols.collect(bufnr)
-  local members = {}
-  for _, e in ipairs(entries) do
-    if e.class_id and not e.scope_id and e.name:lower() == wanted then members[e.class_id] = true end
-  end
-  local classes, class = {}, nil
-  for _, e in ipairs(entries) do
-    if members[e.decl_id] then
-      local c = { entry = e, range = entry_range(e.range) }
-      table.insert(classes, c)
-      if not (binding and binding.scope_id) and contains(c.range, position) then class = c end
-    end
-  end
+  local context = t.context
+  local refs, binding, entries = context.refs, context.binding, context.entries
+  local classes, class = context.classes, context.class
 
   -- Un cambio solo de mayúsculas no es otro nombre en VBScript.
   local renamed = new_name:lower() ~= wanted
@@ -421,7 +445,15 @@ local function vbscript_locations(bufnr, position, t, new_name)
     if clash then return fail(clash) end
   end
   if class then
-    return vim.tbl_filter(function(ref) return contains(class.range, ref.range.start) end, refs)
+    local locations = vim.tbl_filter(function(ref) return contains(class.range, ref.range.start) end, refs)
+    for _, node in ipairs(symbols.identifiers(bufnr)) do
+      local range = node_range(node)
+      if contains(class.range, range.start) and vim.treesitter.get_node_text(node, bufnr):lower() == wanted
+        and self_member(node, bufnr, wanted) then
+        table.insert(locations, { uri = vim.uri_from_bufnr(bufnr), range = range })
+      end
+    end
+    return locations
   end
   -- Un local no sale del buffer: references ya devolvió todo.
   if binding and binding.scope_id then return refs end

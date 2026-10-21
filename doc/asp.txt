@@ -251,9 +251,10 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       `{total}` pasa a `{total: saldo}`, también en un parámetro
       desestructurado (`function f({total})`).
 
-      No renombra miembros de objeto (`rs.EOF`, `obj.Total`, `Me.Total`,
-      `obj.metodo` en JS), intrínsecos de ASP, funciones, constantes ni
-      palabras clave nativas de VBScript, globales de JS sin declaración
+      No inicia el rename desde un acceso a miembro (`rs.EOF`,
+      `obj.Total`, `Me.Total`, `obj.metodo` en JS). No renombra
+      intrínsecos de ASP, funciones, constantes ni palabras clave nativas
+      de VBScript, globales de JS sin declaración
       (`document`, un global implícito), nombres de VBScript sin
       declaración resoluble (sin Dim y sin Option Explicit), literales de
       página ni HTML. No renombra archivos.
@@ -286,8 +287,13 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
         miembro homónimo (`Private total`), en el archivo actual o en
         cualquier otro que cambiaría: references no separa ese miembro
         del nombre de página y sus `Me.total` quedarían sin cambiar. El
-        mensaje nombra la clase y el archivo; renombrá primero el
-        miembro desde adentro de la clase.
+        mensaje nombra la clase y el archivo. Renombrá primero el
+        miembro desde adentro si es una variable Private; si es
+        público, a mano.
+      - Un miembro público de clase: no se pueden resolver sus usos
+        `obj.total` desde fuera de la clase. Se rechaza desde
+        prepareRename, también para un Dim dentro de la clase, que es
+        público. Renombralo a mano.
       - Un bloque `<%= %>` sin espacios en su código usa el nombre viejo
         o el nuevo. La inyección combinada lo funde con otro bloque
         aunque el HTML del medio tenga saltos de línea, y references no
@@ -296,9 +302,12 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       - Un archivo a cambiar está abierto con cambios sin guardar: las
         posiciones de los demás archivos salen del disco.
 
-      Un miembro de clase renombrado desde adentro de su clase cambia
-      solo como identificador suelto dentro de ella: sus usos `Me.total`
-      y `obj.total` no cambian y hay que ajustarlos a mano.
+      Una variable de clase declarada con Private se renombra desde su
+      declaración o un uso suelto dentro de la clase. Cambia también sus
+      usos `Me.total`, sin distinguir mayúsculas, con espacios y
+      continuaciones `_`. Solo cambia el buffer dentro de esa clase;
+      conserva los locales y las variables de página homónimos. Los
+      métodos y las propiedades de clase se renombran a mano.
 
       No cambia los nombres dentro de strings de Eval, Execute o
       ExecuteGlobal, los armados en runtime, los strings de JS, las
@@ -673,8 +682,9 @@ El plugin (Lua, gramática aspclassic, queries) es MIT. El directorio
 Sin publicar ~
 
   - Renombrar símbolos (|asp-rename|): prepareRename y rename para
-    VBScript y JavaScript, con el alcance de references, sin miembros de
-    objeto y con validación del nombre nuevo. Rechaza el rename que
+    VBScript y JavaScript, con el alcance de references y validación del
+    nombre nuevo. Las variables Private de clase incluyen sus usos
+    Me.x; los miembros públicos se renombran a mano. Rechaza el rename que
     dejaría el programa roto: un nombre nuevo que ya existe en cualquier
     alcance, un miembro de clase homónimo en algún archivo a cambiar o
     un `<%= %>` fundido que usa el nombre.

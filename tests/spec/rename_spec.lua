@@ -453,17 +453,17 @@ describe('asp.rename rename', function()
     end)
   end)
 
-  it('un miembro de clase se renombra solo como identificador suelto dentro de la clase', function()
+  it('un miembro privado incluye sus usos Me y queda dentro de la clase', function()
     open('carrito.asp')
     local expected = {
       ['carrito.asp'] = {
+        ('%d:%d'):format(pos_in('Valor = Me.total', 'total').line, pos_in('Valor = Me.total', 'total').character),
         ('%d:12'):format(pos_in('total = total + monto').line),
         ('%d:4'):format(pos_in('total = total + monto').line),
         ('%d:10'):format(pos_in('Private total').line),
       },
     }
-    -- Desde la declaración y desde un uso dentro de un método: Me.total y
-    -- el total de página quedan igual.
+    -- Desde la declaración y desde un método, sin el total de página.
     assert.are.same(expected, edits_of(assert(rename.rename(0, pos_in('Private total', 'total'), 'm_total'))))
     assert.are.same(expected, edits_of(assert(rename.rename(0, pos_in('total = total + monto'), 'm_total'))))
     -- El nombre de página homónimo arrastraría al miembro (límite heredado
@@ -474,6 +474,74 @@ describe('asp.rename rename', function()
     res, err = rename.prepare(0, pos_in('c.Agregar', 'Agregar'))
     assert.is_nil(res)
     assert.is_truthy(err.message:find('miembro de objeto', 1, true))
+  end)
+
+  it('aplica el rename privado a Me con espacios y continuaciones sin tocar homónimos', function()
+    local lines = {
+      '<%', 'Dim total', 'total = 100', 'Class Caja', '  pRiVaTe total, otro',
+      '  Sub A()', '    total = 1', '    Me.total = total', '    mE . ToTaL = Me . total + 1',
+      '    Me _', '      . _', '      total = 2', '    obj.total = 3',
+      '    otro = "Me.total"', "    ' Me.total", '  End Sub',
+      '  Sub B()', '    total = Me.total + total', '  End Sub',
+      '  Sub C(total)', '    Me.total = total', '  End Sub', 'End Class',
+      'Class Otra', '  Private total', '  Sub A()', '    Me.total = total', '  End Sub', 'End Class',
+      'total = obj.total', '%>',
+    }
+    in_temp({ ['pagina.asp'] = table.concat(lines, '\n') .. '\n' }, function(dir)
+      vim.cmd.edit(dir .. '/pagina.asp')
+      local pos = pos_in('pRiVaTe total', 'total')
+      assert.are.equal('total', rename.prepare(0, pos).placeholder)
+      local edit = assert(rename.rename(0, pos, 'saldo'))
+      assert.are.same({ ['pagina.asp'] = 11 }, counts(edit, dir))
+      vim.lsp.util.apply_workspace_edit(edit, 'utf-8')
+      local expected = vim.deepcopy(lines)
+      expected[5] = '  pRiVaTe saldo, otro'
+      expected[7] = '    saldo = 1'
+      expected[8] = '    Me.saldo = saldo'
+      expected[9] = '    mE . saldo = Me . saldo + 1'
+      expected[12] = '      saldo = 2'
+      expected[18] = '    saldo = Me.saldo + saldo'
+      expected[21] = '    Me.saldo = total'
+      assert.are.same(expected, buffer_lines(dir .. '/pagina.asp'))
+    end)
+  end)
+
+  it('rechaza miembros Public y Dim desde la declaración y desde sus usos sueltos', function()
+    for _, modifier in ipairs({ 'Public', 'Dim' }) do
+      in_temp({
+        ['pagina.asp'] = table.concat({
+          '<%', 'Dim total', 'Class Caja', '  ' .. modifier .. ' total',
+          '  Sub A()', '    total = Me.total', '  End Sub', 'End Class', '%>', '',
+        }, '\n'),
+      }, function(dir)
+        vim.cmd.edit(dir .. '/pagina.asp')
+        for _, pos in ipairs({ { line = 3, character = 3 + #modifier }, pos_in('total = Me.total') }) do
+          for _, res_err in ipairs({ { rename.prepare(0, pos) }, { rename.rename(0, pos, 'saldo') } }) do
+            assert.is_nil(res_err[1], modifier)
+            assert.are.equal(-32602, res_err[2].code)
+            assert.is_truthy(res_err[2].message:find('obj.total', 1, true), res_err[2].message)
+            assert.is_truthy(res_err[2].message:find('fuera de la clase', 1, true), res_err[2].message)
+            assert.is_truthy(res_err[2].message:find('a mano', 1, true), res_err[2].message)
+          end
+        end
+      end)
+    end
+  end)
+
+  it('un local homónimo de un miembro público conserva su alcance', function()
+    in_temp({
+      ['pagina.asp'] = table.concat({
+        '<%', 'Class Caja', 'Public total', 'Sub A(total)', 'Me.total = total', 'End Sub', 'End Class', '%>', '',
+      }, '\n'),
+    }, function(dir)
+      vim.cmd.edit(dir .. '/pagina.asp')
+      local pos = pos_in('Sub A(total)', 'total')
+      assert.are.equal('total', rename.prepare(0, pos).placeholder)
+      vim.lsp.util.apply_workspace_edit(assert(rename.rename(0, pos, 'saldo')), 'utf-8')
+      assert.are.same({
+        '<%', 'Class Caja', 'Public total', 'Sub A(saldo)', 'Me.total = saldo', 'End Sub', 'End Class', '%>',
+      }, buffer_lines(dir .. '/pagina.asp'))
+    end)
   end)
 
   it('rechaza un rename de página que tocaría un miembro de clase homónimo en otro archivo', function()
@@ -493,7 +561,7 @@ describe('asp.rename rename', function()
       assert.are.equal(-32602, err.code)
       assert.is_truthy(err.message:find('la clase `Contador` (otra.asp:3) declara un miembro `Hit`', 1, true),
         err.message)
-      assert.is_truthy(err.message:find('Me.Hit', 1, true), err.message)
+      assert.is_truthy(err.message:find('variables Private', 1, true), err.message)
     end)
     -- Sin un miembro homónimo, el rename llega a los usos de la otra página.
     in_temp({ ['lib.inc'] = lib, ['otra.asp'] = page('Golpes') }, function(dir)
