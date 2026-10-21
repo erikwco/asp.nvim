@@ -296,12 +296,17 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       sin base (".asp") ni los literales en comentarios HTML o VBScript.
 
       syntax es HINT por defecto porque la gramática marca como error
-      construcciones válidas: `x Is Nothing`, `Case 1, 2`, `Case Is > 5`,
+      construcciones válidas: `x Is Nothing`, `Case 1, 2`,
       `Const A = 1, B = 2`, un `Case Else` vacío y `.Campo` dentro de un
       `With`. Las variables y llamadas dentro de un error no se revisan,
       y los nombres de una línea con un error cuentan como declarados en
-      todo el archivo. En el código de los fixtures y de tres páginas
+      todo el buffer actual. En el código de los fixtures y de tres páginas
       reales no hubo ningún falso positivo.
+
+      La recuperación de nombres no se aplica a los includes ni cubre
+      siempre las declaraciones partidas con `_`. Un `Const A = 1, B = 2`
+      en un include puede hacer que un uso de B se marque como sin declarar.
+      `Case Is > 5` es sintaxis de VBA, no de VBScript.
 
       Se actualizan al abrir la página, al guardarla y 500 ms después de
       la última edición (|TextChanged| e |InsertLeave|). Guardar un .asp,
@@ -310,6 +315,10 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       sin guardar, pero leen los includes desde disco: un include recién
       creado o editado cuenta cuando se guarda. Configuración en
       |asp-setup|.
+
+      Si setup se llama con páginas ya abiertas, las severidades nuevas
+      se aplican en el próximo refresh. Para aplicarlas en el buffer
+      actual sin esperar, usar require('asp.diagnostics').refresh(0).
 
   rendimiento ~
       Los diagnósticos parsean solo el VBScript del buffer, con las

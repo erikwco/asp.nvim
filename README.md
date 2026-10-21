@@ -324,12 +324,17 @@ require('asp').setup({
 
 `syntax` es HINT por defecto porque la gramática marca como error
 construcciones válidas de VBScript: `x Is Nothing`, `Case 1, 2`,
-`Case Is > 5`, `Const A = 1, B = 2`, un `Case Else` vacío y `.Campo`
+`Const A = 1, B = 2`, un `Case Else` vacío y `.Campo`
 dentro de un `With`. Las variables y llamadas dentro de un error no se
 revisan, y los nombres de una línea con un error cuentan como declarados
-en todo el archivo: un error que llega al final del archivo, como el de
+en todo el buffer actual: un error que llega al final del archivo, como el de
 `Case 1, 2`, deja sin revisar lo que sigue. En el código de los fixtures
 y de tres páginas reales no hubo ningún falso positivo.
+
+Esa recuperación de nombres no se aplica a los includes ni cubre siempre
+las declaraciones partidas con `_`. Por ejemplo, `Const A = 1, B = 2`
+en un include puede hacer que un uso de `B` se marque como sin declarar.
+`Case Is > 5` es sintaxis de VBA, no de VBScript.
 
 #### Cuándo se actualizan
 
@@ -340,6 +345,10 @@ Al abrir la página, al guardarla y 500 ms después de la última edición
 `undeclared` y `unknown_call` usan el buffer con sus cambios sin guardar,
 pero leen los includes desde disco: un include recién creado o editado
 cuenta cuando se guarda.
+
+Si se llama a `setup` con páginas ya abiertas, las severidades nuevas se
+aplican en el próximo refresh. Se puede adelantar con
+`require('asp.diagnostics').refresh(0)` en el buffer actual.
 
 ### Rendimiento
 
