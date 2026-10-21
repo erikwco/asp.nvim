@@ -402,35 +402,48 @@ function M.identifier_at(bufnr, position)
   return node and node:type() == 'identifier' and node or nil
 end
 
+---Declaración llamada `wanted` (en minúsculas) que se ve desde el scope
+---`scope_id` (Sub/Function/Property) y la clase `class_id`, entre
+---`entries`: el local del scope, la de página (sin scope ni clase) y, si
+---no hay, un miembro de clase homónimo, primero el de la clase que
+---contiene la posición. Son los tiers de M.definition, M.references y los
+---tokens semánticos (asp.semantic_tokens). Ver el comentario extenso en
+---M.definition sobre los tiers y el refinamiento class_id.
+---@param entries table[] declaraciones del buffer (o solo las de ese nombre)
+---@param wanted string ya en minúsculas
+---@param scope_id integer|nil
+---@param class_id integer|nil
+---@return table|nil entry
+function M.pick(entries, wanted, scope_id, class_id)
+  local local_hit, page_hit, own_hit, class_hit
+  for _, e in ipairs(entries) do
+    if e.name:lower() == wanted then
+      if scope_id and e.scope_id == scope_id then
+        local_hit = local_hit or e
+      elseif not e.scope_id and not e.class_id then
+        page_hit = page_hit or e
+      elseif not e.scope_id then
+        if e.class_id == class_id then own_hit = own_hit or e end
+        class_hit = class_hit or e
+      end
+    end
+  end
+  return local_hit or page_hit or own_hit or class_hit
+end
+
 ---Resuelve, entre las declaraciones del buffer actual, cuál referencia
----`node` (identificador bajo el cursor) según los mismos tiers que
----M.definition: local del scope del cursor → página (sin scope ni clase) →
----miembro de clase homónimo. Devuelve la
----entry completa (con su scope_id/class_id) o nil si `wanted` no tiene
----ninguna declaración en este buffer. Compartida por M.definition y
----M.references — ver el comentario extenso en M.definition sobre los
----tiers y el refinamiento class_id.
+---`node` (identificador bajo el cursor), desde su scope y su clase (ver
+---M.pick). Devuelve la entry completa (con su scope_id/class_id) o nil si
+---`wanted` no tiene ninguna declaración en este buffer. Compartida por
+---M.definition y M.references.
 ---@param entries table[] declaraciones del buffer
 ---@param node TSNode identificador bajo el cursor
 ---@param wanted string ya en minúsculas
 ---@return table|nil entry
 local function resolve_binding(entries, node, wanted)
-  local cursor_scope = nearest_ancestor(node, SCOPE_TYPES)
-  local cursor_scope_id = cursor_scope and cursor_scope:id() or nil
-
-  local local_hit, page_hit, class_hit
-  for _, e in ipairs(entries) do
-    if e.name:lower() == wanted and e.decl_id ~= node:id() then
-      if cursor_scope_id and e.scope_id == cursor_scope_id then
-        local_hit = local_hit or e
-      elseif not e.scope_id and not e.class_id then
-        page_hit = page_hit or e
-      elseif not e.scope_id and e.class_id then
-        class_hit = class_hit or e
-      end
-    end
-  end
-  return local_hit or page_hit or class_hit
+  local scope = nearest_ancestor(node, SCOPE_TYPES)
+  local class = nearest_ancestor(node, { class_statement = true })
+  return M.pick(entries, wanted, scope and scope:id(), class and class:id())
 end
 
 ---Primera declaración de PÁGINA llamada `wanted` en los archivos de
