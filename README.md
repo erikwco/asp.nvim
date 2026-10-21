@@ -51,6 +51,17 @@ búsqueda de sus usos:
   no cargan, aunque estén instalados; `:checkhealth asp` los reporta
   como instalados pero con error de carga y muestra el error de Neovim.
 
+Los parsers `aspclassic` y `vbscript` deben ser los de este repositorio.
+Si otro plugin o instalador de nvim-treesitter instala un parser llamado
+`vbscript`, el nombre coincide y Neovim carga el primero que encuentra
+en `runtimepath`. Sus nodos pueden no ser compatibles con estas queries.
+Podés localizar las copias con
+`:lua vim.print(vim.api.nvim_get_runtime_file('parser/vbscript.*', true))`.
+Compilá con `make parsers`, evitá que otro instalador sustituya esa copia
+y reiniciá Neovim después de corregir el orden de `runtimepath`.
+Si usás un instalador propio para esta gramática, incluí tanto `src/parser.c`
+como `src/scanner.c` en la compilación.
+
 ### Resolver errores de ABI en Neovim 0.10
 
 La rama [`main` de nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter/tree/main)
