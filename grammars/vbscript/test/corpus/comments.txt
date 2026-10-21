@@ -1,0 +1,57 @@
+==================
+rem al inicio de linea con palabras clave
+==================
+Rem If no hay datos
+x = 1
+---
+
+(source_file
+  (comment)
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal)))))
+
+==================
+rem tras dos puntos
+==================
+x = 1: Rem fin
+---
+
+(source_file
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal))))
+  (comment))
+
+==================
+rem como miembro y prefijo de identificadores
+==================
+y = obj.Rem
+Remember = 1
+---
+
+(source_file
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (member_expression
+        (primary_expression
+          (identifier))
+        (identifier))))
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal)))))

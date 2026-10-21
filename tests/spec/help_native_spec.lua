@@ -425,7 +425,7 @@ describe('alcance y cachés de ayuda', function()
     assert.is_nil(infer('z'))
   end)
 
-  it('tras editar, solo normaliza los Rem de las líneas con Set', function()
+  it('tras editar, el árbol inyectado ya lee el Rem como comentario: no normaliza texto', function()
     local lines = { 'Set x = CreateObject("ADODB.Recordset")', 'Rem Set x = CreateObject("Scripting.Dictionary")' }
     for i = 1, 2000 do lines[#lines + 1] = 'y' .. i .. ' = ' .. i end
     code(lines)
@@ -435,7 +435,7 @@ describe('alcance y cachés de ayuda', function()
     local ok, err = pcall(function() assert.are.equal('Recordset', infer('x')) end)
     scan.source = source
     assert.is_true(ok, err)
-    assert.are.equal(#lines[1] + #lines[2], bytes)
+    assert.are.equal(0, bytes)
   end)
 
   it('refleja ediciones sin guardar al invalidar por changedtick', function()

@@ -166,3 +166,196 @@ End If
           (expression
             (primary_expression
               (number_literal))))))))
+
+==================
+else en la linea siguiente es del if de bloque
+==================
+If a Then
+  If b Then x = 1
+Else
+  x = 2
+End If
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (block
+      (if_statement
+        (expression
+          (primary_expression
+            (identifier)))
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (number_literal))))))
+    (else_clause
+      (block
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (number_literal))))))))
+
+==================
+else en la misma linea es del if de una linea
+==================
+If a Then
+  If b Then x = 1 Else x = 3
+Else
+  x = 2
+End If
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (block
+      (if_statement
+        (expression
+          (primary_expression
+            (identifier)))
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (number_literal))))
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (number_literal))))))
+    (else_clause
+      (block
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (number_literal))))))))
+
+==================
+if de una linea anidado toma el else de su linea
+==================
+If a Then If b Then x = 1 Else x = 2
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (if_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (let_statement
+        (expression
+          (primary_expression
+            (identifier)))
+        (expression
+          (primary_expression
+            (number_literal))))
+      (let_statement
+        (expression
+          (primary_expression
+            (identifier)))
+        (expression
+          (primary_expression
+            (number_literal)))))))
+
+==================
+if de una linea con varias sentencias y else
+==================
+If x Then
+  If a Then b = 1 : c = 2 Else d = 3 : e = 4
+  y = 1
+End If
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (block
+      (if_statement
+        (expression
+          (primary_expression
+            (identifier)))
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (number_literal))))
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (number_literal))))
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (number_literal))))
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (number_literal)))))
+      (let_statement
+        (expression
+          (primary_expression
+            (identifier)))
+        (expression
+          (primary_expression
+            (number_literal)))))))
+
+==================
+dos puntos al final de un if de una linea
+==================
+If a Then b = 1 :
+z = 2
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal)))))
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal)))))

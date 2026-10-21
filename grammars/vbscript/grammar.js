@@ -20,9 +20,16 @@ module.exports = grammar({
 
   extras: $ => [/\s/, $.comment, $._line_continuation, ':'],
 
-  // src/scanner.c: _block_then (ancho cero) marca el Then de un If de
-  // bloque, que termina su línea o su bloque <% %>.
-  externals: $ => [$._block_then, $._error_sentinel],
+  // src/scanner.c decide lo que depende de los fines de línea, que son
+  // extras: el Then de un If de bloque (_block_then), el Else y los `:` de
+  // uno de una línea (_inline_else, _inline_colon), el `(` de los
+  // parámetros en la línea del nombre (_args_open), el `.` de un acceso o
+  // el inicial de un With (_member_dot, _with_dot) y los comentarios, que
+  // terminan también en el `%>` del bloque.
+  externals: $ => [
+    $._block_then, $._inline_else, $._inline_colon, $._args_open,
+    $._member_dot, $._with_dot, $.comment, $._error_sentinel,
+  ],
 
   conflicts: $ => [
     [$.function_call, $.primary_expression],
@@ -38,7 +45,6 @@ module.exports = grammar({
       $._statement,
     )),
 
-    comment: $ => token(seq("'", /[^\n]*/)),
     _line_continuation: $ => /_[ \t]*\r?\n/,
 
     option_statement: $ => seq(
@@ -53,20 +59,20 @@ module.exports = grammar({
 
     sub_statement: $ => seq(
       optional(choice(seq(ci('Public'), optional(ci('Default'))), ci('Private'), ci('Friend'), ci('Static'))),
-      ci('Sub'), $.identifier, $._arg_list,
+      ci('Sub'), $.identifier, optional($._arg_list),
       optional($.block), ci('End'), ci('Sub'),
     ),
 
     function_statement: $ => seq(
       optional(choice(seq(ci('Public'), optional(ci('Default'))), ci('Private'), ci('Friend'), ci('Static'))),
-      ci('Function'), $.identifier, $._arg_list,
+      ci('Function'), $.identifier, optional($._arg_list),
       optional($.block), ci('End'), ci('Function'),
     ),
 
     property_statement: $ => seq(
       optional(choice(seq(ci('Public'), optional(ci('Default'))), ci('Private'), ci('Static'))),
       ci('Property'), choice(ci('Get'), ci('Let'), ci('Set')),
-      $.identifier, $._arg_list,
+      $.identifier, optional($._arg_list),
       optional($.block), ci('End'), ci('Property'),
     ),
 
@@ -82,7 +88,9 @@ module.exports = grammar({
       ci('End'), ci('Class'),
     ),
 
-    _arg_list: $ => seq('(', optional(seq($._arg, repeat(seq(',', $._arg)))), ')'),
+    _arg_list: $ => seq(
+      alias($._args_open, '('), optional(seq($._arg, repeat(seq(',', $._arg)))), ')',
+    ),
 
     _arg: $ => seq(
       optional(choice(ci('Optional'), ci('ByVal'), ci('ByRef'), ci('ParamArray'))),
@@ -135,8 +143,13 @@ module.exports = grammar({
 
     _inline_if: $ => prec.right(seq(
       ci('If'), $.expression, ci('Then'),
-      $._statement,
-      optional(seq(ci('Else'), $._statement)),
+      $._inline_statements,
+      optional(seq($._inline_else, ci('Else'), $._inline_statements)),
+    )),
+
+    // `If a Then b = 1 : c = 2 Else d = 3`: todo lo de la línea es del If.
+    _inline_statements: $ => prec.right(seq(
+      $._statement, repeat(seq(alias($._inline_colon, ':'), $._statement)),
     )),
 
     elseif_clause: $ => seq(ci('ElseIf'), $.expression, ci('Then'), optional($.block)),
@@ -245,9 +258,13 @@ module.exports = grammar({
       '(', optional($._arg_expression_list), ')',
     )),
 
-    member_expression: $ => prec.left(10, seq(
-      choice($.primary_expression, $.function_call, $.call_expression, $.member_expression),
-      '.', $.identifier,
+    member_expression: $ => prec.left(10, choice(
+      seq(
+        choice($.primary_expression, $.function_call, $.call_expression, $.member_expression),
+        alias($._member_dot, '.'), $.identifier,
+      ),
+      // `.Campo` dentro de un With.
+      seq(alias($._with_dot, '.'), $.identifier),
     )),
 
     assignment_expression: $ => prec.right(-1, seq($.expression, '=', $.expression)),
@@ -275,7 +292,7 @@ module.exports = grammar({
 
     number_literal: $ => token(choice(
       /&H[0-9a-fA-F]+/, /&O[0-7]+/,
-      /\d+\.\d*([eE][+-]?\d+)?/, /\d+[eE][+-]?\d+/, /\d+/,
+      /\d+\.\d*([eE][+-]?\d+)?/, /\.\d+([eE][+-]?\d+)?/, /\d+[eE][+-]?\d+/, /\d+/,
     )),
 
     string_literal: $ => token(seq('"', repeat(choice(/[^"]/, '""')), '"')),

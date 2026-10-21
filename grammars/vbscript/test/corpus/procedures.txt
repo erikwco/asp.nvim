@@ -1,0 +1,90 @@
+==================
+sub y function sin parentesis
+==================
+Sub Foo
+  x = 1
+End Sub
+Function Bar
+  Bar = 2
+End Function
+---
+
+(source_file
+  (sub_statement
+    (identifier)
+    (block
+      (let_statement
+        (expression
+          (primary_expression
+            (identifier)))
+        (expression
+          (primary_expression
+            (number_literal))))))
+  (function_statement
+    (identifier)
+    (block
+      (let_statement
+        (expression
+          (primary_expression
+            (identifier)))
+        (expression
+          (primary_expression
+            (number_literal)))))))
+
+==================
+property get sin parentesis
+==================
+Class C
+  Property Get Total
+    Total = 1
+  End Property
+End Class
+---
+
+(source_file
+  (class_statement
+    name: (identifier)
+    (property_statement
+      (identifier)
+      (block
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (number_literal))))))))
+
+==================
+parentesis en la linea siguiente es el cuerpo
+==================
+Sub Foo
+  (x).Run
+End Sub
+---
+
+(source_file
+  (sub_statement
+    (identifier)
+    (block
+      (expression
+        (member_expression
+          (primary_expression
+            (expression
+              (primary_expression
+                (identifier))))
+          (identifier))))))
+
+==================
+parametros tras una continuacion
+==================
+Sub Bar _
+  (a, b)
+End Sub
+---
+
+(source_file
+  (sub_statement
+    (identifier)
+    (identifier)
+    (identifier)))

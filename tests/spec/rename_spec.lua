@@ -479,7 +479,7 @@ describe('asp.rename rename', function()
   it('aplica el rename privado a Me con espacios y continuaciones sin tocar homónimos', function()
     local lines = {
       '<%', 'Dim total', 'total = 100', 'Class Caja', '  pRiVaTe total, otro',
-      '  Sub A()', '    total = 1', '    Me.total = total', '    mE . ToTaL = Me . total + 1',
+      '  Sub A()', '    total = 1', '    Me.total = total', '    mE. ToTaL = Me.  total + 1',
       '    Me _', '      . _', '      total = 2', '    obj.total = 3',
       '    otro = "Me.total"', "    ' Me.total", '  End Sub',
       '  Sub B()', '    total = Me.total + total', '  End Sub',
@@ -498,7 +498,7 @@ describe('asp.rename rename', function()
       expected[5] = '  pRiVaTe saldo, otro'
       expected[7] = '    saldo = 1'
       expected[8] = '    Me.saldo = saldo'
-      expected[9] = '    mE . saldo = Me . saldo + 1'
+      expected[9] = '    mE. saldo = Me.  saldo + 1'
       expected[12] = '      saldo = 2'
       expected[18] = '    saldo = Me.saldo + saldo'
       expected[21] = '    Me.saldo = total'
