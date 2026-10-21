@@ -39,9 +39,12 @@ local function assignment(node, source)
   if rhs:type() == 'identifier' and text:lower() == 'new' then
     -- La gramática separa `New RegExp` en dos expresiones. Solo se acepta
     -- el identificador contiguo en la misma línea, dentro del mismo scope.
+    -- Seguido de `:` (`Set re = New RegExp: re.Global = True`) llega como
+    -- la etiqueta `RegExp:`.
     local next_node = node:next_named_sibling()
     if next_node and next_node:start() == select(3, node:range()) then
       local following = unwrap(next_node)
+      if following and following:type() == 'label_statement' then following = following:named_child(0) end
       local row, col, byte = node:end_()
       local _, next_col, next_byte = next_node:start()
       local gap = type(source) == 'string' and source:sub(byte + 1, next_byte)

@@ -417,6 +417,14 @@ describe('alcance y cachés de ayuda', function()
     assert.are.equal('RegExp', infer('z'))
   end)
 
+  it('New RegExp seguido de dos puntos y otra sentencia', function()
+    code({ 'Set x = New RegExp: x.Global = True', 'Set y = New RegExp : y.Pattern = "a"',
+      'Set z = New Otra: RegExp: z.Global = True' })
+    assert.are.equal('RegExp', infer('x'))
+    assert.are.equal('RegExp', infer('y'))
+    assert.is_nil(infer('z'))
+  end)
+
   it('tras editar, solo normaliza los Rem de las líneas con Set', function()
     local lines = { 'Set x = CreateObject("ADODB.Recordset")', 'Rem Set x = CreateObject("Scripting.Dictionary")' }
     for i = 1, 2000 do lines[#lines + 1] = 'y' .. i .. ' = ' .. i end
