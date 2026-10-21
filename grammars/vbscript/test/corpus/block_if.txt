@@ -1,0 +1,104 @@
+==================
+if de una linea seguido de if de bloque
+==================
+If a Then b = 1
+If x Then
+  y = 2
+End If
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal)))))
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (block
+      (let_statement
+        (expression
+          (primary_expression
+            (identifier)))
+        (expression
+          (primary_expression
+            (number_literal)))))))
+
+==================
+then seguido de dos puntos abre un bloque
+==================
+If x Then: y = 1: End If
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (block
+      (let_statement
+        (expression
+          (primary_expression
+            (identifier)))
+        (expression
+          (primary_expression
+            (number_literal)))))))
+
+==================
+then seguido de comentario abre un bloque
+==================
+If x Then ' comentario
+  y = 1
+End If
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (comment)
+    (block
+      (let_statement
+        (expression
+          (primary_expression
+            (identifier)))
+        (expression
+          (primary_expression
+            (number_literal)))))))
+
+==================
+then con continuacion es un if de una linea
+==================
+If x Then _
+  y = 1
+z = 2
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal)))))
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal)))))
