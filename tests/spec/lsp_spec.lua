@@ -183,6 +183,19 @@ describe('asp-ls documentHighlight', function()
     }, highlights(3, 3))
   end)
 
+  it('resalta un parámetro JS con default como local de su función', function()
+    open('proyecto/scratch_highlight.asp', {
+      '<script>',
+      'let total = 5;',
+      'function f(total = 2, ...resto) { return total + resto.length; }',
+      'console.log(total);',
+      '</script>',
+    })
+    assert.are.same({ highlight(2, 11, 'total', 3), highlight(2, 41, 'total', 2) }, highlights(2, 42))
+    assert.are.same({ highlight(1, 4, 'total', 3), highlight(3, 12, 'total', 2) }, highlights(1, 5))
+    assert.are.same({ highlight(2, 25, 'resto', 3), highlight(2, 49, 'resto', 2) }, highlights(2, 50))
+  end)
+
   it('resalta una función JS global desde su onclick y desde su uso en script', function()
     open('proyecto/scratch_highlight.asp', {
       '<script>',

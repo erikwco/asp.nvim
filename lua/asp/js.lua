@@ -68,7 +68,9 @@ local CONTENT_QUERY = [[ (content) @content ]]
 --  * @scope: los nodos que abren un scope. let/const se tratan como var
 --    (function-scoped, no block-scoped): límite documentado.
 --  * @id: los identificadores resolubles. shorthand_property_identifier es
---    la `x` de `{ x }`: una lectura de la variable `x`, no una propiedad.
+--    la `x` de `{ x }`: una lectura de la variable `x`, no una propiedad;
+--    shorthand_property_identifier_pattern, la de un patrón (`{ x } = o`,
+--    `function f({ x })`): el binding `x`.
 --  * @method: los nombres de método son property_identifier: se capturan
 --    aparte sólo para el outline (documentSymbol); no son resolubles como
 --    identificador suelto (se usan como `obj.metodo`, resolución por
@@ -84,6 +86,7 @@ local JS_QUERY = [[
 ] @scope
 (identifier) @id
 (shorthand_property_identifier) @id
+(shorthand_property_identifier_pattern) @id
 (method_definition name: (property_identifier) @method)
 ]]
 
@@ -91,6 +94,26 @@ local JS_QUERY = [[
 local IDENTIFIERS = {
   identifier = true,
   shorthand_property_identifier = true,
+  shorthand_property_identifier_pattern = true,
+}
+
+-- Abreviados: la clave del objeto es el propio nombre (ver references).
+local SHORTHANDS = {
+  shorthand_property_identifier = true,
+  shorthand_property_identifier_pattern = true,
+}
+
+-- Patrones que envuelven un nombre declarado: `a = 1`, `...a`, `[a]`,
+-- `{a}`, `{k: a}`, `{a = 1}`, anidados. El valor es el campo por el que
+-- se baja al nombre (false: cualquier hijo); por el otro lado de un
+-- default (`a = b`) o por la clave de un par (`{k: a}`) no se declara.
+local PATTERNS = {
+  assignment_pattern = 'left',
+  object_assignment_pattern = 'left',
+  pair_pattern = 'value',
+  rest_pattern = false,
+  array_pattern = false,
+  object_pattern = false,
 }
 
 local function is_field(parent, field, node)
@@ -384,10 +407,23 @@ end
 ---  * 'inner': en ese mismo scope (variables, clases, parámetros).
 ---
 ---nil si el identificador es un uso.
+---
+---Un nombre dentro de patrones (ver PATTERNS) se clasifica por el nodo
+---que los contiene: los de un parámetro (`function f(a = 1, ...b, {c})`)
+---son parámetros y los de un declarador (`var [a, b] = xs`), variables.
 ---@param n TSNode
 ---@return integer|nil kind, TSNode|nil decl, string|nil where
 local function classify(n)
   local p = n:parent()
+  -- `top`: el patrón más externo que envuelve a `n`, o `n`. Envuelto, `n`
+  -- no es hijo de `p` y solo pueden coincidir las dos ramas que miran a
+  -- `top` o no miran campos: formal_parameters y variable_declarator.
+  local top = n
+  while p and PATTERNS[p:type()] ~= nil do
+    local field = PATTERNS[p:type()]
+    if field and not is_field(p, field, top) then return nil end
+    top, p = p, p:parent()
+  end
   if not p then return nil end
   local pt = p:type()
   if FUNCTION_DECLARATIONS[pt] and is_field(p, 'name', n) then
@@ -396,7 +432,7 @@ local function classify(n)
     return 12, p, 'name'
   elseif pt == 'class_declaration' and is_field(p, 'name', n) then
     return 5, p, 'inner'
-  elseif pt == 'variable_declarator' and is_field(p, 'name', n) then
+  elseif pt == 'variable_declarator' and is_field(p, 'name', top) then
     local gp = p:parent()
     local gt = gp and gp:type()
     if gt == 'variable_declaration' then
@@ -478,7 +514,7 @@ local function index(data, scopes, items)
     else
       local occ = {
         name = name, node = it.node, scope = inner and inner.key or 0,
-        shorthand = it.node:type() == 'shorthand_property_identifier',
+        shorthand = SHORTHANDS[it.node:type()],
       }
       local kind, decl, where = classify(it.node)
       if kind then
@@ -1107,8 +1143,9 @@ end
 ---declaraciones homónimas de todos esos archivos y sus usos.
 ---Con buffer_only no consulta externos: devuelve candidatos del buffer
 ---aunque falte una declaración. El llamador debe resolverla antes de usarlos.
----Con rename_to agrega newText a las propiedades abreviadas para conservar
----su clave: `{nombre}` pasa a `{nombre: nuevo}`.
+---Con rename_to agrega newText a las propiedades abreviadas, también las
+---de un patrón, para conservar su clave: `{nombre}` pasa a
+---`{nombre: nuevo}`.
 ---@param bufnr integer
 ---@param position table {line, character}
 ---@param opts? table {buffer_only?: boolean, rename_to?: string}

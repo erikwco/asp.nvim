@@ -605,6 +605,28 @@ describe('asp.rename rename', function()
     end)
   end)
 
+  it('JS: los parámetros con default, rest o desestructurados no cambian con el global', function()
+    local lines = {
+      '<script>', 'let total = 5;', 'function a(total = 2) { return total; }',
+      'function b(...total) { return total.length; }', 'function c({ total }, [x = total]) { return total + x; }',
+      'console.log(total, a(), b(), c({ total: 1 }, []));', '</script>',
+    }
+    in_temp({ ['pagina.asp'] = table.concat(lines, '\n') .. '\n' }, function(dir)
+      vim.cmd.edit(dir .. '/pagina.asp')
+      local function apply(text, word, new)
+        vim.lsp.util.apply_workspace_edit(assert(rename.rename(0, pos_in(text, word), new)), 'utf-8')
+      end
+      apply('let total', 'total', 'saldo')
+      -- El parámetro abreviado conserva su clave, como una propiedad.
+      apply('function c({ total }', 'total', 'valor')
+      assert.are.same({
+        '<script>', 'let saldo = 5;', 'function a(total = 2) { return total; }',
+        'function b(...total) { return total.length; }', 'function c({ total: valor }, [x = valor]) { return valor + x; }',
+        'console.log(saldo, a(), b(), c({ total: 1 }, []));', '</script>',
+      }, buffer_lines(dir .. '/pagina.asp'))
+    end)
+  end)
+
   it('acepta varios <%= %> de una línea cuando el código conserva espacios separadores', function()
     in_temp({
       ['pagina.asp'] = '<%\nDim total\ntotal = 1\n%>\n<p><%= total %></p><p><%= total %></p>\n',
