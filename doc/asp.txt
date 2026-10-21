@@ -248,7 +248,8 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       <script> de la página, los atributos `on*`, las URLs `javascript:`,
       los .js de <script src> y los includes; distingue mayúsculas.
       Conserva las claves abreviadas: al renombrar `total` a `saldo`,
-      `{total}` pasa a `{total: saldo}`.
+      `{total}` pasa a `{total: saldo}`, también en un parámetro
+      desestructurado (`function f({total})`).
 
       No renombra miembros de objeto (`rs.EOF`, `obj.Total`, `Me.Total`,
       `obj.metodo` en JS), intrínsecos de ASP, funciones, constantes ni
@@ -263,31 +264,47 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       dígito al comienzo. No puede ser una palabra clave, un nativo ni un
       intrínseco (en VBScript, sin distinguir mayúsculas) ni una palabra
       reservada de JS, ni eval o arguments (inválidos en JS estricto).
-      Se rechaza si ya hay una declaración con ese nombre en el mismo
-      alcance: en el buffer y, para un símbolo de página de VBScript,
-      en su grafo de includes. No avisa si un local
-      nuevo tapa un nombre de página que la Sub usa, ni si un global de
-      JS choca con uno de un .js externo.
 
-      Un miembro de clase (`Private total`) se renombra solo como
-      identificador suelto dentro de su clase: sus usos `Me.total` y
-      `obj.total` no cambian. Si renombrar un nombre de página tocaría
-      una clase del mismo archivo con un miembro homónimo, el rename se
-      rechaza, porque references no separa ese miembro del nombre de
-      página. En los demás archivos del sitio, esa clase cambia junto con
-      el nombre de página.
+      Un rename que dejaría el programa roto se rechaza, con un mensaje
+      que dice dónde está el problema:
+
+      - El nombre nuevo ya existe, en cualquier alcance: juntaría dos
+        símbolos en uno o taparía al renombrado (con
+        `function f(dato) { return total; }`, renombrar `total` a `dato`
+        haría que `f` devuelva su parámetro). En VBScript se miran las
+        declaraciones del buffer, de su grafo de includes y de los
+        archivos que cambia; los usos sin declaración del buffer (sin
+        Option Explicit); y las declaraciones y usos de página de todos
+        los archivos que recorre references, incluidas las páginas que
+        incluyen la librería aunque no usen el nombre viejo. En JS, las
+        declaraciones y usos de cualquier scope de la página, sus .js y
+        sus includes, también los globales sin declaración (`document`,
+        `$`). Es conservador: rechaza también un nombre que solo
+        coincide con un local de otra Sub o función. El mensaje da el
+        `archivo:línea` para elegir otro.
+      - Renombrar un nombre de página tocaría una clase que declara un
+        miembro homónimo (`Private total`), en el archivo actual o en
+        cualquier otro que cambiaría: references no separa ese miembro
+        del nombre de página y sus `Me.total` quedarían sin cambiar. El
+        mensaje nombra la clase y el archivo; renombrá primero el
+        miembro desde adentro de la clase.
+      - Un bloque `<%= %>` sin espacios en su código usa el nombre viejo
+        o el nuevo. La inyección combinada lo funde con otro bloque
+        aunque el HTML del medio tenga saltos de línea, y references no
+        ve ese uso. El mensaje da la línea del bloque: escribilo con
+        espacios (`<%= a %>`) y volvé a renombrar.
+      - Un archivo a cambiar está abierto con cambios sin guardar: las
+        posiciones de los demás archivos salen del disco.
+
+      Un miembro de clase renombrado desde adentro de su clase cambia
+      solo como identificador suelto dentro de ella: sus usos `Me.total`
+      y `obj.total` no cambian y hay que ajustarlos a mano.
 
       No cambia los nombres dentro de strings de Eval, Execute o
       ExecuteGlobal, los armados en runtime, los strings de JS, las
       páginas fuera de la raíz del sitio que incluyen la librería.
-      Los identificadores de bloques `<%= %>` sin espacios en su código
-      pueden fundirse aunque el HTML tenga saltos de línea; esos usos no
-      cambian. Separalos dentro del código: `<%= a %>`, `<%= b %>`.
       Omite comentarios con apóstrofo. Puede renombrar nombres dentro de
       Rem del buffer actual, como references; los Rem de disco se omiten.
-      Las posiciones de los demás archivos salen del disco: si alguno está
-      abierto con cambios sin guardar, el rename se rechaza hasta
-      guardarlo.
 
       Neovim abre los archivos que cambia como buffers modificados sin
       guardar. Revisalos y guardalos con |:wa|: >vim
@@ -625,9 +642,10 @@ Límites:
     bloque).
   - Las propiedades no se resuelven (`obj.metodo`, `this.x`, jQuery
     `$`...): no hay resolución por tipos ni objetos.
-  - No se recogen como declaración los nombres desestructurados
-    (`const { a } = o`), los parámetros con default o rest, el de
-    `catch (e)` ni la variable de `for (const x of xs)`.
+  - No se recogen como declaración el parámetro de `catch (e)` ni la
+    variable de `for (const x of xs)`. Los parámetros con default, rest
+    o desestructurados y los nombres desestructurados de `var`, `let` y
+    `const` (`const { a } = o`) sí.
   - Manejadores: no se modela el parámetro implícito `event` ni la
     cadena de scopes del elemento y su formulario (`onclick="submit()"`
     no resuelve a `form.submit`). No se decodifican las entidades HTML
@@ -655,8 +673,13 @@ Sin publicar ~
 
   - Renombrar símbolos (|asp-rename|): prepareRename y rename para
     VBScript y JavaScript, con el alcance de references, sin miembros de
-    objeto, con validación del nombre nuevo y de choques en el mismo
-    alcance.
+    objeto y con validación del nombre nuevo. Rechaza el rename que
+    dejaría el programa roto: un nombre nuevo que ya existe en cualquier
+    alcance, un miembro de clase homónimo en algún archivo a cambiar o
+    un `<%= %>` fundido que usa el nombre.
+  - JavaScript: los parámetros con default, rest o desestructurados y
+    los nombres desestructurados de var, let y const son declaraciones
+    de su scope.
   - La navegación JavaScript lee los .js y los includes sin BOM y
     convirtiendo latin1, como VBScript: las columnas coinciden con las
     del buffer aunque haya acentos antes del nombre.
