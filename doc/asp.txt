@@ -439,8 +439,11 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       Un miembro de objeto solo lleva tipo si el objeto es Me o un
       intrínseco; el `.Campo` de un With y las propiedades JS no.
 
-      En una página de 318 KB, full tarda unos 46 ms la primera vez,
-      3 ms en caliente y 40 ms tras una edición (55 ms en Neovim 0.10).
+      En una página de 318 KB, la mediana de full con parsers y cachés
+      vacíos fue 53 ms en Neovim 0.12 y 80 ms en 0.10. En caliente,
+      5 y 8 ms; tras editar, 40 y 50 ms. Una de cinco corridas de 0.10
+      tardó 207 ms en frío. Método y rangos medidos en el repositorio:
+      tests/bench/semantic_tokens.md.
       Para apagarlo en el buffer actual: >lua
         local client = vim.lsp.get_clients({ name = 'asp-ls' })[1]
         vim.lsp.semantic_tokens.stop(0, client.id)

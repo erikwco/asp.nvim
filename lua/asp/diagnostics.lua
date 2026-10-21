@@ -312,9 +312,9 @@ local function vbscript_family(ctx, undeclared, unknown_call)
       end
     end
   end
-  -- Un error de sintaxis puede tragarse una declaración (`Const A = 1,
-  -- B = 2`): todo nombre de una línea que toca un error cuenta como
-  -- declarado, para no reportar sus usos de más abajo. Por líneas y no por
+  -- Una declaración incompleta puede quedar dentro de un error de sintaxis.
+  -- Todo nombre de una línea que toca un error cuenta como declarado,
+  -- para no reportar sus usos de más abajo. Por líneas y no por
   -- el texto del nodo porque la forma del ERROR cambia con la versión de
   -- tree-sitter de cada Neovim.
   local error_rows = {}

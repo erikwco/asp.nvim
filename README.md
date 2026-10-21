@@ -434,36 +434,44 @@ sigue resaltando tree-sitter: sobre ellos no hay tokens.
 
 | Tipo | Qué marca |
 |---|---|
-| `function` | Functions y Subs del usuario (de la página o de un include), funciones nativas de VBScript (`Len`), funciones JS |
-| `method` | Subs y Functions de una clase de VBScript, métodos de una clase JS (en su declaración), miembros de los objetos intrínsecos que se llaman (`Response.Write`) |
+| `function` | Functions, Subs, funciones JS y nativas como `Len` |
+| `method` | Métodos de clases y llamadas como `Response.Write` |
 | `class` | clases de VBScript y JS, también en `New Clase`, y `RegExp` |
-| `property` | variables, constantes y Property de una clase de VBScript (también con `Me.x`), propiedades de los intrínsecos (`Response.Buffer`) |
-| `variable` | variables de página y locales, constantes (`Const`), constantes nativas (`vbCrLf`), variables JS |
+| `property` | Miembros VBScript y propiedades como `Response.Buffer` |
+| `variable` | Variables de página y locales, constantes y variables JS |
 | `parameter` | parámetros de Sub, Function, Property y de funciones JS |
-| `namespace` | objetos intrínsecos de ASP (`Response`, `Request`, `Server`, `Session`, `Application`) y `Err` |
+| `namespace` | Objetos intrínsecos de ASP y `Err` |
 
 | Modificador | Qué marca |
 |---|---|
-| `declaration` | el nombre en su declaración (`Dim`, `Const`, `Sub`, `Function`, `Class`, un parámetro, `var`, `function`) |
+| `declaration` | El nombre en su declaración, incluidos los parámetros |
 | `readonly` | `Const` de VBScript, constantes nativas y `const` de JS |
 | `defaultLibrary` | nativos de VBScript e intrínsecos de ASP |
 
 Neovim aplica los grupos `@lsp.type.<tipo>.asp`, `@lsp.mod.<modificador>.asp`
-y `@lsp.typemod.<tipo>.<modificador>.asp` (ver `:help lsp-semantic-highlight`),
+y `@lsp.typemod.<tipo>.<modificador>.asp`
+(ver `:help lsp-semantic-highlight`),
 con prioridad sobre tree-sitter. Por defecto `@lsp.type.function` enlaza a
 `@function`, `@lsp.type.parameter` a `@variable.parameter`, etc. Por ejemplo,
 para distinguir los nativos y las constantes:
 
 ```lua
-vim.api.nvim_set_hl(0, '@lsp.mod.defaultLibrary.asp', { link = '@function.builtin' })
-vim.api.nvim_set_hl(0, '@lsp.typemod.variable.readonly.asp', { link = '@constant' })
+vim.api.nvim_set_hl(0, '@lsp.mod.defaultLibrary.asp',
+  { link = '@function.builtin' })
+vim.api.nvim_set_hl(0, '@lsp.typemod.variable.readonly.asp',
+  { link = '@constant' })
 ```
 
 Un miembro de objeto (`obj.Campo`) solo lleva tipo si el objeto es `Me` o
 un intrínseco; el `.Campo` de un `With` y las propiedades de JS
-(`obj.metodo`) no. En la página de 318 KB de la medición de rendimiento,
-`full` tarda 46 ms la primera vez, 3 ms en caliente y unos 40 ms tras una
-edición (reparseo incremental incluido; 55 ms en Neovim 0.10).
+(`obj.metodo`) no. Los métodos JS reciben tipo en su declaración.
+
+En una página de 318 KB, la mediana de la primera llamada a `full` fue
+53 ms en Neovim 0.12 y 80 ms en 0.10, con parsers y cachés vacíos.
+En caliente fueron 5 y 8 ms; tras editar, 40 y 50 ms. Una de cinco
+corridas de 0.10 tardó 207 ms en frío. El
+[benchmark reproducible](tests/bench/semantic_tokens.md) detalla el método
+y los rangos medidos.
 
 Para apagarlo en una sesión, `:lua vim.lsp.semantic_tokens.stop(0,
 vim.lsp.get_clients({ name = 'asp-ls' })[1].id)`. Para que el servidor no
