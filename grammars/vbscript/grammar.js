@@ -18,7 +18,7 @@ function ci(word) {
 module.exports = grammar({
   name: 'vbscript',
 
-  extras: $ => [/\s/, $.comment, $._line_continuation, ':'],
+  extras: $ => [/\s/, $.comment, $._line_continuation, ':', $._block_delimiter],
 
   // src/scanner.c decide lo que depende de los fines de línea, que son
   // extras: el Then de un If de bloque (_block_then), el Else y los `:` de
@@ -46,6 +46,10 @@ module.exports = grammar({
     )),
 
     _line_continuation: $ => /_[ \t]*\r?\n/,
+
+    // Delimitadores del bloque: la inyección de asp.nvim incluye el bloque
+    // entero, así un token no sigue en el bloque siguiente.
+    _block_delimiter: $ => token(choice('<%=', '<%', '%>')),
 
     option_statement: $ => seq(
       ci('Option'),
@@ -278,7 +282,9 @@ module.exports = grammar({
 
     unary_expression: $ => prec.left(5, seq(choice(ci('Not'), '-'), $.expression)),
 
-    function_call: $ => seq($.identifier, '(', optional($._arg_expression_list), ')'),
+    // `f(1)` es una llamada, no `f` seguido de `(1)`: los saltos de línea
+    // son extras y la gramática admite expresiones yuxtapuestas.
+    function_call: $ => prec.dynamic(1, seq($.identifier, '(', optional($._arg_expression_list), ')')),
     _arg_expression_list: $ => choice(
       seq($.expression, repeat(seq(',', optional($.expression)))),
       repeat1(seq(',', optional($.expression))),

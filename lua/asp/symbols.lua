@@ -215,8 +215,6 @@ function M.scope_at(entries, position)
   return scope
 end
 
-local CODE_QUERY = [[ (code) @code ]]
-
 local file_cache = {}
 -- ruta → {stamp, names} o {stamp, words}: ocurrencias de identificadores
 -- de un archivo de disco que se ven a nivel de página, agrupadas por nombre
@@ -245,10 +243,11 @@ end
 ---Parsea el contenido de un archivo sin necesidad de un buffer abierto.
 ---Técnica clave (también el fix del backlog de parseo en frío de ~33s en la
 ---indexación): parsear el contenido con un parser STRING de aspclassic (solo
----capa top — barato), recolectar los nodos `(code)`, y crear un parser
----STRING de vbscript con set_included_regions({code_nodes}) (una única
----región combinada, igual que el injection "combined" normal) — así solo se
----parsea VBScript, sin injections de html/js/css/regex.
+---capa top — barato), recolectar los bloques `<% %>` y `<%= %>`
+---(asp.ts.vbscript_blocks), y crear un parser STRING de vbscript con
+---set_included_regions({bloques}) (una única región combinada, igual que el
+---injection "combined" normal) — así solo se parsea VBScript, sin
+---injections de html/js/css/regex.
 ---
 ---Sin bloques de código devuelve nil.
 ---@param content string
@@ -257,24 +256,19 @@ local function parse_content(content)
   -- Capa plantilla: solo top layer, sin injections (barato).
   local tpl = vim.treesitter.get_string_parser(content, 'aspclassic')
   local troot = tpl:parse()[1]:root()
-  local cq = vim.treesitter.query.parse('aspclassic', CODE_QUERY)
-  local code_nodes = {}
-  for _, node in cq:iter_captures(troot, content) do
-    table.insert(code_nodes, node)
-  end
-  if #code_nodes == 0 then return nil end
+  local blocks = require('asp.ts').vbscript_blocks(troot, content)
+  if #blocks == 0 then return nil end
 
-  -- Capa vbscript SOLO en los rangos de código: nada de html/js/regex.
+  -- Capa vbscript SOLO en los bloques: nada de html/js/regex.
   -- set_included_regions espera una lista de REGIONES (cada región es una
-  -- lista de nodos/rangos parseados en un mismo contexto); envolvemos
-  -- code_nodes en una región única para que, igual que el injection
+  -- lista de nodos/rangos parseados en un mismo contexto); envolvemos los
+  -- bloques en una región única para que, igual que el injection
   -- "combined" normal, todos los bloques <% %> del archivo formen un solo
   -- árbol vbscript. LanguageTree no tiene `set_included_ranges`, y parse()
   -- sin argumentos NO reparsea regiones incluidas no vacías: hace falta
   -- parse(true).
-  local source = require('asp.vbscript_scan').source(content)
-  local vp = vim.treesitter.get_string_parser(source, 'vbscript')
-  vp:set_included_regions({ code_nodes })
+  local vp = vim.treesitter.get_string_parser(content, 'vbscript')
+  vp:set_included_regions({ blocks })
   return vp:parse(true)[1]:root()
 end
 
@@ -358,6 +352,18 @@ local function range_contains(node, row, col)
   return true
 end
 
+---¿`node` (un `identifier`) es un nombre? Un identificador que cruza líneas
+---o cuyo texto no es el de un nombre no lo es: la región combinada de un
+---parser que no incluye los delimitadores de los bloques puede leer el
+---final de un bloque y el comienzo del siguiente como uno solo.
+---@param node TSNode
+---@param source integer|string
+---@return boolean
+function M.is_name(node, source)
+  local r0, _, r1 = node:range()
+  return r0 == r1 and vim.treesitter.get_node_text(node, source):match('^[%a_][%w_]*$') ~= nil
+end
+
 ---Localiza el TSNode bajo `position`, confinado a la capa
 ---vbscript (`children().vbscript` + `named_descendant_for_range`). Compartido
 ---por M.definition y M.references — ver el comentario extenso en
@@ -385,6 +391,8 @@ function M.node_at(bufnr, position)
       break
     end
   end
+  -- Un identificador que no es un nombre no se resuelve (ver M.is_name).
+  if node and node:type() == 'identifier' and not M.is_name(node, bufnr) then return nil end
   return node
 end
 

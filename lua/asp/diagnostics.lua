@@ -74,17 +74,17 @@ function M.config()
   return out
 end
 
--- Regiones de código de la plantilla y la directiva de página.
+-- Bloques <% %> y <%= %> de la plantilla (las regiones de la capa
+-- vbscript, ver asp.ts.vbscript_blocks) y la directiva de página.
 local TEMPLATE_QUERY = [[
-(code) @code
+[(code_directive) (output_directive)] @code
 (page_directive) @page
 ]]
 
 ---Árbol VBScript del buffer sin tocar sus capas HTML ni JS: la capa top
----(aspclassic) del propio buffer da las regiones `(code)` y un parser
----string de vbscript parsea solo esas, en una región combinada como la
----injection. `parse(true)` sobre el buffer parsearía también HTML, JS, CSS
----y regex.
+---(aspclassic) del propio buffer da los bloques y un parser string de
+---vbscript parsea solo esos, en una región combinada como la injection.
+---`parse(true)` sobre el buffer parsearía también HTML, JS, CSS y regex.
 ---@param bufnr integer
 ---@param content string
 ---@return table|nil { root, code: integer[][], jscript: boolean, parser }

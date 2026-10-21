@@ -669,7 +669,7 @@ describe('asp.rename rename', function()
     assert.are.equal(2, #edit.changes[lib])
   end)
 
-  it('un identificador VBScript fundido entre dos <%= %> no tapa el JS del medio', function()
+  it('dos <%= %> sin espacios separados por un <script> no tapan el JS del medio', function()
     in_temp({
       ['pagina.asp'] = table.concat({
         '<%', 'Dim nombre, apellido', '%>',
@@ -681,11 +681,9 @@ describe('asp.rename rename', function()
     }, function(dir)
       vim.cmd.edit(dir .. '/pagina.asp')
       local pos = pos_in('function saludar', 'saludar')
-      -- La inyección combinada lee `nombre` y `apellido` como un solo
-      -- identificador que cruza el <script>.
-      local fused = require('asp.symbols').identifier_at(0, pos)
-      assert.is_not_nil(fused)
-      assert.are_not.equal(fused:start(), (fused:end_()))
+      -- Cada bloque entra con sus delimitadores: `nombre` y `apellido` no
+      -- forman un identificador que cruce el <script>.
+      assert.is_nil(require('asp.symbols').identifier_at(0, pos))
       assert.are.same({ range = {
         start = pos, ['end'] = { line = pos.line, character = pos.character + 7 },
       }, placeholder = 'saludar' }, rename.prepare(0, pos))
@@ -693,7 +691,7 @@ describe('asp.rename rename', function()
     end)
   end)
 
-  it('rechaza el rename si un <%= %> sin espacios funde usos del nombre viejo o del nuevo', function()
+  it('renombra los <%= %> sin espacios y ve en ellos los usos del nombre nuevo', function()
     in_temp({
       ['fundido.asp'] = table.concat({
         '<%', 'Dim total', 'total = 1', '%>', '<p><%=total%></p>', '<div>', '<p><%=total%></p>', '',
@@ -708,21 +706,20 @@ describe('asp.rename rename', function()
     }, function(dir)
       vim.cmd.edit(dir .. '/fundido.asp')
       local pos = pos_in('Dim total', 'total')
-      -- Ya en prepare: las dos salidas quedarían con `total`.
-      for _, res_err in ipairs({ { rename.prepare(0, pos) }, { rename.rename(0, pos, 'saldo') } }) do
-        assert.is_nil(res_err[1])
-        assert.are.equal(-32602, res_err[2].code)
-        assert.is_truthy(res_err[2].message:find('en la línea 5', 1, true), res_err[2].message)
-        assert.is_truthy(res_err[2].message:find('(`<%= total %>`)', 1, true), res_err[2].message)
-      end
-      -- El nombre nuevo oculto en un bloque fundido tampoco se puede comprobar.
+      assert.are.equal('total', rename.prepare(0, pos).placeholder)
+      local edit = assert(rename.rename(0, pos, 'saldo'))
+      assert.are.same({ ['fundido.asp'] = 4 }, counts(edit, dir))
+      vim.lsp.util.apply_workspace_edit(edit, 'utf-8')
+      assert.are.same({ '<%', 'Dim saldo', 'saldo = 1', '%>', '<p><%=saldo%></p>', '<div>', '<p><%=saldo%></p>' },
+        buffer_lines(dir .. '/fundido.asp'))
+      -- El nombre nuevo usado en un <%= %> pegado a otro bloque choca.
       vim.cmd.edit(dir .. '/nuevo.asp')
       pos = pos_in('Dim total', 'total')
       local res, err = rename.rename(0, pos, 'cuenta')
       assert.is_nil(res)
-      assert.is_truthy(err.message:find('oculta usos de `cuenta`', 1, true), err.message)
+      assert.is_truthy(err.message:find('`cuenta` ya se usa en nuevo.asp:5', 1, true), err.message)
       assert.are.same({ ['nuevo.asp'] = 3 }, counts(assert(rename.rename(0, pos, 'saldo')), dir))
-      -- Solo cuenta el código que se fundió, no el HTML del medio.
+      -- El HTML entre dos bloques no es VBScript.
       vim.cmd.edit(dir .. '/html.asp')
       pos = pos_in('Dim total', 'total')
       assert.are.equal('total', rename.prepare(0, pos).placeholder)

@@ -55,3 +55,26 @@ Remember = 1
     (expression
       (primary_expression
         (number_literal)))))
+
+==================
+comentario termina en el cierre del bloque
+==================
+<% x = 1 ' comentario %><% y = 2 %>
+---
+
+(source_file
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal))))
+  (comment)
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal)))))

@@ -508,9 +508,9 @@ describe('asp-ls completion', function()
   end)
 end)
 
-describe('asp-ls límite: múltiples <%= %> en una línea', function()
-  -- LIMITACIÓN CONOCIDA: bloques <%= %> múltiples en una línea se fusionan
-  -- por la injection combinada; hover/definition no resuelven ahí. Ver README.
+describe('asp-ls: múltiples <%= %> en una línea', function()
+  -- Cada bloque entra a la región combinada con sus delimitadores: dos
+  -- <%= %> pegados en una línea ya no se leen como un solo identificador.
   local FIX = vim.fn.fnamemodify('tests/fixtures/proyecto', ':p'):gsub('/$', '')
 
   before_each(function()
@@ -550,24 +550,31 @@ describe('asp-ls límite: múltiples <%= %> en una línea', function()
   end
 
   it('definition sobre precio en su Dim de página (bloque standalone) funciona', function()
-    -- 1ª ocurrencia de 'precio' es el propio Dim de la línea 2, en un
-    -- bloque <% %> standalone (no adyacente a otro <%= %> en la misma
-    -- línea): esto SIGUE funcionando, prueba de que la limitación es
-    -- específica de bloques <%= %> adyacentes en una línea, no de todos
-    -- los ecos.
     local loc = definition_at(pos_of('precio', 1))
     assert.is_not_nil(loc)
     assert.are.equal(1, loc.range.start.line)
   end)
 
-  it('definition sobre precio DENTRO de <%=precio%> adyacente a otro bloque en la misma línea devuelve nil', function()
-    -- 3ª ocurrencia de 'precio': dentro de <%=precio%>, en la línea
-    -- <table><tr><td><%=precio%></td><td><%=cantidad%></td></tr></table>,
-    -- adyacente a otro bloque <%=cantidad%>. La injection combinada fusiona
-    -- ambos bloques en una sola región vbscript cuyo root no confina
-    -- correctamente la búsqueda por (row,col) a este bloque — pinneamos el
-    -- comportamiento actual (nil) para que un futuro fix sea detectable.
-    local loc = definition_at(pos_of('precio', 3))
-    assert.is_nil(loc)
+  it('definition dentro de <%=precio%> y de <%=cantidad%>, pegados en una línea, va a su Dim', function()
+    -- 3ª ocurrencia de 'precio': <td><%=precio%></td><td><%=cantidad%></td>.
+    for _, word in ipairs({ 'precio', 'cantidad' }) do
+      local pos = pos_of('<%=' .. word, 1)
+      pos.character = pos.character + 3
+      local loc = definition_at(pos)
+      assert.is_not_nil(loc, word)
+      assert.are.same({ line = 1, character = ('Dim precio, cantidad'):find(word) - 1 }, loc.range.start)
+    end
+  end)
+
+  it('references de precio incluye el uso dentro del <%= %> pegado a otro bloque', function()
+    local refs = request('textDocument/references', {
+      textDocument = vim.lsp.util.make_text_document_params(),
+      position = pos_of('precio', 1),
+      context = { includeDeclaration = true },
+    })
+    local lines = {}
+    for _, r in ipairs(refs or {}) do lines[#lines + 1] = r.range.start.line end
+    table.sort(lines)
+    assert.are.same({ 1, 2, 5 }, lines)
   end)
 end)
