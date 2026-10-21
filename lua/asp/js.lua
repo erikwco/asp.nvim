@@ -63,6 +63,7 @@ local SCRIPT_QUERY = [[ (script_element (start_tag) @tag) @script ]]
 local ATTRIBUTE_QUERY = [[
 (attribute (attribute_name) @name (attribute_value) @value)
 (attribute (attribute_name) @name (quoted_attribute_value (attribute_value) @value))
+(attribute (attribute_name) @empty_name (quoted_attribute_value) @empty_value)
 ]]
 local CONTENT_QUERY = [[ (content) @content ]]
 --  * @scope: los nodos que abren un scope. let/const se tratan como var
@@ -88,6 +89,7 @@ local JS_QUERY = [[
 (shorthand_property_identifier) @id
 (shorthand_property_identifier_pattern) @id
 (method_definition name: (property_identifier) @method)
+[(string) (template_string) (regex) (comment)] @opaque
 ]]
 
 -- Tipos de nodo de @id: los únicos que se resuelven bajo el cursor.
@@ -278,10 +280,19 @@ local function script_regions(html, source, blocks)
   for _, f in ipairs(found) do
     local attrs, dynamic = script_attrs(f.tag, source, blocks)
     if is_client_js(attrs) then
+      local body, closing
       for child in f.script:iter_children() do
         if child:type() == 'raw_text' then
           table.insert(regions, { { child:range(true) } })
+          body = true
+        elseif child:type() == 'end_tag' then
+          closing = child
         end
+      end
+      if not body and closing then
+        local sr, sc, sb = f.tag:end_()
+        local er, ec, eb = closing:start()
+        table.insert(regions, { { sr, sc, sb, er, ec, eb } })
       end
       if attrs.src and attrs.src ~= '' and not dynamic.src then
         table.insert(srcs, attrs.src)
@@ -323,12 +334,16 @@ local function handler_regions(html, source, blocks)
   local handlers = {}
   for _, tree in pairs(html:trees()) do
     for _, match in aq:iter_matches(tree:root(), source) do
-      local name, value
+      local name, value, empty_name, empty_value
       for id, nodes in pairs(match) do
         if type(nodes) ~= 'table' then nodes = { nodes } end
         if aq.captures[id] == 'name' then name = nodes[1] end
         if aq.captures[id] == 'value' then value = nodes[1] end
+        if aq.captures[id] == 'empty_name' then empty_name = nodes[1] end
+        if aq.captures[id] == 'empty_value' then empty_value = nodes[1] end
       end
+      local empty = empty_value and empty_value:named_child_count() == 0
+      if empty then name, value = empty_name, empty_value end
       local attr = name and value and vim.treesitter.get_node_text(name, source):lower()
       local skip -- bytes del valor antes del JS: el prefijo `javascript:`
       if attr and attr:match('^on%a+$') then
@@ -339,6 +354,9 @@ local function handler_regions(html, source, blocks)
       end
       if skip then
         local r = { value:range(true) }
+        if empty then
+          r[2], r[3], r[5], r[6] = r[2] + 1, r[3] + 1, r[5] - 1, r[6] - 1
+        end
         r[2], r[3] = r[2] + skip, r[3] + skip
         while ends[r[3]] do
           local b = ends[r[3]]
@@ -348,7 +366,7 @@ local function handler_regions(html, source, blocks)
           local b = starts[r[6]]
           r[4], r[5], r[6] = b[4], b[5], b[6]
         end
-        if r[3] < r[6] then
+        if r[3] <= r[6] then
           table.insert(handlers, { range = r, url = attr == 'href' or nil })
         end
       end
@@ -485,10 +503,10 @@ local function index(data, scopes, items)
     end
   end
 
-  for _, it in ipairs(items) do
+  local function enter_until(byte)
     -- `<=`: un scope que empieza en el mismo byte que el identificador lo
     -- contiene (el parámetro de `x => x`).
-    while scopes[next_scope] and scopes[next_scope].sb <= it.sb do
+    while scopes[next_scope] and scopes[next_scope].sb <= byte do
       local s = scopes[next_scope]
       close_before(s.sb)
       s.key = next_scope
@@ -502,6 +520,10 @@ local function index(data, scopes, items)
       stack[#stack + 1] = s
       next_scope = next_scope + 1
     end
+  end
+
+  for _, it in ipairs(items) do
+    enter_until(it.sb)
     close_before(it.sb)
     local inner = stack[#stack]
     local name = vim.treesitter.get_node_text(it.node, data.source)
@@ -550,6 +572,11 @@ local function index(data, scopes, items)
       data.at[it.sb] = occ
     end
   end
+  enter_until(math.huge)
+  data.scopes = scopes
+  for _, e in ipairs(data.decls) do
+    e.help = require('asp.js_info').declaration(e, data.source)
+  end
 end
 
 local function new_data()
@@ -562,6 +589,10 @@ local function new_data()
     fnames = {},      -- ídem, sólo los nombres de function expression
     parent = {},      -- clave de scope → clave del que lo envuelve
     parameter_ends = {}, -- clave de scope → byte final de sus parámetros
+    scopes = {},     -- intervalos de scope, también para posiciones sin token
+    regions = {},    -- rangos originales, incluidos sus espacios exteriores
+    blocks = {},     -- ASP excluido del JS
+    opaque = {},     -- strings, templates, regex y comentarios del árbol
     srcs = {},        -- `src` de los <script>, sin resolver (externals)
   }
 end
@@ -581,6 +612,7 @@ end
 ---@param handlers table[] de handler_regions, también en `regions`
 local function index_js(data, source, regions, blocks, handlers)
   data.source = source
+  data.regions, data.blocks = regions or {}, blocks
   -- Parser STRING sobre el texto con los bloques ASP neutralizados (ver
   -- js_source), confinado a los <script> y manejadores. Injection query
   -- vacía: el JS puede traer regex/jsdoc/... inyectados (queries de
@@ -629,7 +661,9 @@ local function index_js(data, source, regions, blocks, handlers)
     for id, node in q:iter_captures(tree:root(), source) do
       local _, _, sb = node:start()
       local _, _, eb = node:end_()
-      if q.captures[id] == 'scope' then
+      if q.captures[id] == 'opaque' then
+        data.opaque[sb] = { stop = eb, kind = node:type() }
+      elseif q.captures[id] == 'scope' then
         table.insert(scopes, { node = node, sb = sb, eb = eb })
       elseif not overlaps_asp(blocks, sb, eb) then
         table.insert(items, { node = node, sb = sb, method = q.captures[id] == 'method', url = url[i] })
@@ -705,6 +739,8 @@ local function detach(data)
     e.node, e.decl, e.scope, e.class = nil, nil, nil, nil
   end
   data.trees, data.ltree, data.source, data.at, data.decls = nil, nil, nil, nil, nil
+  data.scopes, data.regions, data.blocks = nil, nil, nil
+  data.opaque = nil
   return data
 end
 
@@ -1001,6 +1037,90 @@ local function each_external(bufnr, data, visit)
   return hit
 end
 
+local function region_at(bufnr, position)
+  local data = get_data(bufnr)
+  if not data then return nil end
+  local byte = vim.api.nvim_buf_get_offset(bufnr, position.line) + position.character
+  if overlaps_asp(data.blocks, byte, byte + 1) then return nil end
+  for _, ranges in ipairs(data.regions) do
+    local r = ranges[1]
+    if r[3] <= byte and byte <= r[6] then
+      local node
+      for _, tree in ipairs(data.trees) do
+        if range_contains(tree:root(), position.line, position.character) then
+          node = tree:root():named_descendant_for_range(
+            position.line, position.character, position.line, position.character)
+          break
+        end
+      end
+      return { source = data.source, range = r, byte = byte, node = node, opaque = data.opaque }, data
+    end
+  end
+end
+
+local function scope_at(data, byte)
+  local key = 0
+  for _, scope in ipairs(data.scopes) do
+    if scope.sb > byte then break end
+    if byte < scope.eb or (scope.handler and byte == scope.eb) then key = scope.key end
+  end
+  return key
+end
+
+local function help_entry(entry, uri)
+  if not uri then return entry.help end
+  local info = vim.tbl_extend('force', {}, entry.help)
+  info.file = vim.uri_to_fname(uri)
+  return info
+end
+
+local function named(bufnr, position, name)
+  local ctx, data = region_at(bufnr, position)
+  if not ctx then return nil end
+  local occ = name and { name = name, byte = ctx.byte, scope = scope_at(data, ctx.byte) }
+    or occurrence_at(data, position)
+  if not occ then
+    -- Sólo el nombre en la declaración del método. Resolver `obj.metodo`
+    -- requeriría inferir el tipo de obj, fuera del alcance de esta capa.
+    for _, e in ipairs(data.decls) do
+      if e.member and ctx.node and e.node:equal(ctx.node) then return e.help end
+    end
+    return nil
+  end
+  local entry = resolve(data, occ)
+  if entry then return entry.help end
+  return each_external(bufnr, data, function(uri, ext)
+    local e = global_binding(ext, occ.name)
+    if e then return help_entry(e, uri) end
+  end)
+end
+
+local function visible(bufnr, position)
+  local ctx, data = region_at(bufnr, position)
+  if not ctx then return nil end
+  local out, seen = {}, {}
+  local function add(slots, uri, parameter_only)
+    local names = vim.tbl_keys(slots or {})
+    table.sort(names)
+    for _, name in ipairs(names) do
+      local e = slots[name]
+      if not seen[name] and (not parameter_only or e.parameter) then
+        seen[name] = true
+        out[#out + 1] = help_entry(e, uri)
+      end
+    end
+  end
+  local key = scope_at(data, ctx.byte)
+  while key do
+    local stop = data.parameter_ends[key]
+    add(data.bindings[key], nil, stop and ctx.byte < stop)
+    add(data.fnames[key])
+    key = data.parent[key]
+  end
+  each_external(bufnr, data, function(uri, ext) add(ext.bindings[0], uri) end)
+  return out
+end
+
 local function definition(bufnr, position)
   local data = get_data(bufnr)
   if not data then return nil end
@@ -1143,6 +1263,24 @@ local function safe(fn, bufnr, ...)
   local ok, res, binding = pcall(fn, bufnr, ...)
   if ok then return res, binding end
   return nil
+end
+
+---Región JS original y texto neutralizado, sin los bloques ASP interiores.
+---El final es inclusivo para completar justo antes del cierre HTML.
+function M.region_at(bufnr, position)
+  local ctx = safe(region_at, bufnr, position)
+  return ctx
+end
+
+---Ayuda del binding bajo el cursor, o del nombre en su scope actual.
+---La firma y los parámetros salen del mismo índice que definition.
+function M.named(bufnr, position, name)
+  return safe(named, bufnr, position, name)
+end
+
+---Bindings visibles, del scope más interno a la página y sus externos.
+function M.visible(bufnr, position)
+  return safe(visible, bufnr, position)
 end
 
 ---Declaraciones JS del buffer, en orden del documento: {name, kind, node,
