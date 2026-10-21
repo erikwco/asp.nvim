@@ -1329,6 +1329,41 @@ local function document_symbols(bufnr)
   return out
 end
 
+-- Ver M.semantic_tokens.
+local function semantic_tokens(bufnr)
+  local data = get_data(bufnr)
+  if not data then return nil end
+  local out = {}
+  local function add(node, entry, declaration)
+    local r0, c0, r1, c1 = node:range()
+    if r0 == r1 then out[#out + 1] = { r0, c0, c1 - c0, entry, declaration } end
+  end
+  -- Global de los archivos externos, por nombre: el primero gana, como en
+  -- definition. Se arma solo si algún uso no resuelve en el buffer.
+  local externals
+  local function external(name)
+    if not externals then
+      externals = {}
+      each_external(bufnr, data, function(_, ext)
+        for n, e in pairs(ext.bindings[0] or {}) do
+          if externals[n] == nil then externals[n] = e end
+        end
+      end)
+    end
+    return externals[name]
+  end
+  for name, list in pairs(data.occurrences) do
+    for _, occ in ipairs(list) do
+      local entry = resolve(data, occ) or external(name)
+      if entry then add(occ.node, entry, occ.decl ~= nil) end
+    end
+  end
+  for _, e in ipairs(data.decls) do
+    if e.member then add(e.node, e, true) end
+  end
+  return out
+end
+
 -- Toda función pública devuelve nil ante cualquier error (pcall): los
 -- handlers de asp.lsp encadenan capas con `or` y jamás deben lanzar.
 local function safe(fn, bufnr, ...)
@@ -1406,6 +1441,18 @@ end
 ---@return table[]|nil Location[] con `declared` (true si declara el nombre)
 function M.occurrences(bufnr, name)
   return safe(occurrences, bufnr, name)
+end
+
+---Identificadores JS del buffer que resuelven a una declaración, del
+---buffer o del global de sus archivos externos, para los tokens semánticos
+---(asp.semantic_tokens): una lista de {fila, columna, largo, entry,
+---declaración} sin orden, con la entry de la declaración (`kind`,
+---`parameter`; los métodos tienen `member`). Las propiedades (`obj.x`) no
+---se resuelven: de un método solo cuenta el nombre de su declaración.
+---@param bufnr integer
+---@return table[]|nil
+function M.semantic_tokens(bufnr)
+  return safe(semantic_tokens, bufnr)
 end
 
 ---Funciones y clases JS globales (con sus métodos) para el outline, con
