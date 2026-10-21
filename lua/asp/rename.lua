@@ -95,6 +95,9 @@ local function validate_javascript(new, old)
       :format(new)
   end
   if JS_RESERVED[new] then return ('`%s` es una palabra reservada de JavaScript'):format(new) end
+  if new == 'eval' or new == 'arguments' then
+    return ('`%s` no puede declarar un nombre en JavaScript estricto'):format(new)
+  end
   return nil
 end
 

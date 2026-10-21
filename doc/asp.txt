@@ -262,7 +262,8 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       hasta 255 caracteres; en JS, letras, dígitos, `_` y `$`, sin un
       dígito al comienzo. No puede ser una palabra clave, un nativo ni un
       intrínseco (en VBScript, sin distinguir mayúsculas) ni una palabra
-      reservada de JS. Se rechaza si ya hay una declaración con ese
+      reservada de JS, ni eval o arguments (inválidos en JS estricto).
+      Se rechaza si ya hay una declaración con ese
       nombre en el mismo alcance: en el buffer y, para un símbolo de
       página de VBScript, en su grafo de includes. No avisa si un local
       nuevo tapa un nombre de página que la Sub usa, ni si un global de

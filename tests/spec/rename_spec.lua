@@ -348,6 +348,22 @@ describe('asp.rename rename', function()
     assert.is_table(rename.rename(0, js, '$_validar'))
   end)
 
+  it('rechaza eval y arguments como nombres nuevos de JavaScript estricto', function()
+    in_temp({
+      ['pagina.asp'] = '<script>"use strict"; let total = 1; total++;</script>\n',
+    }, function(dir)
+      vim.cmd.edit(dir .. '/pagina.asp')
+      local pos = pos_in('let total', 'total')
+      for _, name in ipairs({ 'eval', 'arguments' }) do
+        local edit, err = rename.rename(0, pos, name)
+        assert.is_nil(edit, name)
+        assert.are.equal(-32602, err.code)
+        assert.is_truthy(err.message:find('estricto', 1, true))
+      end
+      assert.is_table(rename.rename(0, pos, 'Eval'))
+    end)
+  end)
+
   it('rechaza un nombre nuevo ya declarado en el mismo alcance', function()
     open('pagina.asp')
     for _, case in ipairs({

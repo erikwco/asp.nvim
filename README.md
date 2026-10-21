@@ -320,7 +320,9 @@ El nombre nuevo tiene que ser un identificador válido (VBScript:
 `^[A-Za-z][A-Za-z0-9_]*$`, hasta 255 caracteres; JavaScript:
 `^[A-Za-z_$][A-Za-z0-9_$]*$`) y distinto del actual. No puede ser una
 palabra clave, un nativo ni un intrínseco (en VBScript, sin distinguir
-mayúsculas) ni una palabra reservada de JavaScript. También se rechaza si
+mayúsculas) ni una palabra reservada de JavaScript. Se excluyen también
+`eval` y `arguments`, que no pueden declarar nombres en JS estricto.
+También se rechaza si
 ya hay una declaración con ese nombre en el mismo alcance: en el buffer y,
 para un símbolo de página de VBScript, en su grafo de includes.
 
