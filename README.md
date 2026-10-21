@@ -69,7 +69,9 @@ Podés localizar las copias con
 Compilá con `make parsers`, evitá que otro instalador sustituya esa copia
 y reiniciá Neovim después de corregir el orden de `runtimepath`.
 Si usás un instalador propio para esta gramática, incluí tanto `src/parser.c`
-como `src/scanner.c` en la compilación.
+como `src/scanner.c` en la compilación. `:checkhealth asp` avisa si hay
+varias copias, si el parser `vbscript` cargado no trae el scanner externo o
+si las queries del plugin no compilan con él.
 
 ### Resolver errores de ABI en Neovim 0.10
 
