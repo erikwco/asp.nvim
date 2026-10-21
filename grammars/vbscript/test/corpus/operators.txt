@@ -1,0 +1,97 @@
+==================
+is compara objetos en un if de una linea
+==================
+If x Is Nothing Then y = 1
+---
+
+(source_file
+  (if_statement
+    (expression
+      (binary_expression
+        (expression
+          (primary_expression
+            (identifier)))
+        (expression
+          (primary_expression
+            (nothing_literal)))))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal))))))
+
+==================
+not antes de is
+==================
+If Not rs Is Nothing Then
+  rs.Close
+End If
+---
+
+(source_file
+  (if_statement
+    (expression
+      (binary_expression
+        (expression
+          (unary_expression
+            (expression
+              (primary_expression
+                (identifier)))))
+        (expression
+          (primary_expression
+            (nothing_literal)))))
+    (block
+      (expression
+        (member_expression
+          (primary_expression
+            (identifier))
+          (identifier))))))
+
+==================
+is entre dos variables en una asignacion
+==================
+iguales = a Is b
+---
+
+(source_file
+  (expression
+    (binary_expression
+      (expression
+        (binary_expression
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (identifier)))))
+      (expression
+        (primary_expression
+          (identifier))))))
+
+==================
+identificador que empieza con is
+==================
+x = 1
+IsVacio = IsEmpty(x)
+---
+
+(source_file
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal))))
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (function_call
+        (identifier)
+        (expression
+          (primary_expression
+            (identifier)))))))

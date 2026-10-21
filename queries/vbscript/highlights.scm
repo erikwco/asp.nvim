@@ -57,7 +57,7 @@
 [
   "Sub" "Function" "Property" "Get" "Let" "Class"
   "Dim" "Const" "Set" "ReDim" "Erase"
-  "Public" "Private" "Friend" "Static" "Option" "Explicit"
+  "Public" "Private" "Friend" "Static" "Default" "Option" "Explicit"
   "Call" "ByVal" "ByRef" "Optional" "ParamArray" "Preserve"
   "Base" "Compare" "Binary" "Text" "Database" "Module" "Mid"
 ] @keyword

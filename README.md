@@ -428,18 +428,13 @@ dónde está el problema:
   `obj.total` desde fuera de la clase. El rename se rechaza desde
   `prepareRename`, también para un `Dim` dentro de la clase, que es
   público. Renombralo a mano.
-- **Un `<%= %>` fundido.** La inyección combinada funde los bloques
-  `<%= %>` sin espacios en su código (`<td><%=a%></td><td><%=b%></td>`),
-  aunque el HTML del medio tenga saltos de línea, y las referencias no
-  ven sus usos. Si uno de esos bloques usa el nombre viejo o el nuevo, el
-  rename se rechaza con la línea del bloque. Escribilo con espacios
-  (`<%= a %>`) y volvé a renombrar.
 - **Un archivo a cambiar tiene cambios sin guardar.** Las posiciones de
   los demás archivos salen del disco: guardalo y volvé a renombrar.
 
 Una variable de clase declarada con `Private` se renombra desde su
 declaración o un uso suelto dentro de la clase. Cambia también sus usos
-`Me.total`, sin distinguir mayúsculas, con espacios y continuaciones `_`.
+`Me.total`, sin distinguir mayúsculas, con espacios después del punto y
+continuaciones `_`.
 Solo cambia el buffer dentro de esa clase; conserva los locales y las
 variables de página homónimos. Los métodos y las propiedades de clase se
 renombran a mano.
@@ -450,10 +445,7 @@ Límites:
   `ExecuteGlobal`, los nombres armados en runtime, los strings de
   JavaScript ni las páginas fuera de la raíz del sitio que incluyen la
   librería.
-- Los comentarios con apóstrofo no cambian. Como las referencias del
-  buffer, puede contar nombres dentro de comentarios `Rem` del archivo
-  actual y renombrarlos. Los `Rem` de archivos consultados en disco se
-  excluyen.
+- Los comentarios, con apóstrofo o `Rem`, no cambian.
 
 Neovim aplica el resultado abriendo los archivos de disco que cambia
 como buffers modificados sin guardar. Revisalos y guardalos con `:wa`:
@@ -461,6 +453,65 @@ como buffers modificados sin guardar. Revisalos y guardalos con `:wa`:
 ```vim
 :lua vim.lsp.buf.rename()
 :wa
+```
+
+### Resaltado semántico
+
+`asp-ls` responde `textDocument/semanticTokens/full` y `/range`, y Neovim
+los pide solo al adjuntarse el servidor y tras cada edición. Cada
+identificador de VBScript o de JavaScript de cliente recibe el tipo de la
+declaración a la que resuelve, con la misma resolución que la definición
+y las referencias (local, página, miembro de clase e includes). Las
+palabras clave, los literales, los strings, los comentarios y el HTML los
+sigue resaltando tree-sitter: sobre ellos no hay tokens.
+
+| Tipo | Qué marca |
+|---|---|
+| `function` | Functions, Subs, funciones JS y nativas como `Len` |
+| `method` | Métodos de clases y llamadas como `Response.Write` |
+| `class` | clases de VBScript y JS, también en `New Clase`, y `RegExp` |
+| `property` | Miembros VBScript y propiedades como `Response.Buffer` |
+| `variable` | Variables de página y locales, constantes y variables JS |
+| `parameter` | parámetros de Sub, Function, Property y de funciones JS |
+| `namespace` | Objetos intrínsecos de ASP y `Err` |
+
+| Modificador | Qué marca |
+|---|---|
+| `declaration` | El nombre en su declaración, incluidos los parámetros |
+| `readonly` | `Const` de VBScript, constantes nativas y `const` de JS |
+| `defaultLibrary` | nativos de VBScript e intrínsecos de ASP |
+
+Neovim aplica los grupos `@lsp.type.<tipo>.asp`, `@lsp.mod.<modificador>.asp`
+y `@lsp.typemod.<tipo>.<modificador>.asp`
+(ver `:help lsp-semantic-highlight`),
+con prioridad sobre tree-sitter. Por defecto `@lsp.type.function` enlaza a
+`@function`, `@lsp.type.parameter` a `@variable.parameter`, etc. Por ejemplo,
+para distinguir los nativos y las constantes:
+
+```lua
+vim.api.nvim_set_hl(0, '@lsp.mod.defaultLibrary.asp',
+  { link = '@function.builtin' })
+vim.api.nvim_set_hl(0, '@lsp.typemod.variable.readonly.asp',
+  { link = '@constant' })
+```
+
+Un miembro de objeto (`obj.Campo`) solo lleva tipo si el objeto es `Me` o
+un intrínseco; el `.Campo` de un `With` y las propiedades de JS
+(`obj.metodo`) no. Los métodos JS reciben tipo en su declaración.
+
+En una página de 318 KB, la mediana de la primera llamada a `full` fue
+53 ms en Neovim 0.12 y 80 ms en 0.10, con parsers y cachés vacíos.
+En caliente fueron 5 y 8 ms; tras editar, 40 y 50 ms. Una de cinco
+corridas de 0.10 tardó 207 ms en frío. El
+[benchmark reproducible](tests/bench/semantic_tokens.md) detalla el método
+y los rangos medidos.
+
+Para apagarlo en una sesión, `:lua vim.lsp.semantic_tokens.stop(0,
+vim.lsp.get_clients({ name = 'asp-ls' })[1].id)`. Para que el servidor no
+lo anuncie:
+
+```lua
+require('asp').setup({ semantic_tokens = false })
 ```
 
 ### Diagnósticos
@@ -524,7 +575,7 @@ apaga todas. Un valor inválido avisa una vez y usa el de por defecto.
 ```lua
 require('asp').setup({
   diagnostics = {
-    syntax = 'HINT',       -- por defecto: HINT
+    syntax = 'WARN',       -- por defecto: WARN
     undeclared = 'WARN',   -- por defecto: WARN
     unknown_call = 'WARN', -- por defecto: WARN
     missing_page = 'WARN', -- por defecto: WARN
@@ -533,19 +584,19 @@ require('asp').setup({
 })
 ```
 
-`syntax` es HINT por defecto porque la gramática marca como error
-construcciones válidas de VBScript: `x Is Nothing`, `Case 1, 2`,
-`Const A = 1, B = 2`, un `Case Else` vacío y `.Campo`
-dentro de un `With`. Las variables y llamadas dentro de un error no se
-revisan, y los nombres de una línea con un error cuentan como declarados
-en todo el buffer actual: un error que llega al final del archivo, como el de
-`Case 1, 2`, deja sin revisar lo que sigue. En el código de los fixtures
-y de tres páginas reales no hubo ningún falso positivo.
+`syntax` fue HINT mientras la gramática marcaba como error construcciones
+válidas de VBScript (`x Is Nothing`, `Case 1, 2`, `Const A = 1, B = 2`,
+un `Case Else` vacío, `.Campo` dentro de un `With`, `Sub Foo` sin
+paréntesis, `error = 1`, comentarios `Rem`). Desde 0.7 la gramática las
+acepta y `syntax` es WARN: en los fixtures, en tres páginas reales y en 46
+fragmentos válidos escritos a mano, uno por construcción, no queda ningún
+falso positivo (con la gramática anterior eran 20 en 13 fragmentos).
 
-Esa recuperación de nombres no se aplica a los includes ni cubre siempre
-las declaraciones partidas con `_`. Por ejemplo, `Const A = 1, B = 2`
-en un include puede hacer que un uso de `B` se marque como sin declarar.
-`Case Is > 5` es sintaxis de VBA, no de VBScript.
+Las variables y llamadas dentro de un error no se revisan, y los nombres
+de una línea con un error cuentan como declarados en todo el buffer
+actual. Esa recuperación de nombres no se aplica a los includes ni cubre
+siempre las declaraciones partidas con `_`. `Case Is > 5` es sintaxis de
+VBA, no de VBScript.
 
 #### Cuándo se actualizan
 
@@ -756,9 +807,6 @@ VBScript de la página real y ~18 ms en la sintética; en HTML llega a
   lo indenta el indent de JavaScript de Vim, lento en páginas con mucho
   JS. Sus comentarios `/* */` de varias líneas pueden cambiar de
   indentación entre una pasada de `gg=G` y la siguiente.
-- La gramática no conoce `Rem`: un comentario `Rem` con palabras clave
-  (`Rem If no hay datos`) es un `ERROR` y su zona se indenta por texto.
-  Con `'` no pasa.
 - El respaldo por texto reconoce un `If` de bloque sólo si su línea
   termina en `Then`: no abre nivel tras un `If x Then:` cuyas sentencias
   siguen en las líneas de abajo.
@@ -771,8 +819,7 @@ VBScript de la página real y ~18 ms en la sintética; en HTML llega a
   constantes de ADO sin `adovbs.inc` se marcan como sin declarar. La
   variable de un `For` cuenta como declarada aunque VBScript exige su
   `Dim`. Una página con `<%@ Language="JScript" %>` no se revisa como
-  VBScript. Los identificadores de bloques `<%= %>` sin espacios en su
-  código pueden fusionarse en la región combinada y no se revisan.
+  VBScript.
 - Páginas inexistentes: la detección es la de la navegación, por texto.
   No reconoce comentarios de JavaScript y marca cualquier literal con una
   de esas extensiones, aunque no sea un enlace, como un archivo que se va a
@@ -808,14 +855,9 @@ VBScript de la página real y ~18 ms en la sintética; en HTML llega a
 - `gf` y `C-w f` solo reconocen rutas con `/` como separador. Neovim corta
   el nombre en `\` en Unix. `C-]` y `vim.lsp.buf.definition()` sí normalizan
   `\` a `/`.
-- Varios bloques `<%= %>` sin espacios en su código (p. ej.
-  `<td><%=a%></td><td><%=b%></td>`) se fusionan en una sola región por la
-  injection combinada de VBScript (necesaria para que construcciones
-  cruzadas como `<% If %>...<% End If %>` parseen como un solo programa);
-  como resultado, hover/definición/referencias no resuelven identificadores
-  dentro de esos bloques adyacentes, y el rename de un nombre que usan se
-  rechaza. Los saltos de línea en el HTML no los separan; agregá espacios
-  dentro del código (`<%= a %>`, `<%= b %>`).
+- Gramática de VBScript: un `.` con un blanco antes empieza un `.Campo`
+  de `With`, como en VBScript (`Response.Write .Campo`): `obj .Campo` no
+  es un acceso. `obj _` seguido de `.Campo` en la línea siguiente sí lo es.
 - JavaScript entre archivos: de cada `.js` de `<script src>` y de cada
   include sólo se ven sus declaraciones globales. Gana el buffer, luego
   los `<script src>` en orden y después los includes en el orden del
@@ -883,7 +925,8 @@ La versión 0.7.0 incluye:
 - Plegado e indentación de VBScript y HTML por tree-sitter.
 - `:checkhealth asp` con parsers, scanner, queries, servidor y diagnósticos.
 - CI en Neovim 0.10.4, estable y nightly, sobre Linux y macOS.
-<!-- 7a: sumar el resaltado semántico (textDocument/semanticTokens) al mergear feat/semantic-grammar. -->
+- Resaltado semántico (`textDocument/semanticTokens`) de VBScript y
+  JavaScript, con la misma resolución que la navegación.
 
 ## Desarrollo
 

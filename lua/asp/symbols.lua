@@ -188,11 +188,9 @@ function M.help(bufnr)
   local tick = vim.api.nvim_buf_get_changedtick(bufnr)
   local hit = help_cache[bufnr]
   if hit and hit.tick == tick then return hit end
-  local ok, parser = pcall(vim.treesitter.get_parser, bufnr)
-  if not ok or not parser then return { entries = {}, assignments = {} } end
-  parser:parse(true)
+  local parser, child = require('asp.ts').parse_vbscript(bufnr)
+  if not parser then return { entries = {}, assignments = {} } end
   local roots = {}
-  local child = parser:children().vbscript
   for _, tree in ipairs(child and child:trees() or {}) do roots[#roots + 1] = tree:root() end
   hit = {
     tick = tick, entries = collect_from_roots(roots, bufnr),
@@ -214,8 +212,6 @@ function M.scope_at(entries, position)
   end
   return scope
 end
-
-local CODE_QUERY = [[ (code) @code ]]
 
 local file_cache = {}
 -- ruta → {stamp, names} o {stamp, words}: ocurrencias de identificadores
@@ -245,10 +241,11 @@ end
 ---Parsea el contenido de un archivo sin necesidad de un buffer abierto.
 ---Técnica clave (también el fix del backlog de parseo en frío de ~33s en la
 ---indexación): parsear el contenido con un parser STRING de aspclassic (solo
----capa top — barato), recolectar los nodos `(code)`, y crear un parser
----STRING de vbscript con set_included_regions({code_nodes}) (una única
----región combinada, igual que el injection "combined" normal) — así solo se
----parsea VBScript, sin injections de html/js/css/regex.
+---capa top — barato), recolectar los bloques `<% %>` y `<%= %>`
+---(asp.ts.vbscript_blocks), y crear un parser STRING de vbscript con
+---set_included_regions({bloques}) (una única región combinada, igual que el
+---injection "combined" normal) — así solo se parsea VBScript, sin
+---injections de html/js/css/regex.
 ---
 ---Sin bloques de código devuelve nil.
 ---@param content string
@@ -257,24 +254,19 @@ local function parse_content(content)
   -- Capa plantilla: solo top layer, sin injections (barato).
   local tpl = vim.treesitter.get_string_parser(content, 'aspclassic')
   local troot = tpl:parse()[1]:root()
-  local cq = vim.treesitter.query.parse('aspclassic', CODE_QUERY)
-  local code_nodes = {}
-  for _, node in cq:iter_captures(troot, content) do
-    table.insert(code_nodes, node)
-  end
-  if #code_nodes == 0 then return nil end
+  local blocks = require('asp.ts').vbscript_blocks(troot, content)
+  if #blocks == 0 then return nil end
 
-  -- Capa vbscript SOLO en los rangos de código: nada de html/js/regex.
+  -- Capa vbscript SOLO en los bloques: nada de html/js/regex.
   -- set_included_regions espera una lista de REGIONES (cada región es una
-  -- lista de nodos/rangos parseados en un mismo contexto); envolvemos
-  -- code_nodes en una región única para que, igual que el injection
+  -- lista de nodos/rangos parseados en un mismo contexto); envolvemos los
+  -- bloques en una región única para que, igual que el injection
   -- "combined" normal, todos los bloques <% %> del archivo formen un solo
   -- árbol vbscript. LanguageTree no tiene `set_included_ranges`, y parse()
   -- sin argumentos NO reparsea regiones incluidas no vacías: hace falta
   -- parse(true).
-  local source = require('asp.vbscript_scan').source(content)
-  local vp = vim.treesitter.get_string_parser(source, 'vbscript')
-  vp:set_included_regions({ code_nodes })
+  local vp = vim.treesitter.get_string_parser(content, 'vbscript')
+  vp:set_included_regions({ blocks })
   return vp:parse(true)[1]:root()
 end
 
@@ -358,6 +350,18 @@ local function range_contains(node, row, col)
   return true
 end
 
+---¿`node` (un `identifier`) es un nombre? Un identificador que cruza líneas
+---o cuyo texto no es el de un nombre no lo es: la región combinada de un
+---parser que no incluye los delimitadores de los bloques puede leer el
+---final de un bloque y el comienzo del siguiente como uno solo.
+---@param node TSNode
+---@param source integer|string
+---@return boolean
+function M.is_name(node, source)
+  local r0, _, r1 = node:range()
+  return r0 == r1 and vim.treesitter.get_node_text(node, source):match('^[%a_][%w_]*$') ~= nil
+end
+
 ---Localiza el TSNode bajo `position`, confinado a la capa
 ---vbscript (`children().vbscript` + `named_descendant_for_range`). Compartido
 ---por M.definition y M.references — ver el comentario extenso en
@@ -385,6 +389,8 @@ function M.node_at(bufnr, position)
       break
     end
   end
+  -- Un identificador que no es un nombre no se resuelve (ver M.is_name).
+  if node and node:type() == 'identifier' and not M.is_name(node, bufnr) then return nil end
   return node
 end
 
@@ -394,35 +400,48 @@ function M.identifier_at(bufnr, position)
   return node and node:type() == 'identifier' and node or nil
 end
 
+---Declaración llamada `wanted` (en minúsculas) que se ve desde el scope
+---`scope_id` (Sub/Function/Property) y la clase `class_id`, entre
+---`entries`: el local del scope, la de página (sin scope ni clase) y, si
+---no hay, un miembro de clase homónimo, primero el de la clase que
+---contiene la posición. Son los tiers de M.definition, M.references y los
+---tokens semánticos (asp.semantic_tokens). Ver el comentario extenso en
+---M.definition sobre los tiers y el refinamiento class_id.
+---@param entries table[] declaraciones del buffer (o solo las de ese nombre)
+---@param wanted string ya en minúsculas
+---@param scope_id integer|nil
+---@param class_id integer|nil
+---@return table|nil entry
+function M.pick(entries, wanted, scope_id, class_id)
+  local local_hit, page_hit, own_hit, class_hit
+  for _, e in ipairs(entries) do
+    if e.name:lower() == wanted then
+      if scope_id and e.scope_id == scope_id then
+        local_hit = local_hit or e
+      elseif not e.scope_id and not e.class_id then
+        page_hit = page_hit or e
+      elseif not e.scope_id then
+        if e.class_id == class_id then own_hit = own_hit or e end
+        class_hit = class_hit or e
+      end
+    end
+  end
+  return local_hit or page_hit or own_hit or class_hit
+end
+
 ---Resuelve, entre las declaraciones del buffer actual, cuál referencia
----`node` (identificador bajo el cursor) según los mismos tiers que
----M.definition: local del scope del cursor → página (sin scope ni clase) →
----miembro de clase homónimo. Devuelve la
----entry completa (con su scope_id/class_id) o nil si `wanted` no tiene
----ninguna declaración en este buffer. Compartida por M.definition y
----M.references — ver el comentario extenso en M.definition sobre los
----tiers y el refinamiento class_id.
+---`node` (identificador bajo el cursor), desde su scope y su clase (ver
+---M.pick). Devuelve la entry completa (con su scope_id/class_id) o nil si
+---`wanted` no tiene ninguna declaración en este buffer. Compartida por
+---M.definition y M.references.
 ---@param entries table[] declaraciones del buffer
 ---@param node TSNode identificador bajo el cursor
 ---@param wanted string ya en minúsculas
 ---@return table|nil entry
 local function resolve_binding(entries, node, wanted)
-  local cursor_scope = nearest_ancestor(node, SCOPE_TYPES)
-  local cursor_scope_id = cursor_scope and cursor_scope:id() or nil
-
-  local local_hit, page_hit, class_hit
-  for _, e in ipairs(entries) do
-    if e.name:lower() == wanted and e.decl_id ~= node:id() then
-      if cursor_scope_id and e.scope_id == cursor_scope_id then
-        local_hit = local_hit or e
-      elseif not e.scope_id and not e.class_id then
-        page_hit = page_hit or e
-      elseif not e.scope_id and e.class_id then
-        class_hit = class_hit or e
-      end
-    end
-  end
-  return local_hit or page_hit or class_hit
+  local scope = nearest_ancestor(node, SCOPE_TYPES)
+  local class = nearest_ancestor(node, { class_statement = true })
+  return M.pick(entries, wanted, scope and scope:id(), class and class:id())
 end
 
 ---Primera declaración de PÁGINA llamada `wanted` en los archivos de

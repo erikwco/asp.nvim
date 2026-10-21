@@ -1,0 +1,171 @@
+==================
+miembro inicial en asignacion, llamada y sentencia sola
+==================
+With rs
+  .Campo = valor
+  .Metodo arg
+  .MoveNext
+End With
+---
+
+(source_file
+  (with_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (block
+      (let_statement
+        (expression
+          (member_expression
+            (identifier)))
+        (expression
+          (primary_expression
+            (identifier))))
+      (expression
+        (member_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (member_expression
+          (identifier))))))
+
+==================
+miembro inicial en expresiones y with anidado
+==================
+With rs
+  x = .Fields("a").Value
+  If .EOF Then .MoveFirst
+  With .Child
+    .Run 1, 2
+  End With
+End With
+---
+
+(source_file
+  (with_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (block
+      (let_statement
+        (expression
+          (primary_expression
+            (identifier)))
+        (expression
+          (member_expression
+            (call_expression
+              (member_expression
+                (identifier))
+              (expression
+                (primary_expression
+                  (string_literal))))
+            (identifier))))
+      (if_statement
+        (expression
+          (member_expression
+            (identifier)))
+        (expression
+          (member_expression
+            (identifier))))
+      (with_statement
+        (expression
+          (member_expression
+            (identifier)))
+        (block
+          (expression
+            (member_expression
+              (identifier)))
+          (call_statement
+            (expression
+              (primary_expression
+                (number_literal)))
+            (expression
+              (primary_expression
+                (number_literal)))))))))
+
+==================
+punto tras un blanco es un argumento de with
+==================
+With rs
+  Response.Write .Campo
+End With
+---
+
+(source_file
+  (with_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (block
+      (expression
+        (member_expression
+          (primary_expression
+            (identifier))
+          (identifier)))
+      (expression
+        (member_expression
+          (identifier))))))
+
+==================
+punto tras dos puntos empieza una sentencia
+==================
+With rs
+  x = 1: .Campo = 2
+End With
+---
+
+(source_file
+  (with_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (block
+      (let_statement
+        (expression
+          (primary_expression
+            (identifier)))
+        (expression
+          (primary_expression
+            (number_literal))))
+      (let_statement
+        (expression
+          (member_expression
+            (identifier)))
+        (expression
+          (primary_expression
+            (number_literal)))))))
+
+==================
+acceso con continuacion de linea
+==================
+x = obj _
+  .Prop
+---
+
+(source_file
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (member_expression
+        (primary_expression
+          (identifier))
+        (identifier)))))
+
+==================
+numero que empieza con punto
+==================
+y = .5
+---
+
+(source_file
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal)))))

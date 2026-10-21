@@ -114,9 +114,8 @@ End If
 (source_file
   (if_statement
     (expression (primary_expression (identifier)))
+    (comment)
     (block
-      (expression (primary_expression (identifier)))
-      (expression (primary_expression (identifier)))
       (let_statement
         (expression (primary_expression (identifier)))
         (expression (primary_expression (number_literal)))))))
@@ -132,8 +131,8 @@ End If
 (source_file
   (if_statement
     (expression (primary_expression (identifier)))
+    (comment)
     (block
-      (expression (primary_expression (identifier)))
       (let_statement
         (expression (primary_expression (identifier)))
         (expression (primary_expression (number_literal)))))))

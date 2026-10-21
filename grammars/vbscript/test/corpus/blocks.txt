@@ -1,0 +1,90 @@
+==================
+dos bloques de salida pegados no forman un identificador
+==================
+<%=a%><%=B(1)%>
+---
+
+(source_file
+  (expression
+    (primary_expression
+      (identifier)))
+  (expression
+    (function_call
+      (identifier)
+      (expression
+        (primary_expression
+          (number_literal))))))
+
+==================
+if que cruza bloques
+==================
+<% If x Then %><% z = 1 %><% End If %>
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (block
+      (let_statement
+        (expression
+          (primary_expression
+            (identifier)))
+        (expression
+          (primary_expression
+            (number_literal)))))))
+
+==================
+with que cruza bloques
+==================
+<% With rs %><%=.Campo%><% End With %>
+---
+
+(source_file
+  (with_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (block
+      (expression
+        (member_expression
+          (identifier))))))
+
+==================
+rem al comienzo de un bloque
+==================
+<%Rem nada%><% x = 1 %>
+---
+
+(source_file
+  (comment)
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal)))))
+
+==================
+palabras pegadas a los delimitadores
+==================
+<%Do While Not rs.EOF%><%rs.MoveNext%><%Loop%>
+---
+
+(source_file
+  (do_statement
+    (expression
+      (unary_expression
+        (expression
+          (member_expression
+            (primary_expression
+              (identifier))
+            (identifier)))))
+    (block
+      (expression
+        (member_expression
+          (primary_expression
+            (identifier))
+          (identifier))))))

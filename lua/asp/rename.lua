@@ -10,12 +10,11 @@
 --
 -- Un rename que dejaría el programa roto se rechaza: un nombre nuevo que
 -- ya existe en cualquier alcance (vbscript_clash, vbscript_disk_clash,
--- javascript_locations), un miembro de clase homónimo en algún archivo a
--- cambiar (vbscript_locations) o un `<%= %>` fundido que oculta un uso
--- (hidden_use). Esos chequeos también salen de las cachés; solo leen un
--- archivo que todavía no se cargó: un `.js` o include que references no
--- recorrió (el rename de un local de JS) o uno del sitio cuyo texto
--- menciona el nombre nuevo y que todavía no se parseó.
+-- javascript_locations) o un miembro de clase homónimo en algún archivo a
+-- cambiar (vbscript_locations). Esos chequeos también salen de las
+-- cachés; solo leen un archivo que todavía no se cargó: un `.js` o include
+-- que references no recorrió (el rename de un local de JS) o uno del sitio
+-- cuyo texto menciona el nombre nuevo y que todavía no se parseó.
 --
 -- Cuando no se puede renombrar, prepare y rename devuelven nil y un error
 -- LSP (InvalidParams) con el motivo, no un nil a secas: Neovim muestra el
@@ -114,71 +113,6 @@ local function validate_javascript(new, old)
   return nil
 end
 
----Texto de un `identifier` VBScript y si está fundido. La inyección
----combinada puede fundir el final de un bloque <% %> con el comienzo de
----otro en un solo `identifier` que cruza el HTML y el JS del medio (ver
----"Varios bloques <%= %>" en el README): cruza líneas o su texto no es el
----de un nombre.
----@return string text
----@return boolean fused
-local function identifier_text(node, bufnr)
-  local text = vim.treesitter.get_node_text(node, bufnr)
-  local r0, _, r1 = node:range()
-  return text, r0 ~= r1 or not text:match('^[%a_][%w_]*$')
-end
-
----¿`text` contiene `name` (en minúsculas) como palabra entera, sin
----distinguir mayúsculas?
-local function has_word(text, name)
-  return text:lower():find('%f[%w_]' .. vim.pesc(name) .. '%f[^%w_]') ~= nil
-end
-
-local CODE_QUERY = '(code) @code'
-
----Fila (0-indexed) de un uso de `name` (en minúsculas) que un
----identificador fundido oculta, o nil. Solo cuentan los tramos de código
----que la inyección juntó en el nodo (los `code` de la plantilla, recortados
----a su rango): el HTML y el JS del medio, que pueden ser miles de líneas,
----no los lee VBScript. La plantilla ya está parseada: es el árbol raíz del
----buffer.
-local function hidden_use(node, bufnr, name)
-  local r0, _, sb = node:start()
-  local r1, _, eb = node:end_()
-  local root = vim.treesitter.get_parser(bufnr):trees()[1]:root()
-  local query = vim.treesitter.query.parse('aspclassic', CODE_QUERY)
-  for _, code in query:iter_captures(root, bufnr, r0, r1 + 1) do
-    local crow, _, csb = code:start()
-    local _, _, ceb = code:end_()
-    if ceb > sb and csb < eb then
-      local from = math.max(sb, csb)
-      local part = vim.treesitter.get_node_text(code, bufnr):sub(from - csb + 1, math.min(eb, ceb) - csb)
-      if has_word(part, name) then return from == sb and r0 or crow end
-    end
-  end
-  return nil
-end
-
----Rechazo por un uso de `name` oculto en un identificador fundido, en la
----fila `row`: references no lo ve, así que el rename no lo cambiaría o no
----sabría si choca con el nombre nuevo. Separado con espacios, el bloque ya
----no se funde.
-local function fused_message(row, name)
-  return ('en la línea %d, un `<%%= %%>` sin espacios queda fundido con otro bloque y oculta '
-    .. 'usos de `%s`: escribilo con espacios (`<%%= %s %%>`) antes de renombrar')
-    :format(row + 1, name, name)
-end
-
----Primer uso de `name` (en minúsculas) oculto en un identificador fundido
----del buffer (ver hidden_use): su fila, o nil.
-local function fused_use(bufnr, name)
-  for _, node in ipairs(require('asp.symbols').identifiers(bufnr)) do
-    local _, fused = identifier_text(node, bufnr)
-    local row = fused and hidden_use(node, bufnr, name)
-    if row then return row end
-  end
-  return nil
-end
-
 local function vbscript_context(bufnr, position, name)
   local symbols = require('asp.symbols')
   local wanted = name:lower()
@@ -204,10 +138,7 @@ local function vbscript_target(bufnr, position)
   local symbols = require('asp.symbols')
   local node = symbols.identifier_at(bufnr, position)
   if not node then return nil end
-  -- Un identificador fundido no es un nombre: la posición queda para las
-  -- capas siguientes.
-  local name, fused = identifier_text(node, bufnr)
-  if fused then return nil end
+  local name = vim.treesitter.get_node_text(node, bufnr)
   local range = node_range(node)
   if symbols.is_member(node, bufnr) then
     return fail(('`%s` es un miembro de objeto: el rename no se inicia desde un acceso con punto'):format(name))
@@ -219,9 +150,6 @@ local function vbscript_target(bufnr, position)
   if not symbols.definition(bufnr, position) then
     return fail(('`%s` no tiene una declaración en la página ni en sus includes'):format(name))
   end
-  -- Un uso dentro de un identificador fundido quedaría sin cambiar.
-  local row = fused_use(bufnr, name:lower())
-  if row then return fail(fused_message(row, name)) end
   local context = vbscript_context(bufnr, position, name)
   if context.class then
     local member = context.class.member
@@ -346,10 +274,10 @@ end
 ---
 ---Acá se miran las declaraciones del buffer y de su grafo de includes (la
 ---caché de asp.symbols.collect_file, que los diagnósticos llenan al abrir
----la página), los usos del buffer que no tienen declaración a la vista (un
----global implícito, sin Option Explicit) y los identificadores fundidos
----que podrían ocultar alguno. Los demás archivos que toca un rename de
----página se miran en vbscript_disk_clash. Devuelve el mensaje o nil.
+---la página) y los usos del buffer que no tienen declaración a la vista (un
+---global implícito, sin Option Explicit). Los demás archivos que toca un
+---rename de página se miran en vbscript_disk_clash. Devuelve el mensaje o
+---nil.
 local function vbscript_clash(bufnr, entries, decl, new_name)
   local new = new_name:lower()
   local same = vbscript_conflict(bufnr, entries, decl, new_name)
@@ -365,13 +293,11 @@ local function vbscript_clash(bufnr, entries, decl, new_name)
   end
   local file = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ':t')
   for _, node in ipairs(symbols.identifiers(bufnr)) do
-    local text, fused = identifier_text(node, bufnr)
-    if not fused and text:lower() == new and not symbols.is_member(node, bufnr) then
+    local text = vim.treesitter.get_node_text(node, bufnr)
+    if text:lower() == new and not symbols.is_member(node, bufnr) then
       return used_message(text, ('%s:%d'):format(file, node:start() + 1))
     end
   end
-  local row = fused_use(bufnr, new)
-  if row then return fused_message(row, new_name) end
   return nil
 end
 

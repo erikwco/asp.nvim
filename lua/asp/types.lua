@@ -84,18 +84,10 @@ end
 function M.scan(roots, source)
   local out = {}
   local query = vim.treesitter.query.parse('vbscript', '(set_statement) @set')
-  local normalize = require('asp.vbscript_scan').source
   for _, root in ipairs(roots) do
     for _, node in query:iter_captures(root, source) do
-      local row, col = node:start()
-      -- El árbol inyectado aún puede ver instrucciones dentro de un Rem. La
-      -- normalización es por línea: solo se mira la línea de cada Set.
-      local line = type(source) == 'number'
-        and vim.api.nvim_buf_get_lines(source, row, row + 1, false)[1]
-      if not line or line:sub(1, col) == normalize(line):sub(1, col) then
-        local entry = assignment(node, source)
-        if entry then out[#out + 1] = entry end
-      end
+      local entry = assignment(node, source)
+      if entry then out[#out + 1] = entry end
     end
   end
   table.sort(out, function(a, b)

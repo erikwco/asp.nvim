@@ -12,13 +12,13 @@ M.debounce_ms = 500
 local site_checks = {}
 local page_checks = {}
 
--- Familias y severidad por defecto. La de sintaxis es HINT porque la
--- gramática vbscript marca como error construcciones válidas comunes
--- (`x Is Nothing`, `Case 1, 2`, `Const A = 1, B = 2`, `.Campo` dentro de
--- un With): ver la sección de diagnósticos de :help asp.
+-- Familias y severidad por defecto. La de sintaxis fue HINT mientras la
+-- gramática vbscript marcaba construcciones válidas (`x Is Nothing`,
+-- `Case 1, 2`, `Const A = 1, B = 2`, `.Campo` en un With): ver la sección
+-- de diagnósticos de :help asp.
 local DEFAULTS = {
   includes = 'WARN',
-  syntax = 'HINT',
+  syntax = 'WARN',
   undeclared = 'WARN',
   unknown_call = 'WARN',
   missing_page = 'WARN',
@@ -79,17 +79,17 @@ function M.config()
   return out
 end
 
--- Regiones de código de la plantilla y la directiva de página.
+-- Bloques <% %> y <%= %> de la plantilla (las regiones de la capa
+-- vbscript, ver asp.ts.vbscript_blocks) y la directiva de página.
 local TEMPLATE_QUERY = [[
-(code) @code
+[(code_directive) (output_directive)] @code
 (page_directive) @page
 ]]
 
 ---Árbol VBScript del buffer sin tocar sus capas HTML ni JS: la capa top
----(aspclassic) del propio buffer da las regiones `(code)` y un parser
----string de vbscript parsea solo esas, en una región combinada como la
----injection. `parse(true)` sobre el buffer parsearía también HTML, JS, CSS
----y regex.
+---(aspclassic) del propio buffer da los bloques y un parser string de
+---vbscript parsea solo esos, en una región combinada como la injection.
+---`parse(true)` sobre el buffer parsearía también HTML, JS, CSS y regex.
 ---@param bufnr integer
 ---@param content string
 ---@return table|nil { root, code: integer[][], jscript: boolean, parser }
@@ -138,7 +138,6 @@ local function context(bufnr)
   local ctx = { bufnr = bufnr }
   ctx.lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   ctx.content = table.concat(ctx.lines, '\n')
-  ctx.vcontent = require('asp.vbscript_scan').source(ctx.content)
   return ctx
 end
 
@@ -152,7 +151,7 @@ end
 
 local function tree_of(ctx)
   if ctx.tree == nil then
-    local ok, tree = pcall(vbscript_tree, ctx.bufnr, ctx.vcontent)
+    local ok, tree = pcall(vbscript_tree, ctx.bufnr, ctx.content)
     ctx.tree = ok and tree or false
     if ctx.tree then ctx.errors = syntax_errors(ctx.tree.root) end
   end
@@ -285,7 +284,7 @@ local function vbscript_family(ctx, undeclared, unknown_call)
   if #g.unresolved > 0 then return {} end
 
   local symbols = require('asp.symbols')
-  local scan = require('asp.vbscript_scan').buffer({ tree.root }, ctx.vcontent, ctx.lines)
+  local scan = require('asp.vbscript_scan').buffer({ tree.root }, ctx.content, ctx.lines)
 
   local option_explicit, dynamic = scan.option_explicit, scan.dynamic
   local facts = {}
@@ -326,7 +325,7 @@ local function vbscript_family(ctx, undeclared, unknown_call)
       page[lower] = true
     end
   end
-  for _, e in ipairs(symbols.collect_roots({ tree.root }, ctx.vcontent)) do
+  for _, e in ipairs(symbols.collect_roots({ tree.root }, ctx.content)) do
     local lower = e.name:lower()
     declare(lower, e.scope_id, e.class_id)
     if e.kind == 5 then classes[lower] = true end
@@ -341,9 +340,9 @@ local function vbscript_family(ctx, undeclared, unknown_call)
       end
     end
   end
-  -- Un error de sintaxis puede tragarse una declaración (`Const A = 1,
-  -- B = 2`): todo nombre de una línea que toca un error cuenta como
-  -- declarado, para no reportar sus usos de más abajo. Por líneas y no por
+  -- Una declaración incompleta puede quedar dentro de un error de sintaxis.
+  -- Todo nombre de una línea que toca un error cuenta como declarado,
+  -- para no reportar sus usos de más abajo. Por líneas y no por
   -- el texto del nodo porque la forma del ERROR cambia con la versión de
   -- tree-sitter de cada Neovim.
   local error_rows = {}
@@ -360,7 +359,7 @@ local function vbscript_family(ctx, undeclared, unknown_call)
   -- Sin Option Explicit, `Set fp = GetRef("F")` declara fp y `Call fp(1)`
   -- es válido.
   if not option_explicit then
-    for _, assignment in ipairs(require('asp.types').scan({ tree.root }, ctx.vcontent)) do
+    for _, assignment in ipairs(require('asp.types').scan({ tree.root }, ctx.content)) do
       declare(assignment.name, assignment.scope_id, assignment.class_id)
     end
     for _, file in ipairs(g.order) do

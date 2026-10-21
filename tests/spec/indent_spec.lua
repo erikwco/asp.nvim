@@ -68,6 +68,33 @@ describe('indentación', function()
     end)
   end)
 
+  it('indenta por el árbol lo que la gramática leía como ERROR', function()
+    local want = {
+      '<%',
+      'Sub Foo',
+      '    Rem If no hay datos',
+      '    With rs',
+      '        .Campo = 1',
+      '        .MoveNext',
+      '    End With',
+      '    Select Case x',
+      '        Case 1, 2',
+      '            y = 1',
+      '        Case Else',
+      '    End Select',
+      '    If a Then',
+      '        If b Then x = 1',
+      '    Else',
+      '        x = 2',
+      '    End If',
+      'End Sub',
+      '%>',
+    }
+    page(vim.tbl_map(vim.trim, want))
+    vim.cmd('silent normal! gg=G')
+    assert.are.same(want, lines())
+  end)
+
   it('conserva el contenido de pre, incluso entre bloques ASP', function()
     local expected = {
       '<% If x Then %>',

@@ -1,0 +1,135 @@
+==================
+case con lista de numeros
+==================
+Select Case x
+  Case 1, 2, 3
+    y = 1
+End Select
+---
+
+(source_file
+  (select_case_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (case_clause
+      (expression
+        (primary_expression
+          (number_literal)))
+      (expression
+        (primary_expression
+          (number_literal)))
+      (expression
+        (primary_expression
+          (number_literal)))
+      (block
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (number_literal))))))))
+
+==================
+case con lista de strings y case else
+==================
+Select Case x
+  Case "a", "b"
+    y = 2
+  Case Else
+    y = 3
+End Select
+---
+
+(source_file
+  (select_case_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (case_clause
+      (expression
+        (primary_expression
+          (string_literal)))
+      (expression
+        (primary_expression
+          (string_literal)))
+      (block
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (number_literal))))))
+    (block
+      (let_statement
+        (expression
+          (primary_expression
+            (identifier)))
+        (expression
+          (primary_expression
+            (number_literal)))))))
+
+==================
+case else vacio
+==================
+Select Case x
+  Case 1
+    y = 1
+  Case Else
+End Select
+---
+
+(source_file
+  (select_case_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (case_clause
+      (expression
+        (primary_expression
+          (number_literal)))
+      (block
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (number_literal))))))))
+
+==================
+case vacio seguido de otro case
+==================
+Select Case x
+  Case 1, 2
+  Case 3
+    y = 3
+End Select
+---
+
+(source_file
+  (select_case_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (case_clause
+      (expression
+        (primary_expression
+          (number_literal)))
+      (expression
+        (primary_expression
+          (number_literal))))
+    (case_clause
+      (expression
+        (primary_expression
+          (number_literal)))
+      (block
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (number_literal))))))))

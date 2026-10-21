@@ -133,9 +133,55 @@ M.handlers['textDocument/signatureHelp'] = function(params)
   return ok and result or nil
 end
 
+-- Tokens semánticos (asp.semantic_tokens): nunca lanzan, y sin parser
+-- responden { data = {} }.
+M.handlers['textDocument/semanticTokens/full'] = function(params)
+  return require('asp.semantic_tokens').full(vim.uri_to_bufnr(params.textDocument.uri))
+end
+
+M.handlers['textDocument/semanticTokens/range'] = function(params)
+  return require('asp.semantic_tokens').range(vim.uri_to_bufnr(params.textDocument.uri), params.range)
+end
+
+---Capacidades del servidor. `setup({ semantic_tokens = false })` no
+---anuncia los tokens semánticos.
+---@return table
+function M.capabilities()
+  local caps = {
+    documentSymbolProvider = true,
+    definitionProvider = true,
+    referencesProvider = true,
+    documentHighlightProvider = true,
+    workspaceSymbolProvider = true,
+    hoverProvider = true,
+    completionProvider = { triggerCharacters = { '.' } },
+    signatureHelpProvider = {
+      triggerCharacters = { '(', ',' }, retriggerCharacters = { ',' },
+    },
+    renameProvider = { prepareProvider = true },
+    positionEncoding = 'utf-8',
+  }
+  if require('asp').options.semantic_tokens ~= false then
+    -- El servidor lee el buffer y no usa didOpen ni didChange, pero Neovim
+    -- pide los tokens a partir de ellos: 0.10 fija la versión del
+    -- documento en el didOpen (sin él no los pide hasta la primera
+    -- edición) y 0.12 los vuelve a pedir con cada didChange.
+    caps.textDocumentSync = { openClose = true, change = 2 }
+    caps.semanticTokensProvider = {
+      legend = require('asp.semantic_tokens').legend, full = true, range = true,
+    }
+  end
+  return caps
+end
+
 local function server(dispatchers)
   local closing = false
   local request_id = 0
+  local function close()
+    if closing then return end
+    closing = true
+    vim.schedule(function() dispatchers.on_exit(0, 0) end)
+  end
   return {
     request = function(method, params, callback, notify_reply_callback)
       request_id = request_id + 1
@@ -146,20 +192,7 @@ local function server(dispatchers)
       end
       if method == 'initialize' then
         respond(nil, {
-          capabilities = {
-            documentSymbolProvider = true,
-            definitionProvider = true,
-            referencesProvider = true,
-            documentHighlightProvider = true,
-            workspaceSymbolProvider = true,
-            hoverProvider = true,
-            completionProvider = { triggerCharacters = { '.' } },
-            signatureHelpProvider = {
-              triggerCharacters = { '(', ',' }, retriggerCharacters = { ',' },
-            },
-            renameProvider = { prepareProvider = true },
-            positionEncoding = 'utf-8',
-          },
+          capabilities = M.capabilities(),
           serverInfo = { name = 'asp-ls', version = '0.7.0' },
         })
       elseif method == 'shutdown' then
@@ -185,18 +218,18 @@ local function server(dispatchers)
       end
       return true, id
     end,
+    -- true: la notificación llegó (Neovim dispara LspNotify, que usan los
+    -- tokens semánticos). Su contenido no se usa.
     notify = function(method, _params)
       if method == 'exit' then
-        closing = true
+        close()
       end
-      return false
+      return not closing
     end,
     is_closing = function()
       return closing
     end,
-    terminate = function()
-      closing = true
-    end,
+    terminate = close,
   }
 end
 

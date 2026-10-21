@@ -105,7 +105,7 @@ require('asp').setup({opts})
       defecto. >lua
         require('asp').setup({
           diagnostics = {
-            syntax = 'HINT',       -- por defecto: HINT
+            syntax = 'WARN',       -- por defecto: WARN
             undeclared = 'WARN',   -- por defecto: WARN
             unknown_call = 'WARN', -- por defecto: WARN
             missing_page = 'WARN', -- por defecto: WARN
@@ -124,6 +124,12 @@ require('asp').setup({opts})
 <
       Llamá a setup antes de abrir las páginas: el ftplugin lee las
       opciones al cargar cada buffer.
+
+  semantic_tokens ~
+      `false` para que asp-ls no anuncie los tokens semánticos
+      (|asp-semantic-tokens|). Se lee al iniciar el servidor. >lua
+        require('asp').setup({ semantic_tokens = false })
+<
 ==============================================================================
 5. Funcionalidades                                       *asp-funcionalidades*
 
@@ -332,16 +338,16 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
 
       Una variable de clase declarada con Private se renombra desde su
       declaración o un uso suelto dentro de la clase. Cambia también sus
-      usos `Me.total`, sin distinguir mayúsculas, con espacios y
-      continuaciones `_`. Solo cambia el buffer dentro de esa clase;
+      usos `Me.total`, sin distinguir mayúsculas, con espacios después
+      del punto y continuaciones `_`. Solo cambia el buffer dentro de esa
+      clase;
       conserva los locales y las variables de página homónimos. Los
       métodos y las propiedades de clase se renombran a mano.
 
       No cambia los nombres dentro de strings de Eval, Execute o
       ExecuteGlobal, los armados en runtime, los strings de JS, las
       páginas fuera de la raíz del sitio que incluyen la librería.
-      Omite comentarios con apóstrofo. Puede renombrar nombres dentro de
-      Rem del buffer actual, como references; los Rem de disco se omiten.
+      Omite los comentarios, con apóstrofo o Rem.
 
       Neovim abre los archivos que cambia como buffers modificados sin
       guardar. Revisalos y guardalos con |:wa|: >vim
@@ -421,6 +427,44 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       de símbolos y diagnósticos, con caché por mtime y tamaño e
       invalidación al guardar. En caliente no se relee su contenido.
 
+  semanticTokens ~                                    *asp-semantic-tokens*
+      textDocument/semanticTokens/full y /range. Cada identificador de
+      VBScript o de JavaScript de cliente recibe el tipo de la
+      declaración a la que resuelve, con la resolución de definition y
+      references (local, página, miembro de clase, includes). Las
+      palabras clave, los literales, los strings, los comentarios y el
+      HTML los resalta tree-sitter: sobre ellos no hay tokens.
+
+      Tipos: `function` (Functions y Subs, nativas como Len, funciones
+      JS), `method` (Subs y Functions de una clase, métodos JS en su
+      declaración, Response.Write), `class` (también en New y RegExp),
+      `property` (miembros de una clase de VBScript, también con Me.x;
+      Response.Buffer), `variable`, `parameter` y `namespace` (Response,
+      Request, Server, Session, Application, Err).
+      Modificadores: `declaration` (el nombre en su declaración),
+      `readonly` (Const, constantes nativas, const de JS) y
+      `defaultLibrary` (nativos de VBScript e intrínsecos de ASP).
+
+      Neovim los aplica como @lsp.type.{tipo}.asp, @lsp.mod.{mod}.asp y
+      @lsp.typemod.{tipo}.{mod}.asp (|lsp-semantic-highlight|), con
+      prioridad sobre tree-sitter. Por ejemplo: >lua
+        vim.api.nvim_set_hl(0, '@lsp.mod.defaultLibrary.asp',
+          { link = '@function.builtin' })
+<
+      Un miembro de objeto solo lleva tipo si el objeto es Me o un
+      intrínseco; el `.Campo` de un With y las propiedades JS no.
+
+      En una página de 318 KB, la mediana de full con parsers y cachés
+      vacíos fue 53 ms en Neovim 0.12 y 80 ms en 0.10. En caliente,
+      5 y 8 ms; tras editar, 40 y 50 ms. Una de cinco corridas de 0.10
+      tardó 207 ms en frío. Método y rangos medidos en el repositorio:
+      tests/bench/semantic_tokens.md.
+      Para apagarlo en el buffer actual: >lua
+        local client = vim.lsp.get_clients({ name = 'asp-ls' })[1]
+        vim.lsp.semantic_tokens.stop(0, client.id)
+<
+      Para que el servidor no lo anuncie, |asp-setup| semantic_tokens.
+
   diagnósticos ~                                          *asp-diagnostics*
       Se publican con |vim.diagnostic| (fuente `asp-ls`) en cinco
       familias; el campo `code` de cada diagnóstico dice cuál:
@@ -476,18 +520,19 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       que se concatenan con `&` o `+`, las URLs absolutas, los nombres
       sin base (".asp") ni los literales en comentarios HTML o VBScript.
 
-      syntax es HINT por defecto porque la gramática marca como error
-      construcciones válidas: `x Is Nothing`, `Case 1, 2`,
-      `Const A = 1, B = 2`, un `Case Else` vacío y `.Campo` dentro de un
-      `With`. Las variables y llamadas dentro de un error no se revisan,
-      y los nombres de una línea con un error cuentan como declarados en
-      todo el buffer actual. En el código de los fixtures y de tres páginas
-      reales no hubo ningún falso positivo.
+      syntax fue HINT mientras la gramática marcaba como error
+      construcciones válidas (`x Is Nothing`, `Case 1, 2`,
+      `Const A = 1, B = 2`, un `Case Else` vacío, `.Campo` dentro de un
+      `With`, `Sub Foo` sin paréntesis, `error = 1`, comentarios Rem).
+      Desde 0.7 es WARN: en los fixtures, en tres páginas reales y en 46
+      fragmentos válidos, uno por construcción, no queda ningún falso
+      positivo.
 
-      La recuperación de nombres no se aplica a los includes ni cubre
-      siempre las declaraciones partidas con `_`. Un `Const A = 1, B = 2`
-      en un include puede hacer que un uso de B se marque como sin declarar.
-      `Case Is > 5` es sintaxis de VBA, no de VBScript.
+      Las variables y llamadas dentro de un error no se revisan, y los
+      nombres de una línea con un error cuentan como declarados en todo
+      el buffer actual. Esa recuperación no se aplica a los includes ni
+      cubre siempre las declaraciones partidas con `_`. `Case Is > 5` es
+      sintaxis de VBA, no de VBScript.
 
       Se actualizan al abrir la página, al guardarla y 500 ms después de
       la última edición (|TextChanged| e |InsertLeave|). Guardar un .asp,
@@ -585,8 +630,7 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       constantes de ADO sin adovbs.inc se marcan como sin declarar. La
       variable de un For cuenta como declarada aunque VBScript exige su
       Dim. Una página con <%@ Language="JScript" %> no se revisa como
-      VBScript. Los identificadores de bloques <%= %> sin espacios en su
-      código pueden fusionarse en la región combinada y no se revisan.
+      VBScript.
 
       missing_page detecta por texto, como la navegación: no reconoce
       comentarios de JavaScript y marca cualquier literal con esas
@@ -623,11 +667,10 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       corta el nombre en `\` en Unix. `C-]` y `vim.lsp.buf.definition()`
       sí normalizan `\` a `/`.
 
-      Varios `<%= %>` sin espacios en su código (`<%=a%><%=b%>`) se
-      fusionan por la injection combinada de VBScript (necesaria para
-      `<% If %>...<% End If %>` cruzando bloques); hover/definición/
-      referencias de identificadores no resuelven ahí. Los saltos de línea
-      en el HTML no los separan; agregá espacios en el código: `<%= a %>`.
+      Gramática de VBScript: un `.` con un blanco antes empieza un
+      `.Campo` de With, como en VBScript (`Response.Write .Campo`):
+      `obj .Campo` no es un acceso. `obj _` seguido de `.Campo` en la
+      línea siguiente sí lo es.
 
                                                               *asp-javascript*
 JavaScript de cliente ~
@@ -866,8 +909,6 @@ Límites:
   - El JavaScript de <script> lo indenta el indent de JavaScript de Vim,
     lento en páginas con mucho JS. Sus comentarios /* */ de varias
     líneas pueden cambiar de indentación entre dos pasadas de `gg=G`.
-  - La gramática no conoce Rem: un Rem con palabras clave es un ERROR y
-    su zona se indenta por texto. Con ' no pasa.
   - El respaldo por texto reconoce un If de bloque sólo si su línea
     termina en Then.
 
@@ -957,10 +998,21 @@ Plegado e indentación (|asp-folds|):
     del If de bloque, así que el primero ya no se traga el End If ajeno.
 
 Resaltado semántico y pulido:
-  - Resaltado semántico: (pendiente de completar al mergear el cambio
-    7a, feat/semantic-grammar).
-  - Deudas de gramática: (pendiente de completar al mergear el cambio
-    7a, feat/semantic-grammar).
+  - Resaltado semántico (|asp-semantic-tokens|): funciones, métodos,
+    clases, propiedades, variables, parámetros y objetos intrínsecos de
+    VBScript y JavaScript, con declaration, readonly y defaultLibrary.
+    `setup({ semantic_tokens = false })` no los anuncia.
+  - Deudas de gramática: la gramática vbscript acepta `x Is Nothing`,
+    `Case 1, 2`, un Case Else vacío, `Const A = 1, B = 2`, `.Campo`
+    dentro de un With, Sub,
+    Function y Property sin paréntesis, `Public Default`, `error = 1`,
+    comentarios Rem y un If de una línea con varias sentencias. El Else
+    de la línea siguiente ya no se lo lleva un If de una línea.
+  - Cada bloque <% %> entra a la capa vbscript con sus delimitadores: dos
+    `<%= %>` pegados ya no forman un solo identificador y un comentario
+    termina en el `%>` de su bloque. definition, references, hover,
+    rename y los diagnósticos ven esos usos.
+  - La severidad por defecto de syntax pasa de HINT a WARN.
   - :checkhealth asp comprueba el scanner del parser vbscript, que las
     queries compilen y si hay varias copias del parser, e informa la
     versión y los métodos de asp-ls y la severidad de cada familia de

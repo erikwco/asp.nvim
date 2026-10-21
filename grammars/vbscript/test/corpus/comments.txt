@@ -1,0 +1,132 @@
+==================
+rem al inicio de linea con palabras clave
+==================
+Rem If no hay datos
+x = 1
+---
+
+(source_file
+  (comment)
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal)))))
+
+==================
+rem tras dos puntos
+==================
+x = 1: Rem fin
+---
+
+(source_file
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal))))
+  (comment))
+
+==================
+rem como miembro y prefijo de identificadores
+==================
+y = obj.Rem
+Remember = 1
+---
+
+(source_file
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (member_expression
+        (primary_expression
+          (identifier))
+        (identifier))))
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal)))))
+
+==================
+comentario termina en el cierre del bloque
+==================
+<% x = 1 ' comentario %><% y = 2 %>
+---
+
+(source_file
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal))))
+  (comment)
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal)))))
+
+==================
+rem como miembro tras espacios y continuaciones
+==================
+x = obj. Rem
+x = obj. _
+ Rem
+With obj
+ . Rem = 1
+ . _
+ Rem = 2
+End With
+---
+
+(source_file
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (member_expression
+        (primary_expression
+          (identifier))
+        (identifier))))
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (member_expression
+        (primary_expression
+          (identifier))
+        (identifier))))
+  (with_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (block
+      (let_statement
+        (expression
+          (member_expression
+            (identifier)))
+        (expression
+          (primary_expression
+            (number_literal))))
+      (let_statement
+        (expression
+          (member_expression
+            (identifier)))
+        (expression
+          (primary_expression
+            (number_literal)))))))
