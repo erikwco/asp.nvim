@@ -7,6 +7,10 @@ M.ns = vim.api.nvim_create_namespace('asp_includes')
 -- Espera del refresco tras editar (TextChanged/InsertLeave), en ms.
 M.debounce_ms = 500
 
+-- La decisión de revisar Call/New sin Option Explicit depende también de
+-- quién incluye el buffer, aunque su propio grafo no cambie al guardar.
+local site_checks = {}
+
 -- Familias y severidad por defecto. La de sintaxis es HINT porque la
 -- gramática vbscript marca como error construcciones válidas comunes
 -- (`x Is Nothing`, `Case 1, 2`, `Const A = 1, B = 2`, `.Campo` dentro de
@@ -258,7 +262,9 @@ local function included_elsewhere(bufnr)
   local real = vim.uv.fs_realpath(path)
   if not real then return false end
   local includers = require('asp.site').index(root).includers[real]
-  return includers ~= nil and #includers > 0
+  local included = includers ~= nil and #includers > 0
+  site_checks[bufnr] = { root = root, path = real, included = included }
+  return included
 end
 
 ---Familias undeclared y unknown_call: usos de identificadores VBScript
@@ -500,6 +506,7 @@ M.last_errors = {}
 ---@param bufnr integer
 function M.refresh(bufnr)
   bufnr = bufnr == 0 and vim.api.nvim_get_current_buf() or bufnr
+  site_checks[bufnr] = nil
   if not vim.api.nvim_buf_is_valid(bufnr) or not vim.api.nvim_buf_is_loaded(bufnr) then return end
   local ok_cfg, cfg = pcall(M.config)
   if not ok_cfg then
@@ -578,8 +585,9 @@ end
 ---guardado de `path`: las que lo incluyen, directa o transitivamente (por
 ---su grafo de includes, con las directivas de su buffer), y las que tienen
 ---publicado un diagnóstico de includes o de páginas inexistentes, porque
----el archivo guardado puede ser el que faltaba. Las demás no dependen de
----él. Ninguna se refresca acá: el llamador decide cuándo.
+---el archivo guardado puede ser el que faltaba. También las librerías cuya
+---revisión de Call/New cambia al agregar o quitar un incluidor del sitio.
+---Ninguna se refresca acá: el llamador decide cuándo.
 ---@param path string
 ---@param except? integer
 ---@return integer[]
@@ -587,10 +595,16 @@ function M.affected(path, except)
   local names = { [vim.fs.normalize(path)] = true }
   local real = vim.uv.fs_realpath(path)
   if real then names[real] = true end
-  local out = {}
+  local out, sites = {}, {}
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
     if buf ~= except and vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].filetype == 'asp' then
       local hit = false
+      local check = site_checks[buf]
+      if check then
+        if not sites[check.root] then sites[check.root] = require('asp.site').index(check.root) end
+        local includers = sites[check.root].includers[check.path]
+        hit = check.included ~= (includers ~= nil and #includers > 0)
+      end
       for _, d in ipairs(vim.diagnostic.get(buf, { namespace = M.ns })) do
         if d.code == 'includes' or d.code == 'missing_page' then
           hit = true
@@ -627,6 +641,7 @@ function M.attach(bufnr)
     buffer = bufnr,
     callback = function()
       cancel(bufnr)
+      site_checks[bufnr] = nil
       pcall(vim.api.nvim_del_augroup_by_id, group)
     end,
   })

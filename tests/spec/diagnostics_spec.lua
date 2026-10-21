@@ -452,6 +452,36 @@ describe('diagnósticos de VBScript', function()
   end)
 
   describe('refresco', function()
+    it('guardar un incluidor actualiza Call sin Option Explicit en una librería abierta', function()
+      in_temp({
+        ['lib.inc'] = { '<% Call Externa() %>' },
+        ['p.asp'] = { '<% Sub Externa(): End Sub %>' },
+      }, function(dir)
+        assert.are.equal(1, #of(diags_at(dir .. '/lib.inc'), 'unknown_call'))
+        local lib = vim.api.nvim_get_current_buf()
+        diags_at(dir .. '/p.asp')
+        local page = vim.api.nvim_get_current_buf()
+        local ok, err = pcall(function()
+          vim.wait(20, function() return false end)
+          vim.api.nvim_buf_set_lines(page, 0, 0, false, { '<!--#include file="lib.inc" -->' })
+          vim.cmd('silent write')
+          assert.is_true(diagnostics().pending(lib))
+          assert.is_true(vim.wait(2000, function()
+            return #of(vim.diagnostic.get(lib), 'unknown_call') == 0
+          end))
+          vim.api.nvim_buf_set_lines(page, 0, 1, false, {})
+          vim.cmd('silent write')
+          assert.is_true(diagnostics().pending(lib))
+          assert.is_true(vim.wait(2000, function()
+            return #of(vim.diagnostic.get(lib), 'unknown_call') == 1
+          end))
+        end)
+        vim.api.nvim_buf_delete(lib, { force = true })
+        vim.api.nvim_buf_delete(page, { force = true })
+        assert(ok, err)
+      end)
+    end)
+
     it('ubica un include transitivo roto en la directiva de la página actual', function()
       local leaf = {}
       for _ = 1, 100 do leaf[#leaf + 1] = '' end
