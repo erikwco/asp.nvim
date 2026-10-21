@@ -106,8 +106,8 @@ local function walk(roots, source, query_text, text_of, want_uses, out)
         local rec = last
         if not (rec and rec.start == start) then
           local name = text_of(node)
-          -- Varios <%= %> en una línea se fusionan en la región combinada
-          -- y un "identificador" puede abarcar HTML: se descarta.
+          -- Un "identificador" que no es un nombre (ver asp.symbols.is_name)
+          -- se descarta.
           if not name:match('^[%a_][%w_]*$') then
             rec = nil
           else
