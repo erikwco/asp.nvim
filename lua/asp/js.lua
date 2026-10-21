@@ -1110,10 +1110,17 @@ local function visible(bufnr, position)
       end
     end
   end
-  local key = scope_at(data, ctx.byte)
+  -- El scope es el del nombre que se escribe, no el del cursor: al final
+  -- de una arrow sin llaves (`x => x|`) o de una función sin cerrar, el
+  -- cursor queda en el byte donde termina ese scope.
+  local byte = ctx.byte
+  while byte > ctx.range[3] and data.source:sub(byte, byte):match('[%w_$\128-\255]') do
+    byte = byte - 1
+  end
+  local key = scope_at(data, byte)
   while key do
     local stop = data.parameter_ends[key]
-    add(data.bindings[key], nil, stop and ctx.byte < stop)
+    add(data.bindings[key], nil, stop and byte < stop)
     add(data.fnames[key])
     key = data.parent[key]
   end
