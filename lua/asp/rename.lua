@@ -1,0 +1,659 @@
+-- Renombrar símbolos de VBScript y de JavaScript de cliente
+-- (textDocument/prepareRename y textDocument/rename). El rename es tan
+-- completo como las referencias de cada capa, y usa sus cachés sin
+-- lecturas propias: asp.symbols.references (alcance de sitio, sin los
+-- miembros de objeto) y asp.js.references (los <script>, manejadores
+-- `on*`, URLs `javascript:`, `.js` de <script src> e includes). Este
+-- módulo decide si la posición se puede renombrar, valida el nombre nuevo,
+-- acota los miembros de clase (ver vbscript_locations) y arma el
+-- WorkspaceEdit.
+--
+-- Un rename que dejaría el programa roto se rechaza: un nombre nuevo que
+-- ya existe en cualquier alcance (vbscript_clash, vbscript_disk_clash,
+-- javascript_locations), un miembro de clase homónimo en algún archivo a
+-- cambiar (vbscript_locations) o un `<%= %>` fundido que oculta un uso
+-- (hidden_use). Esos chequeos también salen de las cachés; solo leen un
+-- archivo que todavía no se cargó: un `.js` o include que references no
+-- recorrió (el rename de un local de JS) o uno del sitio cuyo texto
+-- menciona el nombre nuevo y que todavía no se parseó.
+--
+-- Cuando no se puede renombrar, prepare y rename devuelven nil y un error
+-- LSP (InvalidParams) con el motivo, no un nil a secas: Neovim muestra el
+-- mensaje del error ("Error on prepareRename: ...") y ante un nil solo
+-- dice "Nothing to rename".
+local M = {}
+
+local INVALID_PARAMS = -32602
+local INTERNAL_ERROR = -32603
+
+local function fail(message, code)
+  return nil, { code = code or INVALID_PARAMS, message = message }
+end
+
+local function node_range(node)
+  local r0, c0, r1, c1 = node:range()
+  return { start = { line = r0, character = c0 }, ['end'] = { line = r1, character = c1 } }
+end
+
+local function entry_range(r)
+  return { start = { line = r[1], character = r[2] }, ['end'] = { line = r[3], character = r[4] } }
+end
+
+-- ¿`pos` cae dentro de `range` (límites inclusivos)?
+local function contains(range, pos)
+  local s, e = range.start, range['end']
+  if pos.line < s.line or (pos.line == s.line and pos.character < s.character) then return false end
+  if pos.line > e.line or (pos.line == e.line and pos.character > e.character) then return false end
+  return true
+end
+
+local function text_at(bufnr, range)
+  local line = vim.api.nvim_buf_get_lines(bufnr, range.start.line, range.start.line + 1, true)[1]
+  return line:sub(range.start.character + 1, range['end'].character)
+end
+
+-- Palabra de `chars` (una clase de Lua) que contiene la columna `col`
+-- (0-indexed) de la línea: solo para nombrar lo que no se renombra.
+local function word_at(bufnr, position, chars)
+  local line = vim.api.nvim_buf_get_lines(bufnr, position.line, position.line + 1, true)[1]
+  local s, e = position.character + 1, position.character
+  while s > 1 and line:sub(s - 1, s - 1):match(chars) do s = s - 1 end
+  while e < #line and line:sub(e + 1, e + 1):match(chars) do e = e + 1 end
+  return line:sub(s, e)
+end
+
+local VBSCRIPT_GROUPS = {
+  keywords = 'una palabra clave de VBScript',
+  functions = 'una función nativa de VBScript',
+  constants = 'una constante nativa de VBScript',
+  objects = 'un objeto nativo de VBScript',
+}
+
+---Por qué `name` no puede ser el nombre de un símbolo del usuario en
+---VBScript (sin distinguir mayúsculas), o nil.
+local function vbscript_reserved(name)
+  if require('asp.intrinsics').object(name) then return 'un objeto intrínseco de ASP' end
+  local builtin = require('asp.vbscript_builtins').lookup(name)
+  return builtin and VBSCRIPT_GROUPS[builtin.group]
+end
+
+-- Palabras reservadas de ECMAScript (también las de modo estricto y las
+-- futuras) y los literales: ninguna puede ser el nombre de un binding.
+local JS_RESERVED = {}
+for word in ([[
+  await break case catch class const continue debugger default delete do
+  else enum export extends false finally for function if implements import
+  in instanceof interface let new null package private protected public
+  return static super switch this throw true try typeof var void while
+  with yield
+]]):gmatch('%S+') do
+  JS_RESERVED[word] = true
+end
+
+local function validate_vbscript(new, old)
+  if new == old then return 'el nombre nuevo es igual al actual' end
+  if not new:match('^[A-Za-z][A-Za-z0-9_]*$') then
+    return ('`%s` no es un identificador de VBScript: una letra seguida de letras, dígitos o _'):format(new)
+  end
+  if #new > 255 then return 'VBScript admite nombres de hasta 255 caracteres' end
+  local reason = vbscript_reserved(new)
+  if reason then return ('`%s` es %s'):format(new, reason) end
+  return nil
+end
+
+local function validate_javascript(new, old)
+  if new == old then return 'el nombre nuevo es igual al actual' end
+  if not new:match('^[A-Za-z_$][A-Za-z0-9_$]*$') then
+    return ('`%s` no es un identificador de JavaScript: una letra, _ o $ seguida de letras, dígitos, _ o $')
+      :format(new)
+  end
+  if JS_RESERVED[new] then return ('`%s` es una palabra reservada de JavaScript'):format(new) end
+  if new == 'eval' or new == 'arguments' then
+    return ('`%s` no puede declarar un nombre en JavaScript estricto'):format(new)
+  end
+  return nil
+end
+
+---Texto de un `identifier` VBScript y si está fundido. La inyección
+---combinada puede fundir el final de un bloque <% %> con el comienzo de
+---otro en un solo `identifier` que cruza el HTML y el JS del medio (ver
+---"Varios bloques <%= %>" en el README): cruza líneas o su texto no es el
+---de un nombre.
+---@return string text
+---@return boolean fused
+local function identifier_text(node, bufnr)
+  local text = vim.treesitter.get_node_text(node, bufnr)
+  local r0, _, r1 = node:range()
+  return text, r0 ~= r1 or not text:match('^[%a_][%w_]*$')
+end
+
+---¿`text` contiene `name` (en minúsculas) como palabra entera, sin
+---distinguir mayúsculas?
+local function has_word(text, name)
+  return text:lower():find('%f[%w_]' .. vim.pesc(name) .. '%f[^%w_]') ~= nil
+end
+
+local CODE_QUERY = '(code) @code'
+
+---Fila (0-indexed) de un uso de `name` (en minúsculas) que un
+---identificador fundido oculta, o nil. Solo cuentan los tramos de código
+---que la inyección juntó en el nodo (los `code` de la plantilla, recortados
+---a su rango): el HTML y el JS del medio, que pueden ser miles de líneas,
+---no los lee VBScript. La plantilla ya está parseada: es el árbol raíz del
+---buffer.
+local function hidden_use(node, bufnr, name)
+  local r0, _, sb = node:start()
+  local r1, _, eb = node:end_()
+  local root = vim.treesitter.get_parser(bufnr):trees()[1]:root()
+  local query = vim.treesitter.query.parse('aspclassic', CODE_QUERY)
+  for _, code in query:iter_captures(root, bufnr, r0, r1 + 1) do
+    local crow, _, csb = code:start()
+    local _, _, ceb = code:end_()
+    if ceb > sb and csb < eb then
+      local from = math.max(sb, csb)
+      local part = vim.treesitter.get_node_text(code, bufnr):sub(from - csb + 1, math.min(eb, ceb) - csb)
+      if has_word(part, name) then return from == sb and r0 or crow end
+    end
+  end
+  return nil
+end
+
+---Rechazo por un uso de `name` oculto en un identificador fundido, en la
+---fila `row`: references no lo ve, así que el rename no lo cambiaría o no
+---sabría si choca con el nombre nuevo. Separado con espacios, el bloque ya
+---no se funde.
+local function fused_message(row, name)
+  return ('en la línea %d, un `<%%= %%>` sin espacios queda fundido con otro bloque y oculta '
+    .. 'usos de `%s`: escribilo con espacios (`<%%= %s %%>`) antes de renombrar')
+    :format(row + 1, name, name)
+end
+
+---Primer uso de `name` (en minúsculas) oculto en un identificador fundido
+---del buffer (ver hidden_use): su fila, o nil.
+local function fused_use(bufnr, name)
+  for _, node in ipairs(require('asp.symbols').identifiers(bufnr)) do
+    local _, fused = identifier_text(node, bufnr)
+    local row = fused and hidden_use(node, bufnr, name)
+    if row then return row end
+  end
+  return nil
+end
+
+local function vbscript_context(bufnr, position, name)
+  local symbols = require('asp.symbols')
+  local wanted = name:lower()
+  local refs, binding = symbols.references(bufnr, position, { buffer_only = true, skip_members = true })
+  local context = { refs = refs, binding = binding, entries = symbols.collect(bufnr), classes = {} }
+  local members = {}
+  for _, e in ipairs(context.entries) do
+    if e.class_id and not e.scope_id and e.name:lower() == wanted then members[e.class_id] = e end
+  end
+  for _, e in ipairs(context.entries) do
+    if members[e.decl_id] then
+      local class = { entry = e, member = members[e.decl_id], range = entry_range(e.range) }
+      table.insert(context.classes, class)
+      if not (binding and binding.scope_id) and contains(class.range, position) then context.class = class end
+    end
+  end
+  return context
+end
+
+---Identificador VBScript bajo el cursor que se puede renombrar. Devuelve
+---nil sin error si la posición no es un identificador VBScript.
+local function vbscript_target(bufnr, position)
+  local symbols = require('asp.symbols')
+  local node = symbols.identifier_at(bufnr, position)
+  if not node then return nil end
+  -- Un identificador fundido no es un nombre: la posición queda para las
+  -- capas siguientes.
+  local name, fused = identifier_text(node, bufnr)
+  if fused then return nil end
+  local range = node_range(node)
+  if symbols.is_member(node, bufnr) then
+    return fail(('`%s` es un miembro de objeto: el rename no se inicia desde un acceso con punto'):format(name))
+  end
+  local reason = vbscript_reserved(name)
+  if reason then return fail(('`%s` es %s: no se renombra'):format(name, reason)) end
+  -- Sin declaración resoluble (un nombre sin Dim, sin Option Explicit) no
+  -- hay símbolo que renombrar: references lo buscaría solo por su texto.
+  if not symbols.definition(bufnr, position) then
+    return fail(('`%s` no tiene una declaración en la página ni en sus includes'):format(name))
+  end
+  -- Un uso dentro de un identificador fundido quedaría sin cambiar.
+  local row = fused_use(bufnr, name:lower())
+  if row then return fail(fused_message(row, name)) end
+  local context = vbscript_context(bufnr, position, name)
+  if context.class then
+    local member = context.class.member
+    local declared = symbols.identifier_at(bufnr, { line = member.selection[1], character = member.selection[2] })
+    local private = declared:parent():type() == 'dim_statement'
+      and member.declaration:lower():match('^private%f[^%w_]')
+    if not private then
+      return fail(('asp-ls solo renombra variables de clase declaradas con Private: no puede resolver '
+        .. 'los usos `obj.%s` desde fuera de la clase; renombrá `%s` a mano'):format(name, name))
+    end
+  end
+  return { lang = 'vbscript', name = name, range = range, context = context }
+end
+
+---Identificador JS bajo el cursor que se puede renombrar. Devuelve nil
+---sin error si la posición no es JavaScript.
+local function javascript_target(bufnr, position)
+  local js = require('asp.js')
+  -- buffer_only: alcanza para ubicar el identificador sin cargar los
+  -- archivos externos. {} es una propiedad (`obj.metodo`).
+  local refs = js.references(bufnr, position, { buffer_only = true })
+  if refs == nil then return nil end
+  if #refs == 0 then
+    local name = word_at(bufnr, position, '[%w_$]')
+    return fail(('`%s` es una propiedad de objeto: asp-ls no renombra propiedades'):format(name))
+  end
+  local uri = vim.uri_from_bufnr(bufnr)
+  local range
+  for _, ref in ipairs(refs) do
+    if ref.uri == uri and contains(ref.range, position) then range = ref.range end
+  end
+  if not range then return nil end
+  local name = text_at(bufnr, range)
+  if not js.definition(bufnr, position) then
+    return fail(('`%s` no tiene una declaración en la página, sus .js ni sus includes'):format(name))
+  end
+  return { lang = 'javascript', name = name, range = range }
+end
+
+---Símbolo renombrable bajo `position`: {lang, name, range} o nil y
+---el error que explica por qué no.
+local function target(bufnr, position)
+  if vim.api.nvim_buf_get_name(bufnr) == '' then
+    return fail('el buffer no tiene nombre: guardalo antes de renombrar')
+  end
+  local t, err = vbscript_target(bufnr, position)
+  if t or err then return t, err end
+  t, err = javascript_target(bufnr, position)
+  if t or err then return t, err end
+  if require('asp.pages').definition(bufnr, position) then
+    return fail('es un literal de página: asp-ls no renombra archivos')
+  end
+  return fail('no hay un símbolo de VBScript o JavaScript para renombrar en esta posición')
+end
+
+local function same_range(a, b)
+  return a.start.line == b.start.line and a.start.character == b.start.character
+    and a['end'].line == b['end'].line and a['end'].character == b['end'].character
+end
+
+local function where(bufnr, e)
+  return ('%s:%d'):format(vim.fn.fnamemodify(e.file or vim.api.nvim_buf_get_name(bufnr), ':t'),
+    e.selection[1] + 1)
+end
+
+local function where_location(loc)
+  return ('%s:%d'):format(vim.fn.fnamemodify(vim.uri_to_fname(loc.uri), ':t'), loc.range.start.line + 1)
+end
+
+local TAKEN = 'un nombre que ya existe puede juntar dos símbolos en uno o tapar a uno de ellos; elegí otro'
+
+local function declared_message(name, place)
+  return ('ya hay una declaración `%s` en %s: %s'):format(name, place, TAKEN)
+end
+
+local function used_message(name, place)
+  return ('`%s` ya se usa en %s: %s'):format(name, place, TAKEN)
+end
+
+---Primera declaración de `entries` llamada `new` (en minúsculas), de
+---cualquier alcance.
+local function named(entries, new)
+  for _, e in ipairs(entries) do
+    if e.name:lower() == new then return e end
+  end
+  return nil
+end
+
+---Una declaración con el nombre nuevo en el mismo alcance juntaría dos
+---símbolos en uno: VBScript lo rechaza ("Name redefined") o, entre
+---archivos, en runtime gana la última. Se mira el buffer y, para un
+---símbolo de página, las declaraciones de página de su grafo de includes.
+---Solo decide el mensaje: vbscript_clash rechaza también los demás
+---alcances.
+local function vbscript_conflict(bufnr, entries, decl, new_name)
+  local new = new_name:lower()
+  local function same_scope(e)
+    if decl and decl.scope_id then return e.scope_id == decl.scope_id end
+    if decl and decl.class_id then return e.class_id == decl.class_id and not e.scope_id end
+    return not e.scope_id and not e.class_id
+  end
+  for _, e in ipairs(entries) do
+    if e.name:lower() == new and same_scope(e) then return e end
+  end
+  if decl and (decl.scope_id or decl.class_id) then return nil end
+  local symbols = require('asp.symbols')
+  for _, file in ipairs(require('asp.includes').buffer_graph(bufnr).order) do
+    for _, e in ipairs(symbols.collect_file(file)) do
+      if e.name:lower() == new and not e.scope_id and not e.class_id then return e end
+    end
+  end
+  return nil
+end
+
+---El nombre nuevo no puede existir ya, en ningún alcance, donde lo vería
+---el rename. En el mismo alcance juntaría dos símbolos en uno; en otro
+---puede tapar al renombrado: con un parámetro `dato` en una Sub que usa el
+---`total` de página, renombrar `total` a `dato` hace que la Sub lea su
+---parámetro. Es deliberadamente conservador: también rechaza un nombre que
+---solo coincide con un local de otra Sub, y el mensaje dice dónde está
+---para que se elija otro.
+---
+---Acá se miran las declaraciones del buffer y de su grafo de includes (la
+---caché de asp.symbols.collect_file, que los diagnósticos llenan al abrir
+---la página), los usos del buffer que no tienen declaración a la vista (un
+---global implícito, sin Option Explicit) y los identificadores fundidos
+---que podrían ocultar alguno. Los demás archivos que toca un rename de
+---página se miran en vbscript_disk_clash. Devuelve el mensaje o nil.
+local function vbscript_clash(bufnr, entries, decl, new_name)
+  local new = new_name:lower()
+  local same = vbscript_conflict(bufnr, entries, decl, new_name)
+  if same then
+    return ('ya hay una declaración `%s` en el mismo alcance (%s)'):format(same.name, where(bufnr, same))
+  end
+  local e = named(entries, new)
+  if e then return declared_message(e.name, where(bufnr, e)) end
+  local symbols = require('asp.symbols')
+  for _, file in ipairs(require('asp.includes').buffer_graph(bufnr).order) do
+    e = named(symbols.collect_file(file), new)
+    if e then return declared_message(e.name, where(bufnr, e)) end
+  end
+  local file = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ':t')
+  for _, node in ipairs(symbols.identifiers(bufnr)) do
+    local text, fused = identifier_text(node, bufnr)
+    if not fused and text:lower() == new and not symbols.is_member(node, bufnr) then
+      return used_message(text, ('%s:%d'):format(file, node:start() + 1))
+    end
+  end
+  local row = fused_use(bufnr, new)
+  if row then return fused_message(row, new_name) end
+  return nil
+end
+
+---Lo que vbscript_clash no ve de un rename de página: las declaraciones,
+---de cualquier alcance, de los archivos que cambia (`edited`), y los usos
+---de página del nombre nuevo en todos los que recorrió references
+---(`files`: el grafo y las páginas del sitio que incluyen la librería). Un
+---archivo que el rename no cambia también cuenta: si declara o usa a nivel
+---de página el nombre nuevo, después del rename sería el mismo global que
+---el renombrado. Sale de las cachés que references acaba de llenar: solo
+---lee un archivo cuyo texto menciona el nombre nuevo y que todavía no se
+---parseó. Devuelve el mensaje o nil.
+local function vbscript_disk_clash(bufnr, new_name, edited, files)
+  local symbols = require('asp.symbols')
+  local new = new_name:lower()
+  for _, path in ipairs(edited) do
+    local e = named(symbols.collect_file(path), new)
+    if e then return declared_message(e.name, where(bufnr, e)) end
+  end
+  for _, file in ipairs(files or {}) do
+    local uses = symbols.page_uses(file, new)
+    if uses[1] then
+      for _, e in ipairs(symbols.collect_file(file)) do
+        if e.name:lower() == new and not e.scope_id then return declared_message(e.name, where(bufnr, e)) end
+      end
+      return used_message(new_name, where_location(uses[1]))
+    end
+  end
+  return nil
+end
+
+---Rechazo de un rename de página que tocaría un miembro de clase homónimo
+---(ver vbscript_locations). `class` es la entry de la clase, si se halló.
+local function class_message(bufnr, class, member, name)
+  local owner = class and ('la clase `%s` (%s)'):format(class.name, where(bufnr, class))
+    or ('una clase (%s)'):format(where(bufnr, member))
+  return ('%s declara un miembro `%s` que asp-ls no separa del nombre de página: renombrá primero '
+    .. 'el miembro; las variables Private se renombran desde adentro de la clase y los miembros públicos, a mano')
+    :format(owner, name)
+end
+
+local function self_member(node, bufnr, name)
+  local parent = node:parent()
+  if not parent or parent:type() ~= 'member_expression' then return false end
+  local text = vim.treesitter.get_node_text(parent, bufnr):lower():gsub('_[ \t]*\r?\n', '')
+  return text:match('^me[ \t]*%.[ \t]*' .. vim.pesc(name) .. '$') ~= nil
+end
+
+---Ubicaciones VBScript a renombrar: references con alcance de sitio, sin
+---miembros de objeto salvo los Me.x de una variable Private.
+---
+---Una variable Private se renombra dentro de su clase, incluidos sus
+---usos Me.x aunque un local homónimo oculte el nombre suelto.
+---references no separa esos miembros de un nombre de página homónimo
+---(ver "Heredado del resolver" en la spec): un rename de
+---página que tocaría una de esas clases se rechaza, en el buffer o en
+---cualquier otro archivo que cambiaría, para no renombrar la declaración
+---del miembro y dejar sus `Me.x` sin cambiar.
+local function vbscript_locations(bufnr, position, t, new_name)
+  local symbols = require('asp.symbols')
+  local wanted = t.name:lower()
+  local context = t.context
+  local refs, binding, entries = context.refs, context.binding, context.entries
+  local classes, class = context.classes, context.class
+
+  -- Un cambio solo de mayúsculas no es otro nombre en VBScript.
+  local renamed = new_name:lower() ~= wanted
+  if renamed then
+    local decl = class and { class_id = class.entry.decl_id } or (binding and binding.scope_id and binding) or nil
+    local clash = vbscript_clash(bufnr, entries, decl, new_name)
+    if clash then return fail(clash) end
+  end
+  if class then
+    local locations = vim.tbl_filter(function(ref) return contains(class.range, ref.range.start) end, refs)
+    for _, node in ipairs(symbols.identifiers(bufnr)) do
+      local range = node_range(node)
+      if contains(class.range, range.start) and vim.treesitter.get_node_text(node, bufnr):lower() == wanted
+        and self_member(node, bufnr, wanted) then
+        table.insert(locations, { uri = vim.uri_from_bufnr(bufnr), range = range })
+      end
+    end
+    return locations
+  end
+  -- Un local no sale del buffer: references ya devolvió todo.
+  if binding and binding.scope_id then return refs end
+  local all, _, files = symbols.references(bufnr, position, { skip_members = true })
+  local own = vim.uri_from_bufnr(bufnr)
+  local edited, seen = {}, {}
+  for _, ref in ipairs(all) do
+    if ref.uri == own then
+      for _, c in ipairs(classes) do
+        if contains(c.range, ref.range.start) then return fail(class_message(bufnr, c.entry, nil, t.name)) end
+      end
+    elseif not seen[ref.uri] then
+      seen[ref.uri] = true
+      table.insert(edited, vim.uri_to_fname(ref.uri))
+    end
+  end
+  -- En otro archivo, la declaración de un miembro homónimo siempre es una
+  -- de las ubicaciones (el cuerpo de una clase no es un scope): basta con
+  -- que el archivo cambie y la declare. collect_file sale de la caché que
+  -- references llenó al parsear el archivo.
+  for _, path in ipairs(edited) do
+    local file_entries = symbols.collect_file(path)
+    for _, e in ipairs(file_entries) do
+      if e.class_id and not e.scope_id and e.name:lower() == wanted then
+        local owner
+        for _, c in ipairs(file_entries) do
+          if c.decl_id == e.class_id then owner = c end
+        end
+        return fail(class_message(bufnr, owner, e, t.name))
+      end
+    end
+  end
+  if renamed then
+    local clash = vbscript_disk_clash(bufnr, new_name, edited, files)
+    if clash then return fail(clash) end
+  end
+  return all
+end
+
+---Las declaraciones JS del buffer no se pueden juntar con otra del mismo
+---alcance: se mira el scope de la declaración renombrada (o el global si
+---está en un archivo externo). Solo decide el mensaje: javascript_locations
+---rechaza también los demás alcances.
+local function javascript_conflict(bufnr, position, new_name)
+  local js = require('asp.js')
+  local def = js.definition(bufnr, position)
+  local decls = js.collect(bufnr) or {}
+  local decl
+  if def and def.uri == vim.uri_from_bufnr(bufnr) then
+    for _, e in ipairs(decls) do
+      if not e.member and same_range(node_range(e.node), def.range) then decl = e end
+    end
+  end
+  for _, e in ipairs(decls) do
+    if e.name == new_name and not e.member then
+      local same
+      if decl and decl.scope then
+        same = e.scope ~= nil and e.scope:equal(decl.scope)
+      else
+        same = e.global
+      end
+      if same then return e end
+    end
+  end
+  return nil
+end
+
+---Como en VBScript (ver vbscript_clash), el nombre nuevo no puede existir
+---ya en ningún scope del buffer ni de sus `.js` e includes: ni declarado
+---(`function f(dato) { return total; }` leería su parámetro si `total`
+---pasara a llamarse `dato`) ni usado sin declaración (`document`, `$` de
+---una librería, un global implícito), que después del rename sería el
+---renombrado.
+local function javascript_locations(bufnr, position, _, new_name)
+  local js = require('asp.js')
+  local clash = javascript_conflict(bufnr, position, new_name)
+  if clash then
+    return fail(('ya hay una declaración `%s` en el mismo alcance (%s:%d)'):format(new_name,
+      vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ':t'), clash.node:range() + 1))
+  end
+  local sites = js.occurrences(bufnr, new_name)
+  if not sites then
+    return fail(('asp-ls no pudo comprobar si `%s` ya existe'):format(new_name), INTERNAL_ERROR)
+  end
+  local declared, used
+  for _, loc in ipairs(sites) do
+    if loc.declared then declared = declared or loc else used = used or loc end
+  end
+  if declared then return fail(declared_message(new_name, where_location(declared))) end
+  if used then return fail(used_message(new_name, where_location(used))) end
+  -- Solo las ubicaciones: el segundo valor de references es el binding.
+  return (js.references(bufnr, position, { rename_to = new_name }))
+end
+
+---WorkspaceEdit con un TextEdit por ubicación, sin rangos repetidos y en
+---orden descendente dentro de cada archivo. Las ubicaciones de un archivo
+---abierto en otro buffer usan la uri de ese buffer; si tiene cambios sin
+---guardar el rename se rechaza, porque sus posiciones salieron del disco.
+local function workspace_edit(bufnr, locations, new_name)
+  local own_uri = vim.uri_from_bufnr(bufnr)
+  local function real(path)
+    return vim.uv.fs_realpath(path) or vim.fs.normalize(path)
+  end
+  local open = {}
+  for _, b in ipairs(vim.api.nvim_list_bufs()) do
+    local name = vim.api.nvim_buf_get_name(b)
+    if name ~= '' and vim.api.nvim_buf_is_loaded(b) then open[real(name)] = b end
+  end
+  local canonical = { [own_uri] = own_uri }
+  local function uri_of(uri)
+    if canonical[uri] then return canonical[uri] end
+    local b = open[real(vim.uri_to_fname(uri))]
+    if b and b ~= bufnr and vim.bo[b].modified then
+      return nil, b
+    end
+    canonical[uri] = b and vim.uri_from_bufnr(b) or uri
+    return canonical[uri]
+  end
+
+  local changes, seen = {}, {}
+  for _, loc in ipairs(locations) do
+    local uri, dirty = uri_of(loc.uri)
+    if not uri then
+      return fail(('%s tiene cambios sin guardar: guardalo antes de renombrar')
+        :format(vim.fn.fnamemodify(vim.api.nvim_buf_get_name(dirty), ':~:.')))
+    end
+    local r = loc.range
+    local key = ('%s:%d:%d:%d:%d'):format(uri, r.start.line, r.start.character, r['end'].line, r['end'].character)
+    if not seen[key] then
+      seen[key] = true
+      changes[uri] = changes[uri] or {}
+      table.insert(changes[uri], { range = r, newText = loc.newText or new_name })
+    end
+  end
+  for _, edits in pairs(changes) do
+    table.sort(edits, function(a, b)
+      if a.range.start.line ~= b.range.start.line then return a.range.start.line > b.range.start.line end
+      return a.range.start.character > b.range.start.character
+    end)
+  end
+  return { changes = changes }
+end
+
+-- Ningún error escapa: un fallo inesperado vuelve como error LSP interno.
+local function protected(fn, ...)
+  local ok, result, err = pcall(fn, ...)
+  if ok then return result, err end
+  return fail('asp-ls no pudo renombrar: ' .. tostring(result), INTERNAL_ERROR)
+end
+
+---Rango y texto del símbolo bajo el cursor si se puede renombrar.
+---@param bufnr integer
+---@param position table {line, character} (utf-8, 0-indexed como LSP)
+---@return table|nil {range, placeholder}
+---@return table|nil err {code, message}
+function M.prepare(bufnr, position)
+  return protected(function()
+    bufnr = bufnr == 0 and vim.api.nvim_get_current_buf() or bufnr
+    local t, err = target(bufnr, position)
+    if not t then return nil, err end
+    return { range = t.range, placeholder = t.name }
+  end)
+end
+
+---WorkspaceEdit que renombra el símbolo bajo el cursor a `new_name`.
+---@param bufnr integer
+---@param position table {line, character}
+---@param new_name string
+---@return table|nil WorkspaceEdit {changes}
+---@return table|nil err {code, message}
+function M.rename(bufnr, position, new_name)
+  return protected(function()
+    bufnr = bufnr == 0 and vim.api.nvim_get_current_buf() or bufnr
+    local t, err = target(bufnr, position)
+    if not t then return nil, err end
+    if type(new_name) ~= 'string' then return fail('falta el nombre nuevo') end
+    local validate = t.lang == 'vbscript' and validate_vbscript or validate_javascript
+    local problem = validate(new_name, t.name)
+    if problem then return fail(problem) end
+    local locate = t.lang == 'vbscript' and vbscript_locations or javascript_locations
+    local locations, lerr = locate(bufnr, position, t, new_name)
+    if lerr then return nil, lerr end
+    if not locations or #locations == 0 then
+      return fail(('no se encontraron referencias de `%s` para renombrar'):format(t.name))
+    end
+    return workspace_edit(bufnr, locations, new_name)
+  end)
+end
+
+---Buffer de una uri de los params, o nil y el error si es la de un buffer
+---sin nombre: `file://` a secas (ruta `/`) resolvería a otro buffer.
+---@param uri string
+---@return integer|nil bufnr
+---@return table|nil err
+function M.buffer_for(uri)
+  local fname = vim.uri_to_fname(uri)
+  if fname == '' or fname == '/' then
+    return fail('el buffer no tiene nombre: guardalo antes de renombrar')
+  end
+  return vim.uri_to_bufnr(uri)
+end
+
+return M

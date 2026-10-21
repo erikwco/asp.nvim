@@ -68,7 +68,9 @@ local CONTENT_QUERY = [[ (content) @content ]]
 --  * @scope: los nodos que abren un scope. let/const se tratan como var
 --    (function-scoped, no block-scoped): límite documentado.
 --  * @id: los identificadores resolubles. shorthand_property_identifier es
---    la `x` de `{ x }`: una lectura de la variable `x`, no una propiedad.
+--    la `x` de `{ x }`: una lectura de la variable `x`, no una propiedad;
+--    shorthand_property_identifier_pattern, la de un patrón (`{ x } = o`,
+--    `function f({ x })`): el binding `x`.
 --  * @method: los nombres de método son property_identifier: se capturan
 --    aparte sólo para el outline (documentSymbol); no son resolubles como
 --    identificador suelto (se usan como `obj.metodo`, resolución por
@@ -84,6 +86,7 @@ local JS_QUERY = [[
 ] @scope
 (identifier) @id
 (shorthand_property_identifier) @id
+(shorthand_property_identifier_pattern) @id
 (method_definition name: (property_identifier) @method)
 ]]
 
@@ -91,6 +94,26 @@ local JS_QUERY = [[
 local IDENTIFIERS = {
   identifier = true,
   shorthand_property_identifier = true,
+  shorthand_property_identifier_pattern = true,
+}
+
+-- Abreviados: la clave del objeto es el propio nombre (ver references).
+local SHORTHANDS = {
+  shorthand_property_identifier = true,
+  shorthand_property_identifier_pattern = true,
+}
+
+-- Patrones que envuelven un nombre declarado: `a = 1`, `...a`, `[a]`,
+-- `{a}`, `{k: a}`, `{a = 1}`, anidados. El valor es el campo por el que
+-- se baja al nombre (false: cualquier hijo); por el otro lado de un
+-- default (`a = b`) o por la clave de un par (`{k: a}`) no se declara.
+local PATTERNS = {
+  assignment_pattern = 'left',
+  object_assignment_pattern = 'left',
+  pair_pattern = 'value',
+  rest_pattern = false,
+  array_pattern = false,
+  object_pattern = false,
 }
 
 local function is_field(parent, field, node)
@@ -381,13 +404,27 @@ end
 ---  * 'name': en un binding propio de la function expression, visible sólo
 ---    dentro de ella y por debajo de sus parámetros y locales
 ---    (`function f(f) { return f; }` devuelve el parámetro).
----  * 'inner': en ese mismo scope (variables, clases, parámetros).
+---  * 'inner': en ese mismo scope (variables, clases).
+---  * 'parameter': en ese scope, visible también en los defaults.
 ---
 ---nil si el identificador es un uso.
+---
+---Un nombre dentro de patrones (ver PATTERNS) se clasifica por el nodo
+---que los contiene: los de un parámetro (`function f(a = 1, ...b, {c})`)
+---son parámetros y los de un declarador (`var [a, b] = xs`), variables.
 ---@param n TSNode
 ---@return integer|nil kind, TSNode|nil decl, string|nil where
 local function classify(n)
   local p = n:parent()
+  -- `top`: el patrón más externo que envuelve a `n`, o `n`. Envuelto, `n`
+  -- no es hijo de `p` y solo pueden coincidir las dos ramas que miran a
+  -- `top` o no miran campos: formal_parameters y variable_declarator.
+  local top = n
+  while p and PATTERNS[p:type()] ~= nil do
+    local field = PATTERNS[p:type()]
+    if field and not is_field(p, field, top) then return nil end
+    top, p = p, p:parent()
+  end
   if not p then return nil end
   local pt = p:type()
   if FUNCTION_DECLARATIONS[pt] and is_field(p, 'name', n) then
@@ -396,7 +433,7 @@ local function classify(n)
     return 12, p, 'name'
   elseif pt == 'class_declaration' and is_field(p, 'name', n) then
     return 5, p, 'inner'
-  elseif pt == 'variable_declarator' and is_field(p, 'name', n) then
+  elseif pt == 'variable_declarator' and is_field(p, 'name', top) then
     local gp = p:parent()
     local gt = gp and gp:type()
     if gt == 'variable_declaration' then
@@ -408,10 +445,10 @@ local function classify(n)
     end
   elseif pt == 'formal_parameters' then
     -- El scope más interno es la función dueña de los parámetros.
-    return 13, n, 'inner'
+    return 13, n, 'parameter'
   elseif pt == 'arrow_function' and is_field(p, 'parameter', n) then
     -- `x => ...`: parámetro único sin paréntesis (no hay formal_parameters).
-    return 13, n, 'inner'
+    return 13, n, 'parameter'
   end
   return nil
 end
@@ -457,6 +494,11 @@ local function index(data, scopes, items)
       s.key = next_scope
       s.parent = stack[#stack]
       data.parent[s.key] = s.parent and s.parent.key or 0
+      local params = s.node:field('parameters')[1]
+      if params then
+        local _, _, stop = params:end_()
+        data.parameter_ends[s.key] = stop
+      end
       stack[#stack + 1] = s
       next_scope = next_scope + 1
     end
@@ -476,7 +518,10 @@ local function index(data, scopes, items)
         member = true,
       })
     else
-      local occ = { name = name, node = it.node, scope = inner and inner.key or 0 }
+      local occ = {
+        name = name, node = it.node, byte = it.sb, scope = inner and inner.key or 0,
+        shorthand = SHORTHANDS[it.node:type()],
+      }
       local kind, decl, where = classify(it.node)
       if kind then
         local s = inner
@@ -491,6 +536,7 @@ local function index(data, scopes, items)
           decl = decl,
           scope = s and s.node,
           global = key == 0,
+          parameter = where == 'parameter',
           url = it.url,
           slot = slots[key],
         }
@@ -515,6 +561,7 @@ local function new_data()
     bindings = {},    -- clave de scope → nombre → declaración
     fnames = {},      -- ídem, sólo los nombres de function expression
     parent = {},      -- clave de scope → clave del que lo envuelve
+    parameter_ends = {}, -- clave de scope → byte final de sus parámetros
     srcs = {},        -- `src` de los <script>, sin resolver (externals)
   }
 end
@@ -780,12 +827,10 @@ local function file_data(path, kind)
   end
   if hit[kind] == nil then
     local ok, data = pcall(function()
-      local f = assert(io.open(path, 'rb'))
-      local content = f:read('*a')
-      f:close()
-      -- Neovim no muestra el BOM en el buffer: sin quitarlo, las columnas
-      -- de la primera línea quedarían corridas tres bytes.
-      return build_file((content:gsub('^\239\187\191', '')), kind)
+      -- Las columnas del buffer que abriría Neovim: sin el BOM, que no
+      -- muestra, y en UTF-8 aunque el archivo sea latin1 (asp.pages.read).
+      -- Si no, una línea con acentos antes de un nombre lo corre de lugar.
+      return build_file(assert(require('asp.pages').read(path)), kind)
     end)
     hit[kind] = ok and data or false
   end
@@ -872,7 +917,12 @@ local function resolve(data, occ)
   local key = occ.scope
   while key do
     local b, f = data.bindings[key], data.fnames[key]
-    local hit = (b and b[occ.name]) or (f and f[occ.name])
+    local hit = b and b[occ.name]
+    -- Un default, también dentro de una función anidada, no ve las
+    -- declaraciones del cuerpo de la función que recibe ese parámetro.
+    local stop = data.parameter_ends[key]
+    if hit and not hit.parameter and stop and occ.byte < stop then hit = nil end
+    hit = hit or (f and f[occ.name])
     if hit then return hit end
     key = data.parent[key]
   end
@@ -981,7 +1031,13 @@ local function references(bufnr, position, opts)
   -- Cada archivo resuelve con su propio índice: sus locales sombrean.
   local function collect(uri, d, keep)
     for _, o in ipairs(d.occurrences[name] or {}) do
-      if keep(resolve(d, o)) then table.insert(out, location(uri, o)) end
+      if keep(resolve(d, o)) then
+        local loc = location(uri, o)
+        if opts.rename_to and o.shorthand then
+          loc.newText = name .. ': ' .. opts.rename_to
+        end
+        table.insert(out, loc)
+      end
     end
   end
 
@@ -1015,6 +1071,23 @@ local function references(bufnr, position, opts)
     collect(f.uri, f.data, function(r) return r == nil or r.global end)
   end
   return out, binding and location(vim.uri_from_bufnr(bufnr), binding) or nil
+end
+
+-- Ver M.occurrences.
+local function occurrences(bufnr, name)
+  local data = get_data(bufnr)
+  if not data then return nil end
+  local out = {}
+  local function add(uri, d)
+    for _, o in ipairs(d.occurrences[name] or {}) do
+      local loc = location(uri, o)
+      loc.declared = o.decl ~= nil
+      table.insert(out, loc)
+    end
+  end
+  add(vim.uri_from_bufnr(bufnr), data)
+  each_external(bufnr, data, add)
+  return out
 end
 
 local function document_symbols(bufnr)
@@ -1100,13 +1173,28 @@ end
 ---declaraciones homónimas de todos esos archivos y sus usos.
 ---Con buffer_only no consulta externos: devuelve candidatos del buffer
 ---aunque falte una declaración. El llamador debe resolverla antes de usarlos.
+---Con rename_to agrega newText a las propiedades abreviadas, también las
+---de un patrón, para conservar su clave: `{nombre}` pasa a
+---`{nombre: nuevo}`.
 ---@param bufnr integer
 ---@param position table {line, character}
----@param opts? table {buffer_only?: boolean}
+---@param opts? table {buffer_only?: boolean, rename_to?: string}
 ---@return table[]|nil Location[]
 ---@return table|nil binding Location de la declaración en el buffer
 function M.references(bufnr, position, opts)
   return safe(references, bufnr, position, opts)
+end
+
+---Dónde aparece `name` (case-sensitive) en el JS del buffer y de sus
+---archivos externos, en el orden de each_external: cada declaración o uso
+---de cualquier scope, sin las propiedades (`obj.name`). Sirve a asp.rename
+---para no elegir un nombre que ya existe. Sale de los índices cacheados de
+---cada archivo: solo lee un externo que todavía no se cargó.
+---@param bufnr integer
+---@param name string
+---@return table[]|nil Location[] con `declared` (true si declara el nombre)
+function M.occurrences(bufnr, name)
+  return safe(occurrences, bufnr, name)
 end
 
 ---Funciones y clases JS globales (con sus métodos) para el outline, con

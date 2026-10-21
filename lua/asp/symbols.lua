@@ -554,6 +554,34 @@ local OCCURRENCE_QUERY = [[
 (identifier) @id
 ]]
 
+---¿El identificador que empieza en el byte `start` (0-indexed) de `text`
+---es el miembro de un acceso (`obj.Total`, `Me.Total`, `.Total` de un
+---With)? Lo es si lo precede un punto, con blancos en el medio o no.
+---@param text string
+---@param start integer
+---@return boolean
+local function after_dot(text, start)
+  for i = start, 1, -1 do
+    local ch = text:byte(i)
+    if ch == 46 then return true end
+    if ch ~= 32 and ch ~= 9 then return false end
+  end
+  return false
+end
+
+---Miembro de objeto, incluidas las continuaciones `obj. _\n nombre`.
+---El punto en el texto también cubre `.nombre` de With si el parser no
+---consigue armar un member_expression sin receptor explícito.
+function M.is_member(node, source)
+  local parent = node:parent()
+  if parent and parent:type() == 'member_expression' then return true end
+  local row, col, byte = node:start()
+  if type(source) == 'number' then
+    return after_dot(vim.api.nvim_buf_get_lines(source, row, row + 1, true)[1], col)
+  end
+  return after_dot(source, byte)
+end
+
 ---Palabras distintas de un contenido en minúsculas, separadas por
 ---espacios. Un identificador VBScript solo tiene letras, dígitos y `_`, así
 ---que siempre queda dentro de una de ellas: buscarlo en este texto da lo
@@ -624,6 +652,7 @@ local function parse_occurrences(abs_path, content, stamp)
         list[#list + 1] = r0
         list[#list + 1] = c0
         list[#list + 1] = c1
+        list[#list + 1] = M.is_member(node, content)
       end
     end
   end
@@ -631,8 +660,9 @@ local function parse_occurrences(abs_path, content, stamp)
 end
 
 ---Ocurrencias de página de `wanted` en un archivo de disco: una lista
----plana {fila, col_inicio, col_fin, ...} (un identificador no cruza
----líneas), o nil. Deja afuera las que caen en un Sub/Function/Property que
+---plana {fila, col_inicio, col_fin, miembro, ...} (un identificador no
+---cruza líneas; `miembro` marca el nombre de un acceso `obj.Total`, ver
+---is_member), o nil. Deja afuera las que caen en un Sub/Function/Property que
 ---declara ese nombre como local o parámetro: ahí el nombre es otra
 ---variable, igual que con `shadowed` en el buffer.
 ---
@@ -685,20 +715,23 @@ end
 ---@param abs_path string
 ---@param wanted string ya en minúsculas
 ---@param contents table<string, string>
+---@param skip_members? boolean sin los nombres de un acceso `obj.Total`
 ---@return table[] Location[]
-local function occurrences_in_file(abs_path, wanted, contents)
+local function occurrences_in_file(abs_path, wanted, contents, skip_members)
   local hits = page_occurrences(vim.fs.normalize(abs_path), wanted, contents)
   if not hits then return {} end
   local uri = vim.uri_from_fname(abs_path)
   local out = {}
-  for i = 1, #hits, 3 do
-    table.insert(out, {
-      uri = uri,
-      range = {
-        start = { line = hits[i], character = hits[i + 1] },
-        ['end'] = { line = hits[i], character = hits[i + 2] },
-      },
-    })
+  for i = 1, #hits, 4 do
+    if not (skip_members and hits[i + 3]) then
+      table.insert(out, {
+        uri = uri,
+        range = {
+          start = { line = hits[i], character = hits[i + 1] },
+          ['end'] = { line = hits[i], character = hits[i + 2] },
+        },
+      })
+    end
   end
   return out
 end
@@ -765,11 +798,17 @@ end
 ---página que no incluye la librería no está en el conjunto aunque use el
 ---mismo nombre. No se siguen Server.Execute, Server.Transfer ni includes
 ---armados en runtime.
+---
+---Los usos se buscan por nombre: el miembro de un acceso (`obj.Total`,
+---`Me.Total`) cuenta como uso de un `Total` de página. Con skip_members
+---se omiten (los usa asp.rename, que no toca miembros de objeto).
 ---@param bufnr integer
 ---@param position table {line, character}
----@param opts? table {buffer_only?: boolean}
+---@param opts? table {buffer_only?: boolean, skip_members?: boolean}
 ---@return table[] Location[]
 ---@return table|nil binding declaración del buffer, si existe
+---@return string[]|nil archivos de disco recorridos (el grafo y el sitio),
+---  si la búsqueda salió del buffer
 function M.references(bufnr, position, opts)
   bufnr = bufnr == 0 and vim.api.nvim_get_current_buf() or bufnr
   opts = opts or {}
@@ -801,8 +840,10 @@ function M.references(bufnr, position, opts)
         if vim.treesitter.get_node_text(n, bufnr):lower() == wanted then
           local n_scope = nearest_ancestor(n, SCOPE_TYPES)
           local n_scope_id = n_scope and n_scope:id() or nil
-          if (scope_id and n_scope_id == scope_id) or (not scope_id and not shadowed[n_scope_id]) then
-            local r0, c0, r1, c1 = n:range()
+          local r0, c0, r1, c1 = n:range()
+          local member = opts.skip_members and M.is_member(n, bufnr)
+          if not member
+            and ((scope_id and n_scope_id == scope_id) or (not scope_id and not shadowed[n_scope_id])) then
             table.insert(out, {
               uri = vim.uri_from_bufnr(bufnr),
               range = {
@@ -838,13 +879,47 @@ function M.references(bufnr, position, opts)
       end
     end
     for _, file in ipairs(files) do
-      vim.list_extend(out, occurrences_in_file(file, wanted, contents))
+      vim.list_extend(out, occurrences_in_file(file, wanted, contents, opts.skip_members))
     end
     if ok and swept then
       require('asp.pages').notify_slow(swept, vim.tbl_count(contents), started)
     end
+    return out, binding, files
   end
   return out, binding
+end
+
+---Ocurrencias de página de `name` (sin distinguir mayúsculas) en un
+---archivo de disco, sin los miembros de objeto: las declaraciones y usos
+---que se ven a nivel de página, como las cuenta references (ver
+---page_occurrences). Con la caché de ocurrencias caliente no lee nada;
+---solo parsea un archivo cuyo texto menciona `name` y que todavía no se
+---parseó.
+---@param abs_path string
+---@param name string
+---@return table[] Location[]
+function M.page_uses(abs_path, name)
+  return occurrences_in_file(abs_path, name:lower(), {}, true)
+end
+
+---Nodos `identifier` del árbol VBScript del buffer, en orden del
+---documento: el mismo árbol que recorren collect y references.
+---@param bufnr integer
+---@return TSNode[]
+function M.identifiers(bufnr)
+  local out = {}
+  local ok, parser = pcall(vim.treesitter.get_parser, bufnr)
+  if not ok or not parser then return out end
+  parser:parse(true)
+  local child = parser:children().vbscript
+  if not child then return out end
+  local iq = vim.treesitter.query.parse('vbscript', IDENT_QUERY)
+  for _, tree in ipairs(child:trees()) do
+    for _, n in iq:iter_captures(tree:root(), bufnr) do
+      out[#out + 1] = n
+    end
+  end
+  return out
 end
 
 ---Busca símbolos en todo el árbol de `root_dir` cuyo nombre contenga

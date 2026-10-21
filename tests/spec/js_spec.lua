@@ -323,6 +323,78 @@ describe('asp.js casos borde', function()
     assert.are.same({ [1] = true, [2] = true, [3] = true }, lines)
   end)
 
+  it('los parámetros con default, rest o desestructurados son locales de su función', function()
+    setup({
+      '<script>',
+      'let total = 5;',
+      'function a(total = 2) { return total; }',
+      'function b(...total) { return total; }',
+      'function c([total, x = total]) { return total + x; }',
+      'function d({ total }, { k: otro = total }) { return total + otro; }',
+      'const e = ({ total = 1 }) => total;',
+      'console.log(total);',
+      '</script>',
+    })
+    -- En cada función, todo `total` (también el de un default posterior)
+    -- resuelve al parámetro, que es su primera aparición en la línea.
+    for _, case in ipairs({ { 'function a', 2 }, { 'function b', 2 }, { 'function c', 3 },
+      { 'function d', 3 }, { 'const e', 2 } }) do
+      local param = nth(case[1], 'total', 1)
+      for i = 1, case[2] do
+        assert.are.same(param, def_pos(nth(case[1], 'total', i)), case[1] .. ' ' .. i)
+      end
+      assert.are.equal(case[2], #js.references(0, param), case[1])
+    end
+    assert.are.same(nth('function c', 'x', 1), def_pos(nth('function c', 'x', 2)))
+    assert.are.same(nth('function d', 'otro', 1), def_pos(nth('function d', 'otro', 2)))
+    -- El global no se mezcla con ninguno.
+    local lines = {}
+    for _, r in ipairs(js.references(0, pos_in('let total', 'total'))) do
+      lines[r.range.start.line] = true
+    end
+    assert.are.same({ [1] = true, [7] = true }, lines)
+  end)
+
+  it('los defaults de parámetros no ven las declaraciones del cuerpo', function()
+    setup({
+      '<script>',
+      'let total = 5;',
+      'function a(x = total) { var total = 2; return x + total; }',
+      'const b = (x = () => total) => { let total = 3; return x() + total; };',
+      'function c({ [total]: x }) { const total = 4; return x + total; }',
+      'const d = function total(x = total) { var total = 6; return x; };',
+      'function e(total = 2, x = total) { var total; return total + x; }',
+      '</script>',
+    })
+    local global = pos_in('let total', 'total')
+    for _, text in ipairs({ 'function a', 'const b', 'function c' }) do
+      assert.are.same(global, def_pos(nth(text, 'total', 1)), text)
+      assert.are.same(nth(text, 'total', 2), def_pos(nth(text, 'total', 3)), text)
+    end
+    assert.are.same(nth('const d', 'total', 1), def_pos(nth('const d', 'total', 2)))
+    assert.are.same(nth('function e', 'total', 1), def_pos(nth('function e', 'total', 2)))
+    assert.are.equal(4, #js.references(0, global))
+  end)
+
+  it('los nombres desestructurados de var, let y const son declaraciones de su scope', function()
+    setup({
+      '<script>',
+      'var a = 0;',
+      'function f(o) { const { a, b: [c] } = o; return a + c; }',
+      'let [x, ...resto] = [1, 2];',
+      'console.log(a, x, resto);',
+      '</script>',
+    })
+    assert.are.same(pos_in('{ a,', 'a'), def_pos(pos_in('return a', 'a')))
+    assert.are.same(pos_in('[c]', 'c'), def_pos(pos_in('+ c', 'c')))
+    assert.are.same(pos_in('let [x', 'x'), def_pos(pos_in('console.log', 'x')))
+    assert.are.same(pos_in('let [x', 'resto'), def_pos(pos_in('console.log', 'resto')))
+    assert.are.same(pos_in('a = 0', 'a'), def_pos(pos_in('console.log', 'a')))
+    local kinds = {}
+    for _, e in ipairs(js.collect(0)) do kinds[e.name] = e.kind end
+    assert.are.same({ 14, 14, 13, 13 }, { kinds.a, kinds.c, kinds.x, kinds.resto })
+  end)
+
   it('un nombre sin declaración en la página no tiene definición ni referencias', function()
     setup({
       '<script>',
