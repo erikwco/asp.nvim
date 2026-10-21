@@ -112,6 +112,13 @@ describe('catálogos de ayuda VBScript y COM', function()
     assert.is_truthy(com.member('Stream', 'LineSeparator').doc:find('adCRLF (-1, por defecto)', 1, true))
   end)
 
+  it('MSXML no limita attributes a los elementos', function()
+    local member = com.member('XMLNode', 'attributes')
+    assert.are.equal('NamedNodeMap', member.returns)
+    assert.is_truthy(member.doc:find('declaración XML', 1, true))
+    assert.is_truthy(member.doc:find('tipo de nodo', 1, true))
+  end)
+
   it('documenta según Microsoft los separadores de CDO y la semilla de Rnd', function()
     -- CDO separa destinatarios con comas; el punto y coma es de MAPI.
     for _, field in ipairs({ 'To', 'CC', 'BCC', 'ReplyTo' }) do

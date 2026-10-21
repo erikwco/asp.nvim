@@ -332,7 +332,7 @@ M.types = {
       property('nodeType', 'Clase del nodo: 1 elemento, 2 atributo, 3 texto, 4 CDATA, 8 comentario, 9 documento.'),
       property('text', 'Texto del nodo y sus descendientes.'),
       property('xml', 'Serialización XML del nodo.'),
-      property('attributes', 'Atributos de un elemento; Nothing en otras clases de nodo.', 'NamedNodeMap'),
+      property('attributes', 'Atributos del nodo: elementos, declaración XML, DOCTYPE, entidades y notaciones; puede ser Nothing según el tipo de nodo.', 'NamedNodeMap'),
       property('childNodes', 'Colección de hijos.', 'XMLNodes'),
       property('firstChild', 'Primer hijo, o Nothing.', 'XMLNode'),
       property('lastChild', 'Último hijo, o Nothing.', 'XMLNode'),

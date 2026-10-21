@@ -301,6 +301,15 @@ describe('asp.js ayuda de cliente', function()
     end
   end)
 
+  it('la ayuda distingue enteros seguros y promesas adoptadas', function()
+    query('Number.MAX_SAFE_INTEGER; Promise.resolve(valor);')
+    local integer = help.hover(0, pos('MAX_SAFE_INTEGER')).contents.value
+    assert.is_truthy(integer:find('entero seguro', 1, true))
+    local promise = help.hover(0, pos('resolve')).contents.value
+    assert.is_truthy(promise:find('adopta', 1, true))
+    assert.is_truthy(promise:find('rechazo', 1, true))
+  end)
+
   it('keywords sólo desde dos letras', function()
     local p = query('f')
     assert.is_nil(items(p)['function'])

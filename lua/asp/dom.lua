@@ -142,11 +142,11 @@ local groups = {
     { 'isFinite(value)', 'Indica si value es un número finito, sin convertirlo.' },
     { 'parseFloat(string)', 'Igual que el parseFloat global.' },
     { 'parseInt(string, radix)', 'Igual que el parseInt global; conviene indicar radix.' },
-    { 'MAX_SAFE_INTEGER', 'Mayor entero representable con exactitud: 2^53 - 1.' },
+    { 'MAX_SAFE_INTEGER', 'Mayor entero seguro: 2^53 - 1; por encima no se distinguen todos los enteros consecutivos.' },
     { 'EPSILON', 'Diferencia entre 1 y el menor número mayor que 1.' },
   },
   Promise = {
-    { 'resolve(value)', 'Promesa cumplida con value, o value mismo si ya es una promesa.' },
+    { 'resolve(value)', 'Devuelve una promesa que adopta el estado de value si es una promesa o thenable, incluido su rechazo; con otros valores se cumple con value.' },
     { 'reject(reason)', 'Promesa rechazada con reason.' },
     { 'all(iterable)', 'Se cumple con todos los valores, o se rechaza con el primer rechazo.' },
     { 'allSettled(iterable)', 'Se cumple cuando todas terminan, con el estado y el valor o motivo de cada una.' },
