@@ -102,3 +102,63 @@ z = 2
     (expression
       (primary_expression
         (number_literal)))))
+
+==================
+then seguido de rem conserva el if de bloque
+==================
+If x Then Rem comentario
+  y = 1
+End If
+---
+
+(source_file
+  (if_statement
+    (expression (primary_expression (identifier)))
+    (block
+      (expression (primary_expression (identifier)))
+      (expression (primary_expression (identifier)))
+      (let_statement
+        (expression (primary_expression (identifier)))
+        (expression (primary_expression (number_literal)))))))
+
+==================
+rem sin texto y sin distinguir mayusculas
+==================
+If x Then rEM
+  y = 1
+End If
+---
+
+(source_file
+  (if_statement
+    (expression (primary_expression (identifier)))
+    (block
+      (expression (primary_expression (identifier)))
+      (let_statement
+        (expression (primary_expression (identifier)))
+        (expression (primary_expression (number_literal)))))))
+
+==================
+prefijo rem de un identificador no abre bloque
+==================
+If x Then Remember(1)
+If x Then Rem_1 = 2
+If x Then Re = 3
+---
+
+(source_file
+  (if_statement
+    (expression (primary_expression (identifier)))
+    (expression
+      (function_call (identifier)
+        (expression (primary_expression (number_literal))))))
+  (if_statement
+    (expression (primary_expression (identifier)))
+    (let_statement
+      (expression (primary_expression (identifier)))
+      (expression (primary_expression (number_literal)))))
+  (if_statement
+    (expression (primary_expression (identifier)))
+    (let_statement
+      (expression (primary_expression (identifier)))
+      (expression (primary_expression (number_literal))))))

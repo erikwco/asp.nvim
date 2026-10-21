@@ -51,6 +51,17 @@ bool tree_sitter_vbscript_external_scanner_scan(void *payload, TSLexer *lexer,
       lexer->advance(lexer, true);
       continue;
     }
+    if (c == 'r' || c == 'R') {
+      const char *word = "rem";
+      for (unsigned i = 0; i < 3; i++) {
+        if (lexer->eof(lexer) || lexer->is_at_included_range_start(lexer)) return false;
+        if (lexer->lookahead != word[i] && lexer->lookahead != word[i] - 'a' + 'A') return false;
+        lexer->advance(lexer, true);
+      }
+      return lexer->eof(lexer) || lexer->is_at_included_range_start(lexer)
+        || lexer->lookahead == ' ' || lexer->lookahead == '\t'
+        || lexer->lookahead == '\n' || lexer->lookahead == '\r';
+    }
     return c == '\n' || c == '\r' || c == '\'' || c == ':';
   }
 }
