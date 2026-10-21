@@ -1,4 +1,51 @@
 local FIX = vim.fn.fnamemodify('tests/fixtures/proyecto', ':p'):gsub('/$', '')
+local DIAG = vim.fn.fnamemodify('tests/fixtures/diagnosticos', ':p'):gsub('/$', '')
+
+local function diagnostics()
+  return require('asp.diagnostics')
+end
+
+-- Abre `path`, refresca y devuelve sus diagnósticos ordenados por posición.
+local function diags_at(path)
+  vim.cmd.edit(path)
+  diagnostics().refresh(0)
+  local ds = vim.diagnostic.get(0, { namespace = diagnostics().ns })
+  table.sort(ds, function(a, b)
+    return a.lnum < b.lnum or (a.lnum == b.lnum and a.col < b.col)
+  end)
+  return ds
+end
+
+-- Diagnósticos de una familia (campo `code`).
+local function of(ds, family)
+  return vim.tbl_filter(function(d) return d.code == family end, ds)
+end
+
+-- Texto que cubre un diagnóstico de una sola línea.
+local function text_of(d)
+  local line = vim.api.nvim_buf_get_lines(0, d.lnum, d.lnum + 1, true)[1]
+  return line:sub(d.col + 1, d.end_col)
+end
+
+local function texts(ds)
+  return vim.tbl_map(text_of, ds)
+end
+
+-- Crea `files` (nombre → líneas) en un directorio temporal con web.config
+-- y corre fn(dir); siempre borra el directorio.
+local function in_temp(files, fn)
+  local dir = vim.fn.tempname()
+  vim.fn.mkdir(dir, 'p')
+  dir = vim.uv.fs_realpath(dir)
+  vim.fn.writefile({}, dir .. '/web.config')
+  for name, lines in pairs(files) do
+    vim.fn.mkdir(vim.fs.dirname(dir .. '/' .. name), 'p')
+    vim.fn.writefile(lines, dir .. '/' .. name)
+  end
+  local ok, err = pcall(fn, dir)
+  vim.fn.delete(dir, 'rf')
+  assert(ok, err)
+end
 
 describe('diagnósticos de includes', function()
   after_each(function()
@@ -29,5 +76,331 @@ describe('diagnósticos de includes', function()
   it('un grafo sano no produce diagnósticos', function()
     local ds = diags_for('default.asp')
     assert.are.same({}, ds)
+  end)
+end)
+
+describe('diagnósticos de VBScript', function()
+  local previous
+
+  before_each(function()
+    previous = require('asp').options.diagnostics
+  end)
+
+  after_each(function()
+    require('asp').options.diagnostics = previous
+    vim.cmd('bwipeout!')
+  end)
+
+  describe('sintaxis', function()
+    it('marca el ERROR de VBScript con HINT y su rango real', function()
+      local ds = of(diags_at(DIAG .. '/sintaxis.asp'), 'syntax')
+      assert.are.equal(1, #ds)
+      assert.are.equal(vim.diagnostic.severity.HINT, ds[1].severity)
+      assert.are.equal('asp-ls', ds[1].source)
+      assert.are.equal(8, ds[1].lnum)
+      assert.are.equal('= (1 +', text_of(ds[1]))
+    end)
+
+    it('no reporta HTML ni JavaScript rotos fuera de los bloques <% %>', function()
+      assert.are.same({}, diags_at(DIAG .. '/limpio.asp'))
+    end)
+
+    it('un error que cruza bloques se recorta al bloque donde empieza', function()
+      in_temp({
+        ['p.asp'] = { '<% If x Then', 'y = (1 + %>', '<p>html</p>', '<% End If %>' },
+      }, function(dir)
+        local ds = of(diags_at(dir .. '/p.asp'), 'syntax')
+        assert.is_true(#ds > 0)
+        for _, d in ipairs(ds) do
+          assert.is_true((d.end_lnum or d.lnum) <= 1, 'el diagnóstico cruza al HTML')
+        end
+      end)
+    end)
+
+    it('un comentario Rem no produce errores ni nombres sin declarar', function()
+      in_temp({
+        ['p.asp'] = { '<%', 'Option Explicit', 'Rem texto libre: sinDeclarar ó (', 'Dim x : x = 1', '%>' },
+      }, function(dir)
+        assert.are.same({}, diags_at(dir .. '/p.asp'))
+      end)
+    end)
+
+    it('una página JScript no se revisa como VBScript', function()
+      assert.are.same({}, diags_at(DIAG .. '/jscript.asp'))
+    end)
+  end)
+
+  describe('variables sin declarar', function()
+    it('marca el uso sin Dim bajo Option Explicit', function()
+      local ds = of(diags_at(DIAG .. '/explicit.asp'), 'undeclared')
+      assert.are.same({ 'total' }, texts(ds))
+      assert.are.equal(vim.diagnostic.severity.WARN, ds[1].severity)
+      assert.is_truthy(ds[1].message:find('"total"', 1, true))
+    end)
+
+    it('acepta includes transitivos, miembros, intrínsecos, nativos, arreglos, clases, parámetros y For', function()
+      -- explicit.asp usa gTransitiva y MAX_FILAS (de un include
+      -- transitivo), obj.Prop.Metodo, Response/Server/Err, Len y vbCrLf,
+      -- arr(1), el Private saldo de una clase dentro de su método, los
+      -- parámetros de MiSub, las variables de For y For Each, un ReDim y
+      -- un Const locales, y Me.
+      local ds = of(diags_at(DIAG .. '/explicit.asp'), 'undeclared')
+      assert.are.same({ 'total' }, texts(ds))
+    end)
+
+    it('sin Option Explicit no reporta variables ni llamadas', function()
+      local ds = diags_at(DIAG .. '/sin_explicit.asp')
+      assert.are.same({}, of(ds, 'undeclared'))
+      assert.are.same({}, of(ds, 'unknown_call'))
+    end)
+
+    it('Option Explicit en un include también activa la revisión', function()
+      in_temp({
+        ['inc/cabecera.inc'] = { '<% Option Explicit %>' },
+        ['p.asp'] = { '<!--#include file="inc/cabecera.inc" -->', '<% suelta = 1 %>' },
+      }, function(dir)
+        assert.are.same({ 'suelta' }, texts(of(diags_at(dir .. '/p.asp'), 'undeclared')))
+      end)
+    end)
+
+    it('un include sin resolver apaga la revisión de nombres', function()
+      in_temp({
+        ['p.asp'] = { '<!--#include file="falta.inc" -->', '<% Option Explicit', 'suelta = 1', 'NoExiste %>' },
+      }, function(dir)
+        local ds = diags_at(dir .. '/p.asp')
+        assert.are.equal(1, #of(ds, 'includes'))
+        assert.are.same({}, of(ds, 'undeclared'))
+        assert.are.same({}, of(ds, 'unknown_call'))
+      end)
+    end)
+
+    it('un nombre dentro de un error de sintaxis cuenta como declarado', function()
+      in_temp({
+        ['p.asp'] = { '<%', 'Option Explicit', 'Dim x', 'Const A = 1, B = 2', 'x = A + B + C', '%>' },
+      }, function(dir)
+        assert.are.same({ 'C' }, texts(of(diags_at(dir .. '/p.asp'), 'undeclared')))
+      end)
+    end)
+  end)
+
+  describe('llamadas inexistentes', function()
+    it('marca llamadas sin paréntesis, con paréntesis, con Call y New de una clase inexistente', function()
+      local ds = of(diags_at(DIAG .. '/explicit.asp'), 'unknown_call')
+      assert.are.same({ 'NoExiste', 'Inexistente', 'Fantasma', 'NoClase' }, texts(ds))
+      assert.is_truthy(ds[4].message:find('clase', 1, true))
+    end)
+
+    it('acepta funciones de includes, subs de la página, índices, miembros, nativos y New de clases', function()
+      -- Utilidad y FormatoBase vienen del grafo; MiSub es de la página;
+      -- arr(2) indexa un Dim arr(10); c.Sumar es un miembro; New Carro
+      -- (clase de un include) y New RegExp (nativa) son válidos.
+      local ds = of(diags_at(DIAG .. '/explicit.asp'), 'unknown_call')
+      for _, name in ipairs({ 'Utilidad', 'FormatoBase', 'MiSub', 'arr', 'Sumar', 'Carro', 'RegExp', 'Len' }) do
+        assert.is_false(vim.tbl_contains(texts(ds), name), name)
+      end
+    end)
+
+    it('New no acepta una Function homónima', function()
+      in_temp({
+        ['p.asp'] = { '<%', 'Option Explicit', 'Dim o', 'Set o = New Armar', 'Function Armar()', 'End Function', '%>' },
+      }, function(dir)
+        assert.are.same({ 'Armar' }, texts(of(diags_at(dir .. '/p.asp'), 'unknown_call')))
+      end)
+    end)
+  end)
+
+  describe('código dinámico', function()
+    it('Execute apaga variables y llamadas y deja un HINT en su línea', function()
+      local ds = diags_at(DIAG .. '/dinamico.asp')
+      assert.are.equal(1, #ds)
+      assert.are.equal(vim.diagnostic.severity.HINT, ds[1].severity)
+      assert.are.equal(4, ds[1].lnum)
+      assert.is_truthy(ds[1].message:find('Execute', 1, true))
+    end)
+
+    it('Eval en un include deja el HINT en la directiva que lo trae', function()
+      local ds = diags_at(DIAG .. '/dinamico_inc.asp')
+      assert.are.equal(1, #ds)
+      assert.are.equal(vim.diagnostic.severity.HINT, ds[1].severity)
+      assert.are.equal(3, ds[1].lnum)
+      assert.is_truthy(ds[1].message:find('dinamico.inc:3', 1, true))
+    end)
+
+    it('Server.Execute es un miembro, no código dinámico', function()
+      in_temp({
+        ['p.asp'] = { '<%', 'Option Explicit', 'Server.Execute "otra.asp"', 'suelta = 1', '%>' },
+      }, function(dir)
+        local ds = diags_at(dir .. '/p.asp')
+        assert.are.same({ 'suelta' }, texts(of(ds, 'undeclared')))
+        assert.are.same({}, of(ds, 'dynamic'))
+      end)
+    end)
+  end)
+
+  describe('páginas inexistentes', function()
+    it('marca enlaces y recursos que no existen en disco', function()
+      local ds = of(diags_at(DIAG .. '/enlaces.asp'), 'missing_page')
+      assert.are.same({ 'js/falta.js', 'no_existe.asp' }, texts(ds))
+      assert.are.equal(vim.diagnostic.severity.WARN, ds[1].severity)
+    end)
+
+    it('no reporta existentes, raíz virtual, <%= %>, concatenaciones, URLs absolutas ni comentarios', function()
+      -- existe.asp, /css/estilo.css, js/app.js existen; detalle.asp lleva
+      -- un <%= %>; falta.asp y '.asp' se concatenan; la URL es absoluta;
+      -- viejo.asp y viejo2.asp están comentados (HTML y VBScript).
+      local reported = texts(of(diags_at(DIAG .. '/enlaces.asp'), 'missing_page'))
+      for _, path in ipairs({ 'existe.asp', '/css/estilo.css', 'js/app.js', 'detalle.asp?id=<%= id %>',
+        'falta.asp?id=', 'http://ejemplo.com/remota.asp', 'viejo.asp', 'viejo2.asp', '.asp' }) do
+        assert.is_false(vim.tbl_contains(reported, path), path)
+      end
+      assert.are.equal(2, #reported)
+    end)
+  end)
+
+  describe('configuración', function()
+    it('respeta severidades y false por familia', function()
+      require('asp').setup({ diagnostics = {
+        undeclared = 'ERROR', unknown_call = vim.diagnostic.severity.INFO, syntax = false,
+      } })
+      local ds = diags_at(DIAG .. '/explicit.asp')
+      assert.are.equal(vim.diagnostic.severity.ERROR, of(ds, 'undeclared')[1].severity)
+      assert.are.equal(vim.diagnostic.severity.INFO, of(ds, 'unknown_call')[1].severity)
+      vim.cmd('bwipeout!')
+      assert.are.same({}, of(diags_at(DIAG .. '/sintaxis.asp'), 'syntax'))
+    end)
+
+    it('false apaga includes y páginas', function()
+      require('asp').setup({ diagnostics = { includes = false, missing_page = 'hint' } })
+      assert.are.same({}, diags_at(FIX .. '/roto.asp'))
+      vim.cmd('bwipeout!')
+      local ds = of(diags_at(DIAG .. '/enlaces.asp'), 'missing_page')
+      assert.are.equal(vim.diagnostic.severity.HINT, ds[1].severity)
+    end)
+
+    it('diagnostics = false apaga todas las familias', function()
+      require('asp').setup({ diagnostics = false })
+      assert.are.same({}, diags_at(DIAG .. '/explicit.asp'))
+    end)
+
+    it('un valor inválido avisa una sola vez y usa el de por defecto', function()
+      local notify, calls = vim.notify, {}
+      vim.notify = function(msg, level) table.insert(calls, { msg, level }) end
+      local ok, err = pcall(function()
+        require('asp').setup({ diagnostics = { undeclared = 'ROJO', unknown_calls = 'WARN' } })
+        local ds = diags_at(DIAG .. '/explicit.asp')
+        diagnostics().refresh(0)
+        assert.are.equal(vim.diagnostic.severity.WARN, of(ds, 'undeclared')[1].severity)
+      end)
+      vim.notify = notify
+      assert(ok, err)
+      -- Uno por el valor y otro por la familia desconocida.
+      assert.are.equal(2, #calls)
+      assert.is_truthy(calls[1][1]:find('ROJO', 1, true) or calls[2][1]:find('ROJO', 1, true))
+      assert.are.equal(vim.log.levels.WARN, calls[1][2])
+    end)
+  end)
+
+  describe('refresco', function()
+    it('TextChanged programa un refresh y al cerrar el buffer no queda ningún timer', function()
+      vim.cmd.edit(DIAG .. '/explicit.asp')
+      local buf = vim.api.nvim_get_current_buf()
+      local autocmds = vim.api.nvim_get_autocmds({ group = 'asp_diagnostics_' .. buf })
+      local events = {}
+      for _, a in ipairs(autocmds) do events[a.event] = true end
+      assert.is_true(events.TextChanged and events.InsertLeave and true or false)
+      vim.api.nvim_exec_autocmds('TextChanged', { buffer = buf })
+      assert.are.equal(1, diagnostics().pending())
+      vim.cmd('bwipeout!')
+      assert.are.equal(0, diagnostics().pending())
+      assert.is_false(pcall(vim.api.nvim_get_autocmds, { group = 'asp_diagnostics_' .. buf }))
+      vim.cmd.enew()
+    end)
+
+    it('el refresh diferido publica los cambios del buffer y cierra su timer', function()
+      local debounce = diagnostics().debounce_ms
+      diagnostics().debounce_ms = 10
+      local ok, err = pcall(function()
+        in_temp({ ['p.asp'] = { '<%', 'Option Explicit', 'Dim x : x = 1', '%>' } }, function(dir)
+          diags_at(dir .. '/p.asp')
+          assert.are.same({}, vim.diagnostic.get(0, { namespace = diagnostics().ns }))
+          vim.api.nvim_buf_set_lines(0, 2, 3, false, { 'Dim x : y = 1' })
+          diagnostics().schedule(vim.api.nvim_get_current_buf())
+          -- El cambio también dispara TextChanged, que reprograma: se
+          -- espera a que no quede nada pendiente.
+          assert.is_true(vim.wait(2000, function()
+            return diagnostics().pending() == 0
+              and #vim.diagnostic.get(0, { namespace = diagnostics().ns }) == 1
+          end))
+          vim.cmd('bwipeout!')
+        end)
+      end)
+      diagnostics().debounce_ms = debounce
+      vim.cmd.enew()
+      assert(ok, err)
+    end)
+
+    it('el segundo refresh de una página con 20 includes no lee disco', function()
+      local files = { ['p.asp'] = { '<%', 'Option Explicit', '%>' } }
+      for i = 1, 20 do
+        local name = ('inc/i%02d.inc'):format(i)
+        files[name] = { '<%', ('Function F%02d(x)'):format(i), ('  F%02d = x'):format(i), 'End Function', '%>' }
+        table.insert(files['p.asp'], 1, ('<!--#include file="%s" -->'):format(name))
+      end
+      table.insert(files['p.asp'], '<% Dim r : r = F01(1) + F20(2) + Inexistente(3) %>')
+      table.insert(files['p.asp'], '<a href="inc/i01.inc">ok</a> <a href="falta.asp">no</a>')
+      in_temp(files, function(dir)
+        local ds = diags_at(dir .. '/p.asp')
+        assert.are.same({ 'Inexistente', 'falta.asp' }, texts(vim.tbl_filter(function(d)
+          return d.code == 'unknown_call' or d.code == 'missing_page'
+        end, ds)))
+        local open, opens = io.open, 0
+        io.open = function(...)
+          opens = opens + 1
+          return open(...)
+        end
+        local ok, err = pcall(diagnostics().refresh, 0)
+        io.open = open
+        assert(ok, err)
+        assert.are.equal(0, opens)
+        assert.are.same({}, diagnostics().last_errors)
+      end)
+    end)
+
+    it('refresh nunca lanza y publica las familias que sí pudo calcular', function()
+      local pages = require('asp.pages')
+      local original = pages.buffer_literals
+      pages.buffer_literals = function() error('falla simulada') end
+      local ok, ds = pcall(diags_at, DIAG .. '/explicit.asp')
+      pages.buffer_literals = original
+      assert(ok, ds)
+      assert.are.same({ 'total' }, texts(of(ds, 'undeclared')))
+      assert.is_truthy(diagnostics().last_errors.missing_page)
+    end)
+  end)
+end)
+
+describe('asp.vbscript_builtins', function()
+  local builtins = require('asp.vbscript_builtins')
+
+  it('reconoce funciones, constantes, palabras clave y objetos sin distinguir mayúsculas', function()
+    assert.are.equal('functions', builtins.lookup('len').group)
+    assert.are.equal('Len', builtins.lookup('LEN').name)
+    assert.are.equal('constants', builtins.lookup('VBCRLF').group)
+    assert.are.equal('keywords', builtins.lookup('me').group)
+    assert.are.equal('objects', builtins.lookup('err').group)
+    assert.is_nil(builtins.lookup('MiFuncion'))
+    assert.is_true(builtins.is_class('regexp'))
+    assert.is_false(builtins.is_class('Len'))
+  end)
+
+  it('no repite nombres entre grupos', function()
+    local seen = {}
+    for group, entries in pairs(builtins.groups) do
+      for _, entry in ipairs(entries) do
+        local name = (type(entry) == 'table' and entry[1] or entry):lower()
+        assert.is_nil(seen[name], ('%s está en %s y en %s'):format(name, tostring(seen[name]), group))
+        seen[name] = group
+      end
+    end
   end)
 end)
