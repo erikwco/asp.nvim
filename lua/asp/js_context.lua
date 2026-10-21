@@ -81,7 +81,10 @@ function M.active(mask)
       local before = mask:sub(1, frame.offset - 1)
       -- Sólo se busca el nombre de los paréntesis que siguen abiertos.
       -- Hacerlo para cada llamada cerrada vuelve cuadrática la consulta.
-      if before:match('function%s*%*?%s*[%w_$\128-\255]*%s*$') then return nil end
+      -- La keyword entera: `functionName(` y `myfunction(` son llamadas.
+      if before:match('%f[%w_$\128-\255]function%f[^%w_$\128-\255]%s*%*?%s*[%w_$\128-\255]*%s*$') then
+        return nil
+      end
       frame.name = M.path(before)
       if frame.name then return frame end
     end
