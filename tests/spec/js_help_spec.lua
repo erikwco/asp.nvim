@@ -232,6 +232,31 @@ describe('asp.js ayuda de cliente', function()
     assert.is_not_nil(handlers['textDocument/hover'](params(pos('Len('))))
   end)
 
+  it('las consultas de VBScript no construyen el índice JS', function()
+    local old_parser = vim.treesitter.get_string_parser
+    local parsed = 0
+    vim.treesitter.get_string_parser = function(source, lang, ...)
+      if lang == 'javascript' then parsed = parsed + 1 end
+      return old_parser(source, lang, ...)
+    end
+    local ok, err = pcall(function()
+      for i, method in ipairs({ 'textDocument/completion', 'textDocument/hover', 'textDocument/signatureHelp' }) do
+        local p = pos('Len(')
+        vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { 'total = Len("' .. ('a'):rep(i) .. '")' })
+        handlers[method](params({ line = p.line, character = #'total = Len(' }))
+        handlers[method](params({ line = p.line, character = #'total = ' }))
+      end
+      assert.are.equal(0, parsed)
+      -- Control: el borde de un bloque que termina es del JS que sigue.
+      local p = query('const valor = <%= 1 %>;')
+      assert.is_not_nil(js.region_at(0, { line = p.line, character = #'const valor = <%= 1 %>' }))
+      assert.is_nil(js.region_at(0, { line = p.line, character = #'const valor = ' }))
+      assert.is_true(parsed > 0)
+    end)
+    vim.treesitter.get_string_parser = old_parser
+    assert.is_true(ok, err)
+  end)
+
   it('signatureHelp de función del usuario cuenta parámetros y conserva default/rest', function()
     local result = help.signature(0, query('buscarGlobal(1, '))
     assert.are.equal(1, result.activeParameter)

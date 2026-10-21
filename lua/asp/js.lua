@@ -1038,6 +1038,15 @@ local function each_external(bufnr, data, visit)
 end
 
 local function region_at(bufnr, position)
+  -- Un bloque ASP es VBScript: se descarta con el árbol de la plantilla,
+  -- sin construir el índice JS, porque completion y signatureHelp de
+  -- VBScript preguntan en cada tecla. Mismo criterio que overlaps_asp
+  -- (byte, byte + 1): cuenta el bloque que empieza en el cursor, no el que
+  -- termina ahí.
+  local root = vim.treesitter.get_parser(bufnr):parse()[1]:root()
+  local at = root:named_descendant_for_range(position.line, position.character,
+    position.line, position.character)
+  if at and at:type() ~= 'content' and not at:equal(root) then return nil end
   local data = get_data(bufnr)
   if not data then return nil end
   local byte = vim.api.nvim_buf_get_offset(bufnr, position.line) + position.character
