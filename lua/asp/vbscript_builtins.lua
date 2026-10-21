@@ -248,7 +248,7 @@ M.groups = {
       { 'Cadena de origen.', 'Cantidad de bytes.' }),
     fn('Rnd([number])', 'Single',
       'Número seudoaleatorio mayor o igual a 0 y menor que 1.',
-      { 'Negativo reinicia la secuencia; cero repite el anterior; positivo u omitido avanza.' }),
+      { 'Negativo: siempre el mismo número, con number como semilla; cero repite el anterior; positivo u omitido da el siguiente.' }),
     fn('Round(expression[, numdecimalplaces])', 'Número',
       'Redondea a los decimales indicados; los empates van al dígito par.',
       { 'Número que se redondea.', 'Decimales; 0 por defecto.' }),

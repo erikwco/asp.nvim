@@ -76,6 +76,15 @@ describe('catálogos de ayuda VBScript y COM', function()
     assert.are.equal('Matches', com.member('RegExp', 'Execute').returns)
     assert.are.equal('Match', com.member('Matches', 'Item').returns)
   end)
+
+  it('documenta según Microsoft los separadores de CDO y la semilla de Rnd', function()
+    -- CDO separa destinatarios con comas; el punto y coma es de MAPI.
+    for _, field in ipairs({ 'To', 'CC', 'BCC' }) do
+      assert.is_truthy(com.member('Message', field).doc:find('por comas', 1, true), field)
+    end
+    -- Un argumento negativo repite siempre el mismo número, no reinicia.
+    assert.is_truthy(native.lookup('Rnd').params[1].doc:find('siempre el mismo número', 1, true))
+  end)
 end)
 
 describe('ayuda nativa y COM', function()

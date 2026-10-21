@@ -340,9 +340,9 @@ M.types = {
     doc = 'Mensaje de correo CDO con remitente, destinatarios, cuerpo y configuración de envío.',
     members = {
       property('From', 'Dirección del remitente.'),
-      property('To', 'Destinatarios principales, separados por punto y coma.'),
-      property('CC', 'Destinatarios en copia.'),
-      property('BCC', 'Destinatarios en copia oculta.'),
+      property('To', 'Destinatarios principales, separados por comas, no por punto y coma.'),
+      property('CC', 'Destinatarios en copia, separados por comas.'),
+      property('BCC', 'Destinatarios en copia oculta, separados por comas.'),
       property('Subject', 'Asunto del mensaje.'),
       property('TextBody', 'Cuerpo de texto sin formato.'),
       property('HTMLBody', 'Cuerpo en formato HTML.'),
