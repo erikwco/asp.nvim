@@ -106,17 +106,50 @@ local function complete(bufnr, position)
   return out
 end
 
+-- Posición {line, character} del byte `offset` (desde 1) de la máscara.
+local function point(ctx, offset)
+  local before = ctx.source:sub(ctx.range[3] + 1, ctx.range[3] + offset - 1)
+  local _, rows = before:gsub('\n', '')
+  return { line = ctx.range[1] + rows,
+    character = rows == 0 and ctx.range[2] + #before or #before - before:match('.*()\n') }
+end
+
+local BODY_BEFORE = { '%)%s*$', '=>%s*$', '%f[%w_$]else%s*$', '%f[%w_$]try%s*$',
+  '%f[%w_$]finally%s*$', '%f[%w_$]do%s*$', '%f[%w_$]class%f[^%w_$][^{}()]*$' }
+
+---¿La llave en `offset` de la máscara abre un bloque de sentencias, como
+---el cuerpo de `function () {` o de `() => {`, y no un objeto literal?
+---Decide el árbol; si esa zona es un ERROR (código a medio escribir), el
+---texto anterior a la llave: `)`, `=>`, `else`, `try`, `do` o una clase.
+local function opens_block(ctx, mask, offset)
+  if ctx.node then
+    local at = point(ctx, offset)
+    local brace = ctx.node:tree():root():descendant_for_range(at.line, at.character, at.line, at.character + 1)
+    local parent = brace and brace:type() == '{' and brace:parent()
+    local kind = parent and parent:type()
+    if kind == 'statement_block' or kind == 'class_body' or kind == 'switch_body' then return true end
+    if kind == 'object' or kind == 'object_pattern' then return false end
+  end
+  local before = mask:sub(1, offset - 1)
+  for _, pattern in ipairs(BODY_BEFORE) do
+    if before:match(pattern) then return true end
+  end
+  return false
+end
+
 local function signature(bufnr, position)
   local ctx = js.region_at(bufnr, position)
   if not ctx then return nil end
-  local call = context.active(context.mask(ctx))
+  local mask = context.mask(ctx)
+  local call = context.active(mask)
   if not call then return nil end
+  -- En el cuerpo de un callback se escriben sentencias, no argumentos.
+  for _, offset in ipairs(call.braces) do
+    if opens_block(ctx, mask, offset) then return nil end
+  end
   -- Resuelve en el scope donde se abre la llamada, no en el de un
   -- callback que el cursor pueda estar escribiendo entre sus argumentos.
-  local before = ctx.source:sub(ctx.range[3] + 1, ctx.range[3] + call.offset - 1)
-  local _, rows = before:gsub('\n', '')
-  position = { line = ctx.range[1] + rows,
-    character = rows == 0 and ctx.range[2] + #before or #before - before:match('.*()\n') }
+  position = point(ctx, call.offset)
   local entry
   if not call.name:find('.', 1, true) then entry = js.named(bufnr, position, call.name) end
   entry = entry or catalog(bufnr, position, call.name)

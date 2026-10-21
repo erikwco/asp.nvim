@@ -404,8 +404,56 @@ describe('asp.js ayuda de cliente', function()
   end)
 
   it('signatureHelp resuelve el callee fuera del scope de sus callbacks', function()
-    local result = help.signature(0, query('buscarGlobal(() => { let buscarGlobal = 1; '))
+    local result = help.signature(0, query('buscarGlobal(buscarGlobal => buscarGlobal + '))
     assert.are.same({ 'primero', 'segundo = 2', '...resto' }, labels(result))
+  end)
+
+  it('signatureHelp no responde dentro del cuerpo de un callback', function()
+    local function restore(p, text)
+      vim.api.nvim_buf_set_lines(0, p.line - select(2, text:gsub('\n', '')), p.line + 1, false,
+        { '// consulta global' })
+    end
+    local closed = 'buscarGlobal(function () {\n  var x = 1;\n  \n});'
+    local p = query(closed)
+    assert.is_nil(help.signature(0, { line = p.line - 1, character = 2 }))
+    restore(p, closed)
+    for _, text in ipairs({ 'buscarGlobal(() => { let buscarGlobal = 1; ', 'buscarGlobal(1, { m() { ',
+      'buscarGlobal(async function* () {\n  ', 'buscarGlobal(class extends Vista { ' }) do
+      p = query(text)
+      assert.is_nil(help.signature(0, p), text)
+      restore(p, text)
+    end
+  end)
+
+  it('signatureHelp sigue dentro de un objeto literal y de una llamada en el callback', function()
+    local p = query('buscarGlobal({ clave: 1,  });')
+    local result = help.signature(0, { line = p.line, character = #'buscarGlobal({ clave: 1, ' })
+    assert.are.equal(0, result.activeParameter)
+    vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { 'buscarGlobal(2, { clave: [1, ' })
+    assert.are.equal(1, help.signature(0, { line = p.line, character = #'buscarGlobal(2, { clave: [1, ' })
+      .activeParameter)
+    local text = 'buscarGlobal(function () { buscarGlobal(1, '
+    vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { text })
+    assert.are.equal(1, help.signature(0, { line = p.line, character = #text }).activeParameter)
+  end)
+
+  it('las sustituciones ${...} de un template son código', function()
+    local text = 'var t = `Total: ${buscarGlobal(1, )}`;'
+    local p = query(text)
+    local cursor = { line = p.line, character = #'var t = `Total: ${buscarGlobal(1, ' }
+    assert.are.equal(1, help.signature(0, cursor).activeParameter)
+    vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { 'var t = `Total: ${bus}`;' })
+    assert.is_not_nil(items({ line = p.line, character = #'var t = `Total: ${bus' }).buscarGlobal)
+    for _, unclosed in ipairs({ '`a ${buscarGlobal(1, ', '`a ${ `b ${x}` + buscarGlobal(1, ',
+      "`a ${ { k: '}' }.k + buscarGlobal(1, " }) do
+      vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { unclosed })
+      local result = help.signature(0, { line = p.line, character = #unclosed })
+      assert.are.equal(1, result and result.activeParameter, unclosed)
+    end
+    for _, text_only in ipairs({ '`Total ${x} buscarGlobal(1, ', '`Total $', '`Total ${x}`.length + `$' }) do
+      vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { text_only })
+      assert.is_nil(help.signature(0, { line = p.line, character = #text_only }), text_only)
+    end
   end)
 
   it('desestructurar una función no convierte sus propiedades en funciones', function()
