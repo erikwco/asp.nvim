@@ -188,11 +188,9 @@ function M.help(bufnr)
   local tick = vim.api.nvim_buf_get_changedtick(bufnr)
   local hit = help_cache[bufnr]
   if hit and hit.tick == tick then return hit end
-  local ok, parser = pcall(vim.treesitter.get_parser, bufnr)
-  if not ok or not parser then return { entries = {}, assignments = {} } end
-  parser:parse(true)
+  local parser, child = require('asp.ts').parse_vbscript(bufnr)
+  if not parser then return { entries = {}, assignments = {} } end
   local roots = {}
-  local child = parser:children().vbscript
   for _, tree in ipairs(child and child:trees() or {}) do roots[#roots + 1] = tree:root() end
   hit = {
     tick = tick, entries = collect_from_roots(roots, bufnr),

@@ -44,6 +44,24 @@ describe('asp.symbols', function()
     assert.are.equal(13, monto.kind)
   end)
 
+  it('la ayuda de VBScript no parsea el JavaScript de toda la página', function()
+    vim.cmd('noautocmd enew')
+    vim.cmd('noautocmd setlocal filetype=asp')
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, {
+      '<% Dim total', 'Function Sumar(n)', ' Sumar = n + total', 'End Function', '%>',
+      '<script>', 'function cliente(x) { return x + 1; }', '</script>',
+    })
+    local data = require('asp.symbols').help(0)
+    assert.are.equal(13, by_name(data.entries, 'total')[1].kind)
+    assert.are.equal('n', by_name(data.entries, 'Sumar')[1].params[1].name)
+    local languages = {}
+    vim.treesitter.get_parser(0):for_each_tree(function(_, tree)
+      languages[tree:lang()] = true
+    end)
+    assert.is_true(languages.vbscript)
+    assert.is_nil(languages.javascript)
+  end)
+
   it('da kind Property a la property y kind Variable a su parámetro', function()
     local entries = require('asp.symbols').collect(0)
     local pedido = by_name(entries, 'Pedido')[1]

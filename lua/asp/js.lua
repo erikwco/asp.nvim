@@ -700,13 +700,22 @@ local function build(bufnr)
   if not has_js_parser() then return nil end
 
   local parser = vim.treesitter.get_parser(bufnr)
-  -- parse(true): la capa html es una inyección y sólo existe con las
-  -- injections resueltas (igual que en asp.symbols.identifier_at).
-  local root = parser:parse(true)[1]:root()
+  local root = parser:parse({ 0, 1 })[1]:root()
   local html = parser:children().html
 
   local data = new_data()
   if not html then return data end
+  -- El índice tiene su propio JS con los bloques ASP enmascarados. Sólo
+  -- necesita el árbol HTML; parse(true) también parsearía el JS original.
+  if not html:is_valid(true) then
+    local content = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), '\n')
+    local isolated = vim.treesitter.get_string_parser(content, 'html', {
+      injections = { html = '' },
+    })
+    isolated:set_included_regions(html:included_regions())
+    isolated:parse(true)
+    html = isolated
+  end
   index_page(data, html, bufnr, asp_blocks(root))
   return data
 end

@@ -170,6 +170,24 @@ describe('asp.semantic_tokens', function()
     assert.are.equal('function/', kind(tokens, 'saludar("total")', 'saludar'))
   end)
 
+  it('los tokens de una página fría no requieren dos árboles de JavaScript', function()
+    vim.cmd('noautocmd enew')
+    vim.cmd('noautocmd setlocal filetype=asp')
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, {
+      '<% Dim total %>', '<script>',
+      'function sumar(x) { return x + 1; }', 'sumar(2);', '</script>',
+    })
+    local actual = decode(semantic.full(0).data)
+    assert.are.equal('variable/declaration', kind(actual, 'Dim total', 'total'))
+    assert.are.equal('function/declaration', kind(actual, 'function sumar', 'sumar'))
+    assert.are.equal('function/', kind(actual, 'sumar(2)', 'sumar'))
+    local languages = {}
+    vim.treesitter.get_parser(0):for_each_tree(function(_, tree)
+      languages[tree:lang()] = true
+    end)
+    assert.is_nil(languages.javascript)
+  end)
+
   it('no hay tokens sobre HTML, strings ni comentarios', function()
     for _, t in ipairs(tokens) do
       assert.is_truthy(t.text:match('^[%a_$][%w_$]*$'), t.text)
