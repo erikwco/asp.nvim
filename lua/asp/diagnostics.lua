@@ -386,13 +386,25 @@ local function vbscript_family(ctx, undeclared, unknown_call)
     if (use.use or use.call or use.stmt) and not in_error then
       local line = ctx.lines[use.lnum + 1]
       local before = line:sub(1, use.col)
+      local row = use.lnum
+      while before:match('^%s*$') and row > 0 do
+        local continued = ctx.lines[row]:match('^(.-)%s_%s*$')
+        if not continued then break end
+        before, row = continued .. before, row - 1
+      end
+      local after = line:sub(use.end_col + 1)
+      row = use.lnum + 2
+      while after:match('^%s+_%s*$') and ctx.lines[row] do
+        after, row = ctx.lines[row], row + 1
+      end
       local prev = before:match('([%a_][%w_]*)%s*$')
       prev = prev and prev:lower()
       -- `nombre(` es llamada o índice aunque el árbol diga otra cosa: la
       -- gramática lee `x = f(1) + g(2)` como `x = f` seguido de `(1) + g(2)`.
-      local call = use.call or line:find('^%s*%(', use.end_col + 1) ~= nil
+      local call = (prev == 'call' and not after:find('^%s*%.'))
+        or use.call or after:find('^%s*%(') ~= nil
       if not option_explicit and not ((prev == 'new' or prev == 'call')
-          and not line:find('^%s*%.', use.end_col + 1)) then
+          and not after:find('^%s*%.')) then
         -- Sin Option Explicit: ni variables ni `Call obj.Metodo`, cuyo
         -- objeto pudo declararse al asignarlo.
       elseif prev == 'new' then

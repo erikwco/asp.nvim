@@ -473,6 +473,16 @@ describe('diagnósticos de VBScript', function()
     end)
   end)
 
+  it('Call y New sin Option Explicit admiten continuación de línea', function()
+    in_temp({ ['p.asp'] = { '<%', 'Call _', '  Ausente()', 'Set x = New _', '  Falta',
+      'Call obj _', '  .Metodo()', '%>' } }, function(dir)
+      local ds = of(diags_at(dir .. '/p.asp'), 'unknown_call')
+      assert.are.equal(2, #ds)
+      assert.is_truthy(ds[1].message:find('Ausente', 1, true))
+      assert.is_truthy(ds[2].message:find('Falta', 1, true))
+    end)
+  end)
+
   describe('refresco', function()
     it('un guardado detecta includes y enlaces renombrados o borrados desde disco', function()
       in_temp({
