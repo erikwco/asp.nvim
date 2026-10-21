@@ -180,6 +180,18 @@ describe('diagnósticos de VBScript', function()
       end)
     end)
 
+    it('reconoce Option Explicit tras Rem en un include transitivo virtual', function()
+      in_temp({
+        ['inc/base.inc'] = { '<!--#include file="opciones.inc" -->' },
+        ['inc/opciones.inc'] = { '<%', 'Rem cabecera del sitio', 'Option Explicit', '%>' },
+        ['p.asp'] = { '<!--#include virtual="/inc/base.inc" -->', '<% suelta = Ausente(1) %>' },
+      }, function(dir)
+        local ds = diags_at(dir .. '/p.asp')
+        assert.are.same({ 'suelta' }, texts(of(ds, 'undeclared')))
+        assert.are.same({ 'Ausente' }, texts(of(ds, 'unknown_call')))
+      end)
+    end)
+
     it('un include sin resolver apaga la revisión de nombres', function()
       in_temp({
         ['p.asp'] = { '<!--#include file="falta.inc" -->', '<% Option Explicit', 'suelta = 1', 'NoExiste %>' },
@@ -250,6 +262,25 @@ describe('diagnósticos de VBScript', function()
         local ds = diags_at(dir .. '/p.asp')
         assert.are.same({ 'suelta' }, texts(of(ds, 'undeclared')))
         assert.are.same({}, of(ds, 'dynamic'))
+      end)
+    end)
+
+    it('Rem en includes no ejecuta código dinámico ni oculta declaraciones', function()
+      in_temp({
+        ['inc/lib.inc'] = {
+          '<%', 'Rem Execute "no ejecutar"', 'Rem ejemplo: Function Rota(',
+          'Dim valor', 'Function Utilidad()', 'Utilidad = valor', 'End Function', '%>',
+        },
+        ['p.asp'] = {
+          '<!--#include file="inc/lib.inc" -->', '<%', 'Option Explicit',
+          'valor = Utilidad()', 'suelta = Ausente(1)', '%>',
+        },
+      }, function(dir)
+        local ds = diags_at(dir .. '/p.asp')
+        assert.are.same({}, of(ds, 'dynamic'))
+        assert.are.same({}, of(ds, 'syntax'))
+        assert.are.same({ 'suelta' }, texts(of(ds, 'undeclared')))
+        assert.are.same({ 'Ausente' }, texts(of(ds, 'unknown_call')))
       end)
     end)
   end)

@@ -1,5 +1,31 @@
 local M = {}
 
+---Columna (0-indexada) donde empieza un comentario `Rem` en `line`, o nil.
+local function rem_col(line)
+  local init = 1
+  while true do
+    local s, e = line:find('[Rr][Ee][Mm]', init)
+    if not s then return nil end
+    local before = line:sub(1, s - 1)
+    if not line:sub(e + 1, e + 1):match('[%w_]')
+      and (before:match('^%s*$') or before:match(':%s*$') or before:match('<%%%s*$')) then
+      return s - 1
+    end
+    init = e + 1
+  end
+end
+
+---Normaliza Rem antes de parsear VBScript en buffers e includes, sin
+---cambiar la cantidad de bytes ni las posiciones del texto original.
+---@param content string
+---@return string
+function M.source(content)
+  return (content:gsub('[^\n]+', function(line)
+    local col = line:find('[Rr][Ee][Mm]') and rem_col(line)
+    if col then return line:sub(1, col) .. "'" .. line:sub(col + 2) end
+  end))
+end
+
 -- Recorrido de un árbol VBScript en una sola query para los diagnósticos
 -- (asp.diagnostics): usos de identificadores con su contexto, las
 -- declaraciones que asp.symbols no recoge (ReDim, variable de For),

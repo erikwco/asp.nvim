@@ -196,7 +196,8 @@ local function parse_content(content)
   -- árbol vbscript. LanguageTree no tiene `set_included_ranges`, y parse()
   -- sin argumentos NO reparsea regiones incluidas no vacías: hace falta
   -- parse(true).
-  local vp = vim.treesitter.get_string_parser(content, 'vbscript')
+  local source = require('asp.vbscript_scan').source(content)
+  local vp = vim.treesitter.get_string_parser(source, 'vbscript')
   vp:set_included_regions({ code_nodes })
   return vp:parse(true)[1]:root()
 end

@@ -128,46 +128,12 @@ local function syntax_errors(root)
   return out
 end
 
----Columna (0-indexada) donde empieza un comentario `Rem` en `line`, o nil.
-local function rem_col(line)
-  local init = 1
-  while true do
-    local s, e = line:find('[Rr][Ee][Mm]', init)
-    if not s then return nil end
-    local before = line:sub(1, s - 1)
-    if not line:sub(e + 1, e + 1):match('[%w_]')
-      and (before:match('^%s*$') or before:match(':%s*$') or before:match('<%%%s*$')) then
-      return s - 1
-    end
-    init = e + 1
-  end
-end
-
----Texto que parsea la capa VBScript: el del buffer con cada comentario
----`Rem` escrito como `'` del mismo largo (`Rem x` → `'em x`). La gramática
----no conoce `Rem`: lo lee como código y el texto libre que sigue puede
----arrastrar al error las declaraciones de las líneas siguientes. Las
----posiciones no cambian.
----@param lines string[]
----@return string
-local function vbscript_source(lines)
-  local out
-  for i, line in ipairs(lines) do
-    local col = line:find('[Rr][Ee][Mm]') and rem_col(line)
-    if col then
-      out = out or vim.list_slice(lines)
-      out[i] = line:sub(1, col) .. "'" .. line:sub(col + 2)
-    end
-  end
-  return table.concat(out or lines, '\n')
-end
-
 -- Contexto de un refresh: lo que comparten las familias, calculado una vez.
 local function context(bufnr)
   local ctx = { bufnr = bufnr }
   ctx.lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   ctx.content = table.concat(ctx.lines, '\n')
-  ctx.vcontent = vbscript_source(ctx.lines)
+  ctx.vcontent = require('asp.vbscript_scan').source(ctx.content)
   return ctx
 end
 
