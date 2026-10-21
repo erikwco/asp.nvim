@@ -279,6 +279,18 @@ describe('asp.rename rename', function()
     assert.are.same({ 'validarFormulario' }, covered(edit))
   end)
 
+  it('una función JS declarada en la página cambia su declaración y el onload', function()
+    open('pagina.asp')
+    local edit, err = rename.rename(0, pos_in('function iniciar', 'iniciar'), 'arrancar')
+    assert.is_nil(err)
+    assert.are.same({
+      ['pagina.asp'] = {
+        ('%d:14'):format(pos_in('<body onload=').line),
+        ('%d:9'):format(pos_in('function iniciar').line),
+      },
+    }, edits_of(edit))
+  end)
+
   it('rechaza un nombre nuevo inválido, reservado o igual al actual', function()
     open('pagina.asp')
     local vbs, js = pos_in('total = 0'), pos_in('  validarFormulario();')
@@ -386,6 +398,30 @@ describe('asp.rename rename', function()
     open('pagina.asp')
     local edit = assert(rename.rename(0, pos_in('Response.Write Redondear', 'Redondear'), 'Redondeo'))
     assert.are.equal(2, #edit.changes[lib])
+  end)
+
+  it('un identificador VBScript fundido entre dos <%= %> no tapa el JS del medio', function()
+    in_temp({
+      ['pagina.asp'] = table.concat({
+        '<%', 'Dim nombre, apellido', '%>',
+        '<p><%=nombre%></p>',
+        '<script>', 'function saludar() { return 1; }', '</script>',
+        '<p><%=apellido%></p>',
+        '<button onclick="saludar()">x</button>', '',
+      }, '\n'),
+    }, function(dir)
+      vim.cmd.edit(dir .. '/pagina.asp')
+      local pos = pos_in('function saludar', 'saludar')
+      -- La inyección combinada lee `nombre` y `apellido` como un solo
+      -- identificador que cruza el <script>.
+      local fused = require('asp.symbols').identifier_at(0, pos)
+      assert.is_not_nil(fused)
+      assert.are_not.equal(fused:start(), (fused:end_()))
+      assert.are.same({ range = {
+        start = pos, ['end'] = { line = pos.line, character = pos.character + 7 },
+      }, placeholder = 'saludar' }, rename.prepare(0, pos))
+      assert.are.same({ ['pagina.asp'] = 2 }, counts(assert(rename.rename(0, pos, 'hola')), dir))
+    end)
   end)
 
   it('latin1 y BOM: los edits caen en la columna del buffer', function()

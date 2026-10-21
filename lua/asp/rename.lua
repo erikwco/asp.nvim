@@ -106,6 +106,11 @@ local function vbscript_target(bufnr, position)
   if not node then return nil end
   local name = vim.treesitter.get_node_text(node, bufnr)
   local range = node_range(node)
+  -- La inyección combinada puede fundir el final de un bloque <% %> con
+  -- el comienzo de otro en un solo `identifier` que cruza el HTML y el JS
+  -- del medio (ver "Varios bloques <%= %>" en el README). Ese nodo no es
+  -- un nombre: la posición queda para las capas siguientes.
+  if range.start.line ~= range['end'].line or not name:match('^[%a_][%w_]*$') then return nil end
   local line = vim.api.nvim_buf_get_lines(bufnr, range.start.line, range.start.line + 1, true)[1]
   if symbols.after_dot(line, range.start.character) then
     return fail(('`%s` es un miembro de objeto: asp-ls no renombra miembros'):format(name))
@@ -288,7 +293,8 @@ local function javascript_locations(bufnr, position, _, new_name)
     return fail(('ya hay una declaración `%s` en el mismo alcance (%s:%d)'):format(new_name,
       vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ':t'), clash.node:range() + 1))
   end
-  return require('asp.js').references(bufnr, position)
+  -- Solo las ubicaciones: el segundo valor de references es el binding.
+  return (require('asp.js').references(bufnr, position))
 end
 
 ---WorkspaceEdit con un TextEdit por ubicación, sin rangos repetidos y en

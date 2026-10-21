@@ -37,7 +37,7 @@ function iniciar() {
 }
 </script>
 </head>
-<body>
+<body onload="iniciar()">
 <div class="caja">
 <button onclick="validarFormulario()">Enviar</button>
 </div>
