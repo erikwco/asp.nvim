@@ -511,6 +511,18 @@ describe('alcance y cachés de ayuda', function()
     assert.is_nil(hover.hover(0, { line = 2, character = 9 }))
   end)
 
+  it('el hover de un miembro de una clase del usuario muestra su declaración', function()
+    code({ 'Class Cuenta', 'Public Function Depositar(monto)', 'Me.Registrar monto', 'End Function',
+      'Private Sub Registrar(monto)', 'End Sub', 'End Class',
+      'Set c = New Cuenta', 'c.Depositar 1', 'c.Len' })
+    local value = hover.hover(0, { line = 3, character = 4 }).contents.value
+    assert.is_truthy(value:find('Private Sub Registrar(monto)', 1, true))
+    value = hover.hover(0, { line = 9, character = 3 }).contents.value
+    assert.is_truthy(value:find('Public Function Depositar(monto)', 1, true))
+    -- Tras un punto, un nombre nativo no es la función nativa.
+    assert.is_nil(hover.hover(0, { line = 10, character = 3 }))
+  end)
+
   it('muestra también los literales nativos y omite comentarios Rem', function()
     code({ 'x = True', 'Rem Len("x")' })
     assert.is_truthy(hover.hover(0, { line = 1, character = 5 }).contents.value:find('True = -1', 1, true))

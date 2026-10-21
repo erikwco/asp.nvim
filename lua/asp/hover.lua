@@ -9,6 +9,14 @@ local function md(value)
   return { contents = { kind = 'markdown', value = value } }
 end
 
+-- Primera línea de la declaración del usuario y, si viene de un include,
+-- el nombre de su archivo.
+local function declaration(entry)
+  local value = ('```vbscript\n%s\n```'):format(entry.declaration)
+  if entry.file then value = value .. '\n\nArchivo: `' .. vim.fn.fnamemodify(entry.file, ':t') .. '`.' end
+  return md(value)
+end
+
 -- ¿El nodo es el MIEMBRO de un member_expression? Devuelve el texto del
 -- objeto (primary_expression.identifier) si lo es.
 local function object_of_member(node, bufnr)
@@ -36,7 +44,7 @@ function M.hover(bufnr, position)
   if node:type() ~= 'identifier' and not literals[node:type()] then return nil end
   local text = vim.treesitter.get_node_text(node, bufnr)
 
-  -- 1. ¿miembro de un objeto intrínseco?
+  -- 1. ¿miembro de un objeto intrínseco o COM?
   local obj_text = object_of_member(node, bufnr)
   if obj_text then
     local m = intrinsics.member(obj_text, text)
@@ -48,9 +56,20 @@ function M.hover(bufnr, position)
     if m then
       return md(signature_info.markdown(m) .. '\n\nTipo: `' .. obj.name .. '`.')
     end
-    return nil
   end
-  if node:parent() and node:parent():type() == 'member_expression' then return nil end
+
+  -- Un miembro sin ayuda de catálogo (`Me.Registrar`, `p.Saludar`, `a.b.c`)
+  -- es el de una clase del usuario, ni nativo ni tipo. Si el árbol no ve la
+  -- clase (un error de sintaxis antes), se busca por nombre como antes.
+  if node:parent() and node:parent():type() == 'member_expression' then
+    for _, entry in ipairs(symbols.help(bufnr).entries) do
+      if entry.class_id and not entry.scope_id and entry.name:lower() == text:lower() then
+        return declaration(entry)
+      end
+    end
+    local entry = symbols.named(bufnr, position, text)
+    return entry and declaration(entry) or nil
+  end
 
   local inferred = require('asp.types').infer(bufnr, position, text)
   if inferred then
@@ -70,11 +89,7 @@ function M.hover(bufnr, position)
   end
 
   local entry = symbols.named(bufnr, position, text)
-  if entry then
-    local value = ('```vbscript\n%s\n```'):format(entry.declaration)
-    if entry.file then value = value .. '\n\nArchivo: `' .. vim.fn.fnamemodify(entry.file, ':t') .. '`.' end
-    return md(value)
-  end
+  if entry then return declaration(entry) end
   return nil
 end
 
