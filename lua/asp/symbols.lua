@@ -886,6 +886,26 @@ function M.references(bufnr, position, opts)
   return out, binding
 end
 
+---Nodos `identifier` del árbol VBScript del buffer, en orden del
+---documento: el mismo árbol que recorren collect y references.
+---@param bufnr integer
+---@return TSNode[]
+function M.identifiers(bufnr)
+  local out = {}
+  local ok, parser = pcall(vim.treesitter.get_parser, bufnr)
+  if not ok or not parser then return out end
+  parser:parse(true)
+  local child = parser:children().vbscript
+  if not child then return out end
+  local iq = vim.treesitter.query.parse('vbscript', IDENT_QUERY)
+  for _, tree in ipairs(child:trees()) do
+    for _, n in iq:iter_captures(tree:root(), bufnr) do
+      out[#out + 1] = n
+    end
+  end
+  return out
+end
+
 ---Busca símbolos en todo el árbol de `root_dir` cuyo nombre contenga
 ---`query_str` (case-insensitive; string vacío matchea todo). Excluye
 ---build/, parser/ y grammars/ — directorios del propio plugin (clones de

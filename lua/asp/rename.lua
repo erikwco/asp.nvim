@@ -101,19 +101,82 @@ local function validate_javascript(new, old)
   return nil
 end
 
+---Texto de un `identifier` VBScript y si está fundido. La inyección
+---combinada puede fundir el final de un bloque <% %> con el comienzo de
+---otro en un solo `identifier` que cruza el HTML y el JS del medio (ver
+---"Varios bloques <%= %>" en el README): cruza líneas o su texto no es el
+---de un nombre.
+---@return string text
+---@return boolean fused
+local function identifier_text(node, bufnr)
+  local text = vim.treesitter.get_node_text(node, bufnr)
+  local r0, _, r1 = node:range()
+  return text, r0 ~= r1 or not text:match('^[%a_][%w_]*$')
+end
+
+---¿`text` contiene `name` (en minúsculas) como palabra entera, sin
+---distinguir mayúsculas?
+local function has_word(text, name)
+  return text:lower():find('%f[%w_]' .. vim.pesc(name) .. '%f[^%w_]') ~= nil
+end
+
+local CODE_QUERY = '(code) @code'
+
+---Fila (0-indexed) de un uso de `name` (en minúsculas) que un
+---identificador fundido oculta, o nil. Solo cuentan los tramos de código
+---que la inyección juntó en el nodo (los `code` de la plantilla, recortados
+---a su rango): el HTML y el JS del medio, que pueden ser miles de líneas,
+---no los lee VBScript. La plantilla ya está parseada: es el árbol raíz del
+---buffer.
+local function hidden_use(node, bufnr, name)
+  local r0, _, sb = node:start()
+  local r1, _, eb = node:end_()
+  local root = vim.treesitter.get_parser(bufnr):trees()[1]:root()
+  local query = vim.treesitter.query.parse('aspclassic', CODE_QUERY)
+  for _, code in query:iter_captures(root, bufnr, r0, r1 + 1) do
+    local crow, _, csb = code:start()
+    local _, _, ceb = code:end_()
+    if ceb > sb and csb < eb then
+      local from = math.max(sb, csb)
+      local part = vim.treesitter.get_node_text(code, bufnr):sub(from - csb + 1, math.min(eb, ceb) - csb)
+      if has_word(part, name) then return from == sb and r0 or crow end
+    end
+  end
+  return nil
+end
+
+---Rechazo por un uso de `name` oculto en un identificador fundido, en la
+---fila `row`: references no lo ve, así que el rename no lo cambiaría o no
+---sabría si choca con el nombre nuevo. Separado con espacios, el bloque ya
+---no se funde.
+local function fused_message(row, name)
+  return ('en la línea %d, un `<%%= %%>` sin espacios queda fundido con otro bloque y oculta '
+    .. 'usos de `%s`: escribilo con espacios (`<%%= %s %%>`) antes de renombrar')
+    :format(row + 1, name, name)
+end
+
+---Primer uso de `name` (en minúsculas) oculto en un identificador fundido
+---del buffer (ver hidden_use): su fila, o nil.
+local function fused_use(bufnr, name)
+  for _, node in ipairs(require('asp.symbols').identifiers(bufnr)) do
+    local _, fused = identifier_text(node, bufnr)
+    local row = fused and hidden_use(node, bufnr, name)
+    if row then return row end
+  end
+  return nil
+end
+
 ---Identificador VBScript bajo el cursor que se puede renombrar. Devuelve
 ---nil sin error si la posición no es un identificador VBScript.
 local function vbscript_target(bufnr, position)
   local symbols = require('asp.symbols')
   local node = symbols.identifier_at(bufnr, position)
   if not node then return nil end
-  local name = vim.treesitter.get_node_text(node, bufnr)
+  -- Un identificador fundido no es un nombre: la posición queda para las
+  -- capas siguientes.
+  local name, fused = identifier_text(node, bufnr)
+  if fused then return nil end
   local range = node_range(node)
-  -- La inyección combinada puede fundir el final de un bloque <% %> con
-  -- el comienzo de otro en un solo `identifier` que cruza el HTML y el JS
-  -- del medio (ver "Varios bloques <%= %>" en el README). Ese nodo no es
-  -- un nombre: la posición queda para las capas siguientes.
-  if range.start.line ~= range['end'].line or not name:match('^[%a_][%w_]*$') then return nil end
   if symbols.is_member(node, bufnr) then
     return fail(('`%s` es un miembro de objeto: asp-ls no renombra miembros'):format(name))
   end
@@ -124,6 +187,9 @@ local function vbscript_target(bufnr, position)
   if not symbols.definition(bufnr, position) then
     return fail(('`%s` no tiene una declaración en la página ni en sus includes'):format(name))
   end
+  -- Un uso dentro de un identificador fundido quedaría sin cambiar.
+  local row = fused_use(bufnr, name:lower())
+  if row then return fail(fused_message(row, name)) end
   return { lang = 'vbscript', name = name, range = range }
 end
 

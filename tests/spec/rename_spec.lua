@@ -495,6 +495,44 @@ describe('asp.rename rename', function()
     end)
   end)
 
+  it('rechaza el rename si un <%= %> sin espacios funde usos del nombre', function()
+    in_temp({
+      ['fundido.asp'] = table.concat({
+        '<%', 'Dim total', 'total = 1', '%>', '<p><%=total%></p>', '<div>', '<p><%=total%></p>', '',
+      }, '\n'),
+      -- `total` solo aparece en el HTML que separa dos bloques fundidos.
+      ['html.asp'] = table.concat({
+        '<%', 'Dim total', 'total = 1', '%>', '<p><%=cuenta%></p>', '<p>total del pedido</p>', '<p><%=otro%></p>', '',
+      }, '\n'),
+    }, function(dir)
+      vim.cmd.edit(dir .. '/fundido.asp')
+      local pos = pos_in('Dim total', 'total')
+      -- Ya en prepare: las dos salidas quedarían con `total`.
+      for _, res_err in ipairs({ { rename.prepare(0, pos) }, { rename.rename(0, pos, 'saldo') } }) do
+        assert.is_nil(res_err[1])
+        assert.are.equal(-32602, res_err[2].code)
+        assert.is_truthy(res_err[2].message:find('en la línea 5', 1, true), res_err[2].message)
+        assert.is_truthy(res_err[2].message:find('(`<%= total %>`)', 1, true), res_err[2].message)
+      end
+      -- Solo cuenta el código que se fundió, no el HTML del medio.
+      vim.cmd.edit(dir .. '/html.asp')
+      pos = pos_in('Dim total', 'total')
+      assert.are.equal('total', rename.prepare(0, pos).placeholder)
+      assert.are.same({ ['html.asp'] = 2 }, counts(assert(rename.rename(0, pos, 'saldo')), dir))
+    end)
+  end)
+
+  it('acepta <%= %> con espacios separados por HTML y los renombra todos', function()
+    local page = { '<%', 'Dim total', 'total = 1', '%>', '<p><%= total %></p>', '<div>', '<p><%= total %></p>' }
+    in_temp({ ['pagina.asp'] = table.concat(page, '\n') .. '\n' }, function(dir)
+      vim.cmd.edit(dir .. '/pagina.asp')
+      local edit = assert(rename.rename(0, pos_in('Dim total', 'total'), 'saldo'))
+      vim.lsp.util.apply_workspace_edit(edit, 'utf-8')
+      assert.are.same({ '<%', 'Dim saldo', 'saldo = 1', '%>', '<p><%= saldo %></p>', '<div>', '<p><%= saldo %></p>' },
+        buffer_lines(dir .. '/pagina.asp'))
+    end)
+  end)
+
   for _, origin in ipairs({ 'pagina.asp', 'lib.inc', 'otra.asp' }) do
     it('aplica el rename de sitio desde ' .. origin .. ' con el buffer actual modificado', function()
       local lib = '\239\187\191<%\r\nFunction Mezclar(a, b)\r\n  Mezclar = a + b\r\nEnd Function\r\n%>\r\n'
