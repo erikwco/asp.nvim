@@ -338,10 +338,17 @@ local function vbscript_family(ctx, undeclared, unknown_call)
     end
   end
   -- Un error de sintaxis puede tragarse una declaración (`Const A = 1,
-  -- B = 2` deja a B dentro del ERROR): todo nombre que aparece dentro de
-  -- uno cuenta como declarado, para no reportar sus usos de más abajo.
+  -- B = 2`): todo nombre de una línea que toca un error cuenta como
+  -- declarado, para no reportar sus usos de más abajo. Por líneas y no por
+  -- el texto del nodo porque la forma del ERROR cambia con la versión de
+  -- tree-sitter de cada Neovim.
+  local error_rows = {}
   for _, node in ipairs(ctx.errors) do
-    for word in vim.treesitter.get_node_text(node, ctx.vcontent):gmatch('[%a_][%w_]*') do
+    local r0, _, r1 = node:range()
+    for row = r0, r1 do error_rows[row] = true end
+  end
+  for row in pairs(error_rows) do
+    for word in (ctx.lines[row + 1] or ''):gmatch('[%a_][%w_]*') do
       page[word:lower()] = true
     end
   end
