@@ -149,6 +149,22 @@ describe('diagnósticos de VBScript', function()
       assert.are.same({ 'total' }, texts(ds))
     end)
 
+    it('reconoce las constantes nativas de fechas, comparación y MsgBox', function()
+      in_temp({
+        ['p.asp'] = {
+          '<%', 'Option Explicit', 'Dim valor',
+          'valor = DatePart("ww", Date, vbSunday, vbUseSystem)',
+          'valor = vbDatabaseCompare',
+          'valor = vbMsgBoxHelpButton + vbMsgBoxSetForeground + vbMsgBoxRight + vbMsgBoxRtlReading',
+          'valor = vbConstanteInventada', '%>',
+        },
+      }, function(dir)
+        local ds = diags_at(dir .. '/p.asp')
+        assert.are.same({ 'vbConstanteInventada' }, texts(ds))
+        assert.are.equal('undeclared', ds[1].code)
+      end)
+    end)
+
     it('sin Option Explicit no reporta variables ni llamadas', function()
       local ds = diags_at(DIAG .. '/sin_explicit.asp')
       assert.are.same({}, of(ds, 'undeclared'))

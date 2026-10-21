@@ -46,10 +46,10 @@ M.groups = {
     'vbCr', 'vbCrLf', 'vbFormFeed', 'vbLf', 'vbNewLine', 'vbNullChar',
     'vbNullString', 'vbTab', 'vbVerticalTab',
     -- Comparación.
-    'vbBinaryCompare', 'vbTextCompare',
+    'vbBinaryCompare', 'vbTextCompare', 'vbDatabaseCompare',
     -- Fechas: días, primera semana y formatos.
     'vbSunday', 'vbMonday', 'vbTuesday', 'vbWednesday', 'vbThursday',
-    'vbFriday', 'vbSaturday', 'vbUseSystemDayOfWeek', 'vbFirstJan1',
+    'vbFriday', 'vbSaturday', 'vbUseSystem', 'vbUseSystemDayOfWeek', 'vbFirstJan1',
     'vbFirstFourDays', 'vbFirstFullWeek', 'vbGeneralDate', 'vbLongDate',
     'vbShortDate', 'vbLongTime', 'vbShortTime',
     -- Tres estados (FormatNumber y familia).
@@ -67,7 +67,8 @@ M.groups = {
     'vbExclamation', 'vbInformation', 'vbDefaultButton1',
     'vbDefaultButton2', 'vbDefaultButton3', 'vbDefaultButton4',
     'vbApplicationModal', 'vbSystemModal', 'vbOK', 'vbCancel', 'vbAbort',
-    'vbRetry', 'vbIgnore', 'vbYes', 'vbNo',
+    'vbRetry', 'vbIgnore', 'vbYes', 'vbNo', 'vbMsgBoxHelpButton',
+    'vbMsgBoxSetForeground', 'vbMsgBoxRight', 'vbMsgBoxRtlReading',
     -- Errores.
     'vbObjectError',
   },
