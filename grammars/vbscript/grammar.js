@@ -52,19 +52,19 @@ module.exports = grammar({
     ),
 
     sub_statement: $ => seq(
-      optional(choice(ci('Public'), ci('Private'), ci('Friend'), ci('Static'))),
+      optional(choice(seq(ci('Public'), optional(ci('Default'))), ci('Private'), ci('Friend'), ci('Static'))),
       ci('Sub'), $.identifier, $._arg_list,
       optional($.block), ci('End'), ci('Sub'),
     ),
 
     function_statement: $ => seq(
-      optional(choice(ci('Public'), ci('Private'), ci('Friend'), ci('Static'))),
+      optional(choice(seq(ci('Public'), optional(ci('Default'))), ci('Private'), ci('Friend'), ci('Static'))),
       ci('Function'), $.identifier, $._arg_list,
       optional($.block), ci('End'), ci('Function'),
     ),
 
     property_statement: $ => seq(
-      optional(choice(ci('Public'), ci('Private'), ci('Static'))),
+      optional(choice(seq(ci('Public'), optional(ci('Default'))), ci('Private'), ci('Static'))),
       ci('Property'), choice(ci('Get'), ci('Let'), ci('Set')),
       $.identifier, $._arg_list,
       optional($.block), ci('End'), ci('Property'),
@@ -162,10 +162,13 @@ module.exports = grammar({
 
     select_case_statement: $ => seq(
       ci('Select'), ci('Case'), $.expression,
-      repeat($.case_clause), optional(seq(ci('Case'), ci('Else'), $.block)),
+      repeat($.case_clause), optional(seq(ci('Case'), ci('Else'), optional($.block))),
       ci('End'), ci('Select'),
     ),
-    case_clause: $ => seq(ci('Case'), choice($.expression, seq(ci('Is'), $.expression)), optional($.block)),
+    case_clause: $ => seq(
+      ci('Case'), $._case_value, repeat(seq(',', $._case_value)), optional($.block),
+    ),
+    _case_value: $ => choice($.expression, seq(ci('Is'), $.expression)),
 
     on_error_statement: $ => seq(
       ci('On'), ci('Error'),
@@ -211,8 +214,10 @@ module.exports = grammar({
 
     const_statement: $ => seq(
       optional(choice(ci('Public'), ci('Private'))),
-      ci('Const'), $.identifier, '=', $.expression,
+      ci('Const'), $._const_item, repeat(seq(',', $._const_item)),
     ),
+
+    _const_item: $ => seq($.identifier, '=', $.expression),
 
     // === Expressions ===
     expression: $ => choice(
@@ -239,7 +244,7 @@ module.exports = grammar({
     binary_expression: $ => choice(
       prec.left(1, seq($.expression, choice('+', '-', '*', '/', '\\', ci('Mod'), '^'), $.expression)),
       prec.left(2, seq($.expression, '&', $.expression)),
-      prec.left(3, seq($.expression, choice('=', '<>', '<', '>', '<=', '>='), $.expression)),
+      prec.left(3, seq($.expression, choice('=', '<>', '<', '>', '<=', '>=', ci('Is')), $.expression)),
       prec.left(4, seq($.expression, choice(ci('And'), ci('Or'), ci('Xor'), ci('Eqv'), ci('Imp')), $.expression)),
     ),
 

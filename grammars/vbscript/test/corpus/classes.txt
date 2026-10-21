@@ -46,3 +46,32 @@ End Class
             (expression
               (primary_expression
                 (identifier)))))))))
+
+==================
+miembros default
+==================
+Class Lista
+  Public Default Function Item(i)
+    Item = i
+  End Function
+  Public Default Property Get Valor()
+  End Property
+End Class
+---
+
+(source_file
+  (class_statement
+    name: (identifier)
+    (function_statement
+      (identifier)
+      (identifier)
+      (block
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (identifier))))))
+    (property_statement
+      (identifier))))

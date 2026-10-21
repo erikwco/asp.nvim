@@ -12,3 +12,30 @@ Dim a(10), b(), x
         (number_literal)))
     (identifier)
     (identifier)))
+
+==================
+const con varias constantes
+==================
+Const A = 1, B = 2
+Private Const C = 3, D = "x"
+---
+
+(source_file
+  (const_statement
+    (identifier)
+    (expression
+      (primary_expression
+        (number_literal)))
+    (identifier)
+    (expression
+      (primary_expression
+        (number_literal))))
+  (const_statement
+    (identifier)
+    (expression
+      (primary_expression
+        (number_literal)))
+    (identifier)
+    (expression
+      (primary_expression
+        (string_literal)))))
