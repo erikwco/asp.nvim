@@ -24,13 +24,18 @@ describe('asp-ls', function()
   end)
 
   it('anuncia la versión de la última entrada del changelog', function()
+    -- Neovim 0.10 no guarda serverInfo en el cliente: se le pregunta al
+    -- servidor in-process con su propio initialize.
     local client = vim.lsp.get_clients({ bufnr = 0, name = 'asp-ls' })[1]
-    assert.are.equal('0.7.0', client.server_info.version)
+    local info
+    client.config.cmd({}).request('initialize', {}, function(_, result) info = result.serverInfo end)
+    assert.are.equal('asp-ls', info.name)
+    assert.are.equal('0.7.0', info.version)
     local f = assert(io.open('doc/asp.txt', 'r'))
     local text = f:read('*a')
     f:close()
     local newest = text:match('%*asp%-cambios%*.-\n[%d.]+ → ([%d.]+) ~')
-    assert.are.equal(client.server_info.version, newest)
+    assert.are.equal(info.version, newest)
   end)
 
   local function request(method, params)

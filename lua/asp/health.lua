@@ -125,8 +125,10 @@ function M.check_server(health)
   local list = table.concat(methods, ', ')
   local asp_clients = vim.lsp.get_clients({ name = 'asp-ls' })
   if #asp_clients > 0 then
-    local info = asp_clients[1].server_info or {}
-    health.ok(('asp-ls %s activo (%d cliente(s)): %s'):format(info.version or '', #asp_clients, list))
+    -- Neovim 0.10 no guarda el serverInfo del initialize.
+    local version = (asp_clients[1].server_info or {}).version
+    health.ok(('asp-ls%s activo (%d cliente(s)): %s'):format(version and ' ' .. version or '',
+      #asp_clients, list))
   else
     health.info('asp-ls se adjunta al abrir un .asp o .inc y responde ' .. list)
   end
