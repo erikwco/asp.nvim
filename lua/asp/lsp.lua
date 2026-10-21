@@ -97,10 +97,14 @@ end
 M.handlers['textDocument/hover'] = function(params)
   local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
   return require('asp.hover').hover(bufnr, params.position)
+    or require('asp.js_help').hover(bufnr, params.position)
 end
 
 M.handlers['textDocument/completion'] = function(params)
   local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
+  if require('asp.js').region_at(bufnr, params.position) then
+    return require('asp.js_help').complete(bufnr, params.position) or {}
+  end
   return require('asp.completion').complete(bufnr, params.position)
 end
 
@@ -124,6 +128,7 @@ M.handlers['textDocument/signatureHelp'] = function(params)
   local ok, result = pcall(function()
     local bufnr = vim.uri_to_bufnr(params.textDocument.uri)
     return require('asp.signature').help(bufnr, params.position)
+      or require('asp.js_help').signature(bufnr, params.position)
   end)
   return ok and result or nil
 end

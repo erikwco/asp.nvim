@@ -1,0 +1,105 @@
+local M = {}
+local js = require('asp.js')
+local dom = require('asp.dom')
+local context = require('asp.js_context')
+local info = require('asp.js_info')
+
+local keywords = {
+  'function', 'return', 'const', 'let', 'var', 'if', 'else', 'for', 'while',
+  'new', 'this', 'true', 'false', 'null', 'undefined', 'typeof', 'async', 'await',
+}
+
+local function catalog(bufnr, position, path)
+  local root = path:match('^[^.]+')
+  if js.named(bufnr, position, root) then return nil end
+  return dom.lookup(path)
+end
+
+local function hover(bufnr, position)
+  local ctx = js.region_at(bufnr, position)
+  local node = ctx and ctx.node
+  if not node then return nil end
+  local kind = node:type()
+  if kind ~= 'identifier' and kind ~= 'property_identifier'
+    and kind ~= 'shorthand_property_identifier' and kind ~= 'shorthand_property_identifier_pattern' then
+    return nil
+  end
+  local entry = js.named(bufnr, position)
+  if not entry then
+    local target = node
+    if kind == 'property_identifier' then
+      local parent = node:parent()
+      if not parent or parent:type() ~= 'member_expression' then return nil end
+      target = parent
+    end
+    local path = context.path(vim.treesitter.get_node_text(target, ctx.source))
+    entry = path and catalog(bufnr, position, path)
+  end
+  if entry then return { contents = { kind = 'markdown', value = info.markdown(entry) } } end
+end
+
+local function complete(bufnr, position)
+  local ctx = js.region_at(bufnr, position)
+  if not ctx then return nil end
+  local mask = context.mask(ctx)
+  if not mask then return {} end
+  local prefix = mask:match('([%w_$\128-\255]*)$') or ''
+  local before = mask:sub(1, #mask - #prefix)
+  local out, seen = {}, {}
+  local function add(entry)
+    if seen[entry.name] then return end
+    seen[entry.name] = true
+    if entry.name:sub(1, #prefix) ~= prefix then return end
+    out[#out + 1] = {
+      label = entry.name, kind = entry.kind, detail = entry.detail,
+      documentation = { kind = 'markdown', value = info.markdown(entry) },
+      sortText = ('%05d'):format(#out + 1),
+    }
+  end
+  if before:match('%.%s*$') then
+    local path = context.path((before:gsub('%.%s*$', '')))
+    if not path or js.named(bufnr, position, path:match('^[^.]+')) then return {} end
+    for _, entry in ipairs(dom.members(path) or {}) do add(entry) end
+    return out
+  end
+  for _, entry in ipairs(js.visible(bufnr, position) or {}) do add(entry) end
+  for _, entry in ipairs(dom.globals) do add(entry) end
+  if #prefix >= 2 then
+    for _, word in ipairs(keywords) do add({ name = word, kind = 14, detail = word }) end
+  end
+  return out
+end
+
+local function signature(bufnr, position)
+  local ctx = js.region_at(bufnr, position)
+  if not ctx then return nil end
+  local call = context.active(context.mask(ctx))
+  if not call then return nil end
+  -- Resuelve en el scope donde se abre la llamada, no en el de un
+  -- callback que el cursor pueda estar escribiendo entre sus argumentos.
+  local before = ctx.source:sub(ctx.range[3] + 1, ctx.range[3] + call.offset - 1)
+  local _, rows = before:gsub('\n', '')
+  position = { line = ctx.range[1] + rows,
+    character = rows == 0 and ctx.range[2] + #before or #before - before:match('.*()\n') }
+  local entry
+  if not call.name:find('.', 1, true) then entry = js.named(bufnr, position, call.name) end
+  entry = entry or catalog(bufnr, position, call.name)
+  if not entry or not entry.signature then return nil end
+  return {
+    signatures = { { label = entry.signature, parameters = entry.parameters,
+      documentation = { kind = 'markdown', value = info.markdown(entry) } } },
+    activeSignature = 0, activeParameter = call.parameter,
+  }
+end
+
+local function safe(fn, bufnr, position)
+  bufnr = bufnr == 0 and vim.api.nvim_get_current_buf() or bufnr
+  local ok, result = pcall(fn, bufnr, position)
+  return ok and result or nil
+end
+
+function M.hover(bufnr, position) return safe(hover, bufnr, position) end
+function M.complete(bufnr, position) return safe(complete, bufnr, position) end
+function M.signature(bufnr, position) return safe(signature, bufnr, position) end
+
+return M
