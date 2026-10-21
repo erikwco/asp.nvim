@@ -17,7 +17,7 @@ describe('doc/asp.txt', function()
   end)
 
   it('documenta las capacidades LSP', function()
-    for _, cap in ipairs({ 'definition', 'references', 'hover', 'completion' }) do
+    for _, cap in ipairs({ 'definition', 'references', 'hover', 'completion', 'signatureHelp' }) do
       assert.is_true(text:find(cap, 1, true) ~= nil, 'falta: ' .. cap)
     end
   end)
