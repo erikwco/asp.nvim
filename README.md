@@ -114,7 +114,10 @@ homónima en otro archivo del conjunto sí cuenta: al incluirse, ASP junta
 todo en un único script y es la misma variable global, y en runtime gana la
 última definición. La definición no cambia: sigue el buffer y sus includes.
 El conjunto usa la raíz y el barrido de los [usos de una
-página](#usos-de-una-página).
+página](#usos-de-una-página). Los includes del buffer consultado son los
+de su contenido sin guardar; los de los demás archivos, los del disco. Un
+include que se crea o se borra entra o sale del conjunto en la siguiente
+consulta, también fuera de la raíz.
 
 ### JavaScript de cliente
 
@@ -284,9 +287,10 @@ frente a 115 y 17 ms antes de agregar esta caché.
 
 La primera búsqueda de usos de una página recorre y lee el sitio entero,
 y puede tardar segundos. Las siguientes comprueban mtime y tamaño y sólo
-releen archivos cambiados. Si se recorren al menos 2.000 archivos o la
-consulta tarda un segundo, se emite un único aviso INFO con la cantidad
-de archivos y el uso de caché en las siguientes consultas.
+releen archivos cambiados. Si la consulta lee al menos 2.000 archivos o
+tarda un segundo, se emite un único aviso INFO con la cantidad de
+archivos y el uso de caché en las siguientes consultas. Una consulta con
+la caché caliente no avisa, aunque el sitio sea grande.
 
 En Neovim 0.12.6 sobre Apple M4 Pro, 5.000 fuentes de unos 20 KB más el
 destino y cinco JS minificados tardaron 3.334 ms en la primera consulta y
@@ -298,14 +302,24 @@ Para repetir el caso con validación de rangos y lecturas:
 `nvim --headless -u NONE --cmd 'set rtp+=.' -l tests/bench/pages_references.lua`.
 
 Las referencias VBScript con alcance de sitio hacen ese mismo barrido y
-parsean solo la capa VBScript de los archivos del conjunto. Cada archivo
-guarda las ocurrencias de todos sus nombres por mtime y tamaño, así que con
-la caché caliente buscar cualquier símbolo no lee disco salvo los archivos
-cambiados. Emiten el mismo aviso INFO que los usos de páginas. Con 500
-páginas de ~2,9 KB que incluyen una librería de 50 funciones, la primera
-consulta tardó ~230 ms (~65 ms de barrido y el resto de parseo) y las
-siguientes ~8 ms, también para otro nombre y sin lecturas. Una página
-cambiada se relee sola. La caché ocupó ~1,8 MB.
+reutilizan lo que leyó: cada archivo se lee una vez por consulta. Solo
+parsean los archivos del conjunto que mencionan el nombre en su texto, y
+de ellos solo la capa VBScript. De cada archivo parseado guardan las
+ocurrencias de todos sus nombres por mtime y tamaño; de los demás, sus
+palabras. Con la caché caliente, buscar otro símbolo no lee disco salvo
+los archivos cambiados y los que recién ahora mencionan el nombre buscado.
+Emiten el mismo aviso INFO que los usos de páginas.
+
+Con 500 páginas de ~2,9 KB que incluyen una librería de 50 funciones, la
+primera consulta tardó ~200 ms y las siguientes ~8 ms, también para otro
+nombre y sin lecturas. La caché ocupó ~1,8 MB.
+
+En un sitio grande, la primera consulta bloquea Neovim varios segundos.
+Con 2.000 páginas de 20 KiB que usan todas el nombre buscado, tardó
+~5,1 s: ~1,2 s de barrido y ~4 s de parsear las 2.000 páginas. Las
+siguientes tardaron ~27 ms y la caché ocupó ~46 MB. Un nombre que ninguna
+página usa tardó ~1,7 s en frío, porque no hace falta parsear ninguna.
+Una página cambiada se relee sola.
 [Mediciones](tests/bench/symbols_site.md).
 
 ## Limitaciones conocidas
