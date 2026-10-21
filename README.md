@@ -2,9 +2,9 @@
 
 Soporte de Classic ASP (VBScript + HTML + JavaScript) para Neovim:
 resaltado por regiones vía tree-sitter y navegación LSP (ir a definición,
-referencias, símbolos, hover, completion y signatureHelp) incluyendo la
-resolución de `<!--#include -->` cross-file. Ver |asp.nvim| (`:help asp`)
-para el detalle.
+referencias, renombrar, símbolos, hover, completion y signatureHelp)
+incluyendo la resolución de `<!--#include -->` cross-file. Ver |asp.nvim|
+(`:help asp`) para el detalle.
 
 El VBScript de `<% %>`/`<%= %>` se parsea con gramática propia
 (`grammars/vbscript/`, fork de tree-sitter-vba), con resaltado de
@@ -290,6 +290,70 @@ vim.api.nvim_create_autocmd('LspAttach', {
 El ejemplo se registra cuando se adjunta `asp-ls`, también en `.inc` y
 extensiones en mayúsculas.
 
+### Renombrar símbolos
+
+`vim.lsp.buf.rename()` (o `grn` en Neovim 0.11+) renombra el símbolo
+VBScript o JavaScript bajo el cursor en todos los archivos donde lo
+encuentran las referencias. Antes de pedir el nombre nuevo,
+`prepareRename` comprueba la posición; si no se puede renombrar, Neovim
+muestra el motivo.
+
+- VBScript: la página, sus includes y las páginas del sitio que incluyen
+  la librería, directa o transitivamente, con el mismo alcance que [las
+  referencias](#vbscript-e-includes). Los locales y parámetros cambian solo
+  dentro de su Sub, Function o Property. Un cambio solo de mayúsculas
+  (`total` → `Total`) es válido y unifica todas las ocurrencias.
+- JavaScript: los `<script>` de la página, los atributos `on*`, las URLs
+  `javascript:`, los `.js` de `<script src>` y los includes. Distingue
+  mayúsculas.
+
+No se renombran los miembros de objeto (`rs.EOF`, `obj.Total`,
+`Me.Total`, `obj.metodo` en JS), los objetos intrínsecos de ASP, las
+funciones, constantes y palabras clave nativas de VBScript, los globales
+de JS sin declaración (`document`, un global implícito), los nombres de
+VBScript sin declaración resoluble (sin `Dim` y sin `Option Explicit`),
+los literales de página ni el HTML. Renombrar archivos está fuera de
+alcance.
+
+El nombre nuevo tiene que ser un identificador válido (VBScript:
+`^[A-Za-z][A-Za-z0-9_]*$`, hasta 255 caracteres; JavaScript:
+`^[A-Za-z_$][A-Za-z0-9_$]*$`) y distinto del actual. No puede ser una
+palabra clave, un nativo ni un intrínseco (en VBScript, sin distinguir
+mayúsculas) ni una palabra reservada de JavaScript. También se rechaza si
+ya hay una declaración con ese nombre en el mismo alcance: en el buffer y,
+para un símbolo de página de VBScript, en su grafo de includes.
+
+Límites:
+
+- Un miembro de clase (`Private total`) se renombra solo como
+  identificador suelto dentro de su clase: sus usos `Me.total` y
+  `obj.total` no cambian y hay que ajustarlos a mano. Si renombrar un
+  nombre de página tocaría una clase del mismo archivo con un miembro
+  homónimo, el rename se rechaza: las referencias todavía no separan ese
+  miembro del nombre de página. En los demás archivos del sitio, esa clase
+  cambia junto con el nombre de página.
+- No cambia los nombres dentro de strings de `Eval`, `Execute` o
+  `ExecuteGlobal`, los nombres armados en runtime, los strings de
+  JavaScript ni las páginas fuera de la raíz del sitio que incluyen la
+  librería.
+- Como las referencias, no ve los identificadores de varios `<%= %>` en
+  una misma línea (`<td><%=a%></td><td><%=b%></td>`): esos usos no
+  cambian. Poné cada `<%= %>` en su propia línea antes de renombrar.
+- Solo detecta los choques con declaraciones del mismo alcance: no avisa
+  si un local nuevo tapa un nombre de página que la Sub también usa, ni
+  si un global de JS choca con uno de un `.js` externo.
+- Las posiciones de los demás archivos salen del disco. Si alguno está
+  abierto con cambios sin guardar, el rename se rechaza hasta que lo
+  guardes.
+
+Neovim aplica el resultado abriendo los archivos de disco que cambia
+como buffers modificados sin guardar. Revisalos y guardalos con `:wa`:
+
+```vim
+:lua vim.lsp.buf.rename()
+:wa
+```
+
 ### Diagnósticos
 
 asp.nvim publica diagnósticos con `vim.diagnostic` (fuente `asp-ls`) en
@@ -497,6 +561,7 @@ Una página cambiada se relee sola.
   recorre con su grafo. Los demás archivos se leen de disco, sin los cambios
   sin guardar de otros buffers. Los usos se buscan por nombre, así que un
   miembro `obj.Total` cuenta como uso de un `Total` de página, igual que antes.
+  El [rename](#renombrar-símbolos) los omite.
 - `gf` y `C-w f` solo reconocen rutas con `/` como separador. Neovim corta
   el nombre en `\` en Unix. `C-]` y `vim.lsp.buf.definition()` sí normalizan
   `\` a `/`.
@@ -505,8 +570,8 @@ Una página cambiada se relee sola.
   injection combinada de VBScript (necesaria para que construcciones
   cruzadas como `<% If %>...<% End If %>` parseen como un solo programa);
   como resultado, hover/definición/referencias no resuelven identificadores
-  dentro de esos bloques adyacentes. Poné cada `<%= %>` en su propia línea
-  para navegación LSP completa.
+  dentro de esos bloques adyacentes, y el rename no los cambia. Poné cada
+  `<%= %>` en su propia línea para navegación LSP completa.
 - JavaScript entre archivos: de cada `.js` de `<script src>` y de cada
   include sólo se ven sus declaraciones globales. Gana el buffer, luego
   los `<script src>` en orden y después los includes en el orden del
