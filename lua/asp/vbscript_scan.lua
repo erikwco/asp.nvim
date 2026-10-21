@@ -37,18 +37,7 @@ local USES = [[
 (redim_statement (expression (function_call . (identifier) @decl)))
 ]]
 
--- Lo que hace falta de un include: sin usos, salvo los candidatos a Eval o
--- Execute (ver M.facts).
-local FACTS = [[
-[(sub_statement) (function_statement) (property_statement)] @scope
-(class_statement) @class
-(option_statement) @option
-(for_statement . (identifier) @decl)
-(for_each_statement . (identifier) @decl)
-(redim_statement (expression (primary_expression (identifier) @decl)))
-(redim_statement (expression (function_call . (identifier) @decl)))
-]]
-
+-- Candidatos a Eval o Execute de un include (ver M.facts).
 local DYNAMIC_USES = [[
 (primary_expression (identifier) @use)
 (function_call . (identifier) @call)
@@ -140,28 +129,34 @@ function M.buffer(roots, content, lines)
 end
 
 ---Indicios de un archivo de disco ya parseado (lo llama asp.symbols en el
----mismo parseo que sus declaraciones): Option Explicit, primer
----Eval/Execute/ExecuteGlobal y nombres de página que declaran ReDim o For
----(`page_decls`, en minúsculas).
+---mismo parseo que sus declaraciones): Option Explicit y primer
+---Eval/Execute/ExecuteGlobal. Se calculan en cada parseo en frío de un
+---include (también para workspace/symbol y las referencias de sitio), así
+---que evitan recorrer el árbol: VBScript exige que Option Explicit sea la
+---primera sentencia y la query de Eval/Execute corre solo si el texto los
+---menciona.
 ---@param vroot TSNode
 ---@param content string
----@return table { option_explicit, dynamic?, page_decls }
+---@return table { option_explicit, dynamic? }
 function M.facts(vroot, content)
   local function text_of(node)
     local _, _, s = node:start()
     local _, _, e = node:end_()
     return content:sub(s + 1, e)
   end
-  local out = walk({ vroot }, content, FACTS, text_of, false, empty())
+  local out = { option_explicit = false }
+  for child in vroot:iter_children() do
+    if child:type() ~= 'comment' then
+      out.option_explicit = child:type() == 'option_statement'
+        and text_of(child):lower():find('explicit', 1, true) ~= nil
+      break
+    end
+  end
   local lower = content:lower()
   if lower:find('eval', 1, true) or lower:find('execute', 1, true) then
-    walk({ vroot }, content, DYNAMIC_USES, text_of, false, out)
+    out.dynamic = walk({ vroot }, content, DYNAMIC_USES, text_of, false, empty()).dynamic
   end
-  local page_decls = {}
-  for _, d in ipairs(out.decls) do
-    if not d.scope_id and not d.class_id then page_decls[d.lower] = true end
-  end
-  return { option_explicit = out.option_explicit, dynamic = out.dynamic, page_decls = page_decls }
+  return out
 end
 
 return M

@@ -328,7 +328,7 @@ local function vbscript_family(ctx, undeclared, unknown_call)
     if e.kind == 5 then classes[lower] = true end
   end
   for _, d in ipairs(scan.decls) do declare(d.lower, d.scope_id, d.class_id) end
-  for i, file in ipairs(g.order) do
+  for _, file in ipairs(g.order) do
     for _, e in ipairs(symbols.collect_file(file)) do
       if not e.scope_id and not e.class_id then
         local lower = e.name:lower()
@@ -336,7 +336,6 @@ local function vbscript_family(ctx, undeclared, unknown_call)
         if e.kind == 5 then classes[lower] = true end
       end
     end
-    for lower in pairs(facts[i].page_decls) do page[lower] = true end
   end
   -- Un error de sintaxis puede tragarse una declaración (`Const A = 1,
   -- B = 2` deja a B dentro del ERROR): todo nombre que aparece dentro de

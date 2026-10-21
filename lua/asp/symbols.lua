@@ -216,7 +216,7 @@ local function parse_file(abs_path)
 end
 
 -- Indicios de un archivo sin bloques de código o que no se pudo leer.
-local NO_FACTS = { option_explicit = false, page_decls = {} }
+local NO_FACTS = { option_explicit = false }
 
 ---Entrada de file_cache de un archivo de disco: sus declaraciones y sus
 ---indicios para los diagnósticos (asp.vbscript_scan.facts), sacados del
@@ -254,12 +254,11 @@ function M.collect_file(abs_path)
   return hit and hit.entries or {}
 end
 
----Indicios de un archivo en disco para los diagnósticos: Option Explicit,
----primer Eval/Execute/ExecuteGlobal y nombres de página declarados con
----ReDim o For (ver asp.vbscript_scan.facts). Comparten caché y parseo con
----M.collect_file.
+---Indicios de un archivo en disco para los diagnósticos: Option Explicit y
+---primer Eval/Execute/ExecuteGlobal (ver asp.vbscript_scan.facts).
+---Comparten caché y parseo con M.collect_file.
 ---@param abs_path string
----@return table { option_explicit, dynamic?, page_decls }
+---@return table { option_explicit, dynamic? }
 function M.file_facts(abs_path)
   local hit = load_file(abs_path)
   return hit and hit.facts or NO_FACTS
