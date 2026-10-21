@@ -137,58 +137,85 @@ end
 local CODE_QUERY = [[ (code) @code ]]
 
 local file_cache = {}
+-- ruta → {stamp, names}: ocurrencias de identificadores de un archivo de
+-- disco que se ven a nivel de página, agrupadas por nombre en minúsculas
+-- (ver page_occurrences). Separada de file_cache porque workspace/symbol
+-- llena esa con todo el proyecto y no necesita las ocurrencias.
+local occurrence_cache = {}
 
-local function mtime_of(path)
+---Clave de caché de un archivo: mtime y tamaño (el tamaño cubre los
+---sistemas de archivos con mtime de un segundo), como asp.includes.
+local function stamp_of(path)
   local st = vim.uv.fs_stat(path)
-  return st and (st.mtime.sec .. ':' .. st.mtime.nsec) or nil
+  return st and (st.mtime.sec .. ':' .. st.mtime.nsec .. ':' .. st.size) or nil
 end
 
 ---@param abs_path string
 function M.invalidate(abs_path)
-  file_cache[vim.fs.normalize(abs_path)] = nil
+  -- Los archivos del sitio (asp.site) se cachean por su ruta real; los del
+  -- grafo de includes, por la ruta resuelta. Se olvidan las dos.
+  for _, path in ipairs({ vim.fs.normalize(abs_path), vim.uv.fs_realpath(abs_path) }) do
+    file_cache[path] = nil
+    occurrence_cache[path] = nil
+  end
 end
 
----Extrae símbolos de un archivo en disco sin necesidad de un buffer abierto.
+---Lee y parsea un archivo de disco sin necesidad de un buffer abierto.
 ---Técnica clave (también el fix del backlog de parseo en frío de ~33s en la
 ---indexación): parsear el contenido con un parser STRING de aspclassic (solo
 ---capa top — barato), recolectar los nodos `(code)`, y crear un parser
 ---STRING de vbscript con set_included_regions({code_nodes}) (una única
 ---región combinada, igual que el injection "combined" normal) — así solo se
 ---parsea VBScript, sin injections de html/js/css/regex.
+---
+---El contenido sale de asp.pages.read (sin BOM, latin1 convertido) para que
+---las columnas coincidan con las del buffer y con los usos de páginas.
+---
+---Lanza si el archivo no se puede leer. Sin bloques de código devuelve el
+---contenido y nil.
+---@param abs_path string
+---@return string content
+---@return TSNode|nil vroot
+local function parse_file(abs_path)
+  local content = assert(require('asp.pages').read(abs_path))
+
+  -- Capa plantilla: solo top layer, sin injections (barato).
+  local tpl = vim.treesitter.get_string_parser(content, 'aspclassic')
+  local troot = tpl:parse()[1]:root()
+  local cq = vim.treesitter.query.parse('aspclassic', CODE_QUERY)
+  local code_nodes = {}
+  for _, node in cq:iter_captures(troot, content) do
+    table.insert(code_nodes, node)
+  end
+  if #code_nodes == 0 then return content, nil end
+
+  -- Capa vbscript SOLO en los rangos de código: nada de html/js/regex.
+  -- set_included_regions espera una lista de REGIONES (cada región es una
+  -- lista de nodos/rangos parseados en un mismo contexto); envolvemos
+  -- code_nodes en una región única para que, igual que el injection
+  -- "combined" normal, todos los bloques <% %> del archivo formen un solo
+  -- árbol vbscript. LanguageTree no tiene `set_included_ranges`, y parse()
+  -- sin argumentos NO reparsea regiones incluidas no vacías: hace falta
+  -- parse(true).
+  local vp = vim.treesitter.get_string_parser(content, 'vbscript')
+  vp:set_included_regions({ code_nodes })
+  return content, vp:parse(true)[1]:root()
+end
+
+---Declaraciones de un archivo en disco (ver parse_file), cacheadas por
+---mtime y tamaño.
 ---@param abs_path string
 ---@return table[] entries (con campo file)
 function M.collect_file(abs_path)
   abs_path = vim.fs.normalize(abs_path)
-  local mt = mtime_of(abs_path)
-  if not mt then return {} end
+  local stamp = stamp_of(abs_path)
+  if not stamp then return {} end
   local hit = file_cache[abs_path]
-  if hit and hit.mtime == mt then return hit.entries end
+  if hit and hit.stamp == stamp then return hit.entries end
 
   local ok, entries = pcall(function()
-    local f = assert(io.open(abs_path, 'r'))
-    local content = f:read('*a')
-    f:close()
-
-    -- Capa plantilla: solo top layer, sin injections (barato).
-    local tpl = vim.treesitter.get_string_parser(content, 'aspclassic')
-    local troot = tpl:parse()[1]:root()
-    local cq = vim.treesitter.query.parse('aspclassic', CODE_QUERY)
-    local code_nodes = {}
-    for _, node in cq:iter_captures(troot, content) do
-      table.insert(code_nodes, node)
-    end
-    if #code_nodes == 0 then return {} end
-
-    -- Capa vbscript SOLO en los rangos de código: nada de html/js/regex.
-    -- set_included_regions espera una lista de REGIONES (cada región es una
-    -- lista de nodos/rangos parseados en un mismo contexto); envolvemos
-    -- code_nodes en una región única para que, igual que el injection
-    -- "combined" normal, todos los bloques <% %> del archivo formen un solo
-    -- árbol vbscript.
-    local vp = vim.treesitter.get_string_parser(content, 'vbscript')
-    vp:set_included_regions({ code_nodes })
-    local vroot = vp:parse(true)[1]:root()
-
+    local content, vroot = parse_file(abs_path)
+    if not vroot then return {} end
     local out = collect_from_roots({ vroot }, content)
     for _, e in ipairs(out) do
       e.file = abs_path
@@ -196,7 +223,7 @@ function M.collect_file(abs_path)
     return out
   end)
   entries = ok and entries or {}
-  file_cache[abs_path] = { mtime = mt, entries = entries }
+  file_cache[abs_path] = { stamp = stamp, entries = entries }
   return entries
 end
 
@@ -273,6 +300,24 @@ local function resolve_binding(entries, node, wanted)
   return local_hit or page_hit or class_hit
 end
 
+---Primera declaración de PÁGINA llamada `wanted` en los archivos de
+---`order` (el orden DFS del grafo de includes ES la prioridad). Los locales
+---y miembros de clase de otros archivos no son visibles como identificador
+---suelto, así que no cuentan. Compartida por M.definition y M.references.
+---@param order string[]
+---@param wanted string ya en minúsculas
+---@return table|nil entry
+local function page_declaration_in(order, wanted)
+  for _, file in ipairs(order) do
+    for _, e in ipairs(M.collect_file(file)) do
+      if e.name:lower() == wanted and not e.scope_id and not e.class_id then
+        return e
+      end
+    end
+  end
+  return nil
+end
+
 ---Resuelve la definición del identificador bajo `position` (case-insensitive),
 ---con precedencia: scope local del cursor → página (Dim/Const de página,
 ---excluyendo miembros de clase) → miembro de clase homónimo.
@@ -330,26 +375,17 @@ function M.definition(bufnr, position)
   local best = resolve_binding(M.collect(bufnr), node, wanted)
 
   if not best then
-    -- Fase 4: nada in-file — recorrer el grafo de includes en orden DFS
-    -- (esa orden ES la prioridad: "includes en orden") y devolver el primer
-    -- símbolo de PÁGINA (scope_id == nil y class_id == nil: los locales y
-    -- miembros de clase de otros archivos no son visibles como identificador
-    -- suelto) cuyo nombre matchee. Primer match gana → return inmediato.
-    local graph = require('asp.includes').buffer_graph(bufnr)
-    for _, file in ipairs(graph.order) do
-      for _, e in ipairs(M.collect_file(file)) do
-        if e.name:lower() == wanted and not e.scope_id and not e.class_id then
-          return {
-            uri = vim.uri_from_fname(e.file),
-            range = {
-              start = { line = e.selection[1], character = e.selection[2] },
-              ['end'] = { line = e.selection[3], character = e.selection[4] },
-            },
-          }
-        end
-      end
-    end
-    return nil
+    -- Fase 4: nada in-file — el primer símbolo de página del grafo de
+    -- includes, en orden DFS. Primer match gana.
+    local e = page_declaration_in(require('asp.includes').buffer_graph(bufnr).order, wanted)
+    if not e then return nil end
+    return {
+      uri = vim.uri_from_fname(e.file),
+      range = {
+        start = { line = e.selection[1], character = e.selection[2] },
+        ['end'] = { line = e.selection[3], character = e.selection[4] },
+      },
+    }
   end
 
   return {
@@ -363,50 +399,119 @@ end
 
 local IDENT_QUERY = [[ (identifier) @id ]]
 
----Ocurrencias case-insensitive de `wanted` en un archivo de disco (misma
----técnica que M.collect_file: sólo capa vbscript, confinada a los rangos
----`(code)` de la plantilla).
+---Ocurrencias de un archivo de disco que se ven a nivel de página,
+---agrupadas por nombre en minúsculas: `names[nombre]` es una lista plana
+---{fila, col_inicio, col_fin, ...} (un identificador no cruza líneas).
+---Deja afuera las que caen en un Sub/Function/Property que declara ese
+---nombre como local o parámetro: ahí el nombre es otra variable, igual
+---que con `shadowed` en el buffer.
 ---
----Ajuste sobre el brief (dos hechos de API confirmados en Task 2, aquí
----aplicados): LanguageTree no tiene `set_included_ranges` — el método real
----es `set_included_regions({code_nodes})` (una lista de REGIONES, cada una
----una lista de nodos) — y `parse()` sin argumentos NO reparsea regiones
----incluidas no vacías; hace falta `parse(true)`.
+---Se cachea por mtime y tamaño con TODOS los nombres del archivo, no solo
+---el buscado: así, con la caché caliente, buscar cualquier otro símbolo en
+---el sitio no vuelve a leer ni parsear nada. Las declaraciones que salen
+---del mismo parseo alimentan también la caché de M.collect_file.
+---@param abs_path string normalizada
+---@return table<string, integer[]>
+local function page_occurrences(abs_path)
+  local stamp = stamp_of(abs_path)
+  if not stamp then
+    occurrence_cache[abs_path] = nil
+    return {}
+  end
+  local hit = occurrence_cache[abs_path]
+  if hit and hit.stamp == stamp then return hit.names end
+
+  local ok, names = pcall(function()
+    local content, vroot = parse_file(abs_path)
+    if not vroot then return {} end
+    local entries = collect_from_roots({ vroot }, content)
+    local locals = {}
+    for _, e in ipairs(entries) do
+      e.file = abs_path
+      if e.scope_id then
+        locals[e.scope_id] = locals[e.scope_id] or {}
+        locals[e.scope_id][e.name:lower()] = true
+      end
+    end
+    local cached = file_cache[abs_path]
+    if not cached or cached.stamp ~= stamp then
+      file_cache[abs_path] = { stamp = stamp, entries = entries }
+    end
+
+    local out = {}
+    local iq = vim.treesitter.query.parse('vbscript', IDENT_QUERY)
+    for _, node in iq:iter_captures(vroot, content) do
+      local name = vim.treesitter.get_node_text(node, content):lower()
+      local scope = nearest_ancestor(node, SCOPE_TYPES)
+      local shadowing = scope and locals[scope:id()]
+      if not (shadowing and shadowing[name]) then
+        local r0, c0, _, c1 = node:range()
+        local list = out[name]
+        if not list then
+          list = {}
+          out[name] = list
+        end
+        list[#list + 1] = r0
+        list[#list + 1] = c0
+        list[#list + 1] = c1
+      end
+    end
+    return out
+  end)
+  -- Un fallo de lectura no se cachea: la próxima consulta reintenta.
+  if not ok then return {} end
+  occurrence_cache[abs_path] = { stamp = stamp, names = names }
+  return names
+end
+
+---Ocurrencias de página de `wanted` en un archivo de disco (ver
+---page_occurrences).
 ---@param abs_path string
 ---@param wanted string ya en minúsculas
 ---@return table[] Location[]
 local function occurrences_in_file(abs_path, wanted)
+  local hits = page_occurrences(vim.fs.normalize(abs_path))[wanted]
+  if not hits then return {} end
+  local uri = vim.uri_from_fname(abs_path)
   local out = {}
-  local ok = pcall(function()
-    local f = assert(io.open(abs_path, 'r'))
-    local content = f:read('*a')
-    f:close()
-    local tpl = vim.treesitter.get_string_parser(content, 'aspclassic')
-    local troot = tpl:parse()[1]:root()
-    local cq = vim.treesitter.query.parse('aspclassic', CODE_QUERY)
-    local code_nodes = {}
-    for _, node in cq:iter_captures(troot, content) do
-      table.insert(code_nodes, node)
-    end
-    if #code_nodes == 0 then return end
-    local vp = vim.treesitter.get_string_parser(content, 'vbscript')
-    vp:set_included_regions({ code_nodes })
-    local vroot = vp:parse(true)[1]:root()
-    local iq = vim.treesitter.query.parse('vbscript', IDENT_QUERY)
-    for _, node in iq:iter_captures(vroot, content) do
-      if vim.treesitter.get_node_text(node, content):lower() == wanted then
-        local r0, c0, r1, c1 = node:range()
-        table.insert(out, {
-          uri = vim.uri_from_fname(abs_path),
-          range = {
-            start = { line = r0, character = c0 },
-            ['end'] = { line = r1, character = c1 },
-          },
-        })
-      end
-    end
-  end)
-  return ok and out or {}
+  for i = 1, #hits, 3 do
+    table.insert(out, {
+      uri = uri,
+      range = {
+        start = { line = hits[i], character = hits[i + 1] },
+        ['end'] = { line = hits[i], character = hits[i + 2] },
+      },
+    })
+  end
+  return out
+end
+
+---Archivos del sitio donde un símbolo de página del buffer es la misma
+---variable global (ver asp.site.closure): el propio archivo y, si el nombre
+---no se declara en el buffer, también el include que lo declara según el
+---orden de M.definition. Así las referencias son las mismas desde la
+---librería que desde cualquier página que la usa.
+---@param bufnr integer
+---@param binding table|nil
+---@param wanted string
+---@param graph string[] buffer_graph(bufnr).order
+---@return string[]|nil rutas reales del sitio
+---@return string|nil ruta real del buffer
+---@return integer|nil archivos recorridos por el barrido
+local function site_files(bufnr, binding, wanted, graph)
+  local name = vim.api.nvim_buf_get_name(bufnr)
+  if name == '' then return nil end
+  local root = require('asp.pages').scan_root_for(name)
+  if not root then return nil end
+  local self = vim.uv.fs_realpath(name) or vim.fs.normalize(name)
+  local starts = { self }
+  if not binding then
+    local e = page_declaration_in(graph, wanted)
+    if e then table.insert(starts, vim.uv.fs_realpath(e.file) or e.file) end
+  end
+  local site = require('asp.site')
+  local index = site.index(root)
+  return site.closure(index, starts), self, index.count
 end
 
 ---Todas las ocurrencias del identificador bajo `position`.
@@ -421,8 +526,20 @@ end
 ---aparecer en otro archivo).
 ---
 ---Si se resuelve a página/clase (scope_id nil) — o no se resuelve a nada
----in-file, excluye los scopes que declaran ese nombre como local. Agrega
----las ocurrencias por texto de los includes salvo con buffer_only.
+---in-file —, excluye los scopes que declaran ese nombre como local y,
+---salvo con buffer_only, suma las ocurrencias de disco con alcance de
+---sitio: el grafo de includes del buffer (con su contenido sin guardar),
+---las páginas que incluyen el archivo directa o transitivamente y todo lo
+---que incluye cada una (un include hermano de la librería también puede
+---llamarla). En cada archivo de disco se omiten las ocurrencias dentro de
+---un Sub/Function/Property que declara el nombre como local o parámetro.
+---
+---Una declaración de página homónima en otro archivo de ese conjunto se
+---cuenta igual: al incluirse, Classic ASP junta todo en un único script y
+---es la misma variable global (en runtime gana la última definición). Una
+---página que no incluye la librería no está en el conjunto aunque use el
+---mismo nombre. No se siguen Server.Execute, Server.Transfer ni includes
+---armados en runtime.
 ---@param bufnr integer
 ---@param position table {line, character}
 ---@param opts? table {buffer_only?: boolean}
@@ -474,9 +591,27 @@ function M.references(bufnr, position, opts)
     end
   end
   if not scope_id and not opts.buffer_only then
-    for _, file in ipairs(require('asp.includes').buffer_graph(bufnr).order) do
+    local started = vim.uv.hrtime()
+    local graph = require('asp.includes').buffer_graph(bufnr).order
+    -- Primero el grafo del buffer, en su orden (como antes del alcance de
+    -- sitio); después el resto del sitio, ordenado. Se deduplica por ruta
+    -- real porque el grafo usa la ruta del buffer y el sitio, la real.
+    local files = vim.list_extend({}, graph)
+    -- Si el sitio falla, quedan el buffer y su grafo: el handler no lanza.
+    local ok, site, self, swept = pcall(site_files, bufnr, binding, wanted, graph)
+    if ok and site then
+      local taken = { [self] = true }
+      for _, file in ipairs(graph) do
+        taken[vim.uv.fs_realpath(file) or file] = true
+      end
+      for _, file in ipairs(site) do
+        if not taken[file] then table.insert(files, file) end
+      end
+    end
+    for _, file in ipairs(files) do
       vim.list_extend(out, occurrences_in_file(file, wanted))
     end
+    if ok and swept then require('asp.pages').notify_slow(swept, started) end
   end
   return out, binding
 end
