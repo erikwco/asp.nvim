@@ -417,6 +417,19 @@ describe('alcance y cachés de ayuda', function()
     assert.are.equal('RegExp', infer('z'))
   end)
 
+  it('tras editar, solo normaliza los Rem de las líneas con Set', function()
+    local lines = { 'Set x = CreateObject("ADODB.Recordset")', 'Rem Set x = CreateObject("Scripting.Dictionary")' }
+    for i = 1, 2000 do lines[#lines + 1] = 'y' .. i .. ' = ' .. i end
+    code(lines)
+    local scan = require('asp.vbscript_scan')
+    local source, bytes = scan.source, 0
+    scan.source = function(text) bytes = bytes + #text; return source(text) end
+    local ok, err = pcall(function() assert.are.equal('Recordset', infer('x')) end)
+    scan.source = source
+    assert.is_true(ok, err)
+    assert.are.equal(#lines[1] + #lines[2], bytes)
+  end)
+
   it('refleja ediciones sin guardar al invalidar por changedtick', function()
     code({ 'Set x = CreateObject("ADODB.Recordset")' })
     assert.are.equal('Recordset', infer('x'))
