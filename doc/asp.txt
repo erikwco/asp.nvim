@@ -21,6 +21,8 @@ servidor, HTML y JavaScript de cliente conviven en un mismo archivo .asp:
   - Resaltado correcto de cada región vía tree-sitter.
   - Navegación LSP (ir a definición, referencias, renombrar, símbolos)
     incluyendo los archivos referenciados con <!--#include -->.
+  - Hover, completion y firmas de VBScript, objetos COM y JavaScript.
+  - Diagnósticos de VBScript, includes y enlaces (|asp-diagnostics|).
   - Plegado e indentación de VBScript y HTML (|asp-folds|).
 
 ==============================================================================
@@ -357,13 +359,19 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       Server, Session, Application), funciones y constantes nativas,
       tipos y miembros COM y declaraciones del usuario. Incluye firmas,
       parámetros, retornos y valores. Los símbolos de includes
-      transitivos muestran su archivo de origen.
+      transitivos muestran su archivo de origen. Una Function que crea
+      un objeto COM (`Set F = Server.CreateObject(...)` en su cuerpo)
+      indica `Retorno:`, también sobre su propia declaración. Una Sub o
+      Function del usuario con el nombre de una nativa (`Round`) la
+      sombrea, como en VBScript: se muestra la del usuario con una nota.
       En JS muestra declaraciones del usuario y ayuda del catálogo DOM
       parcial. Ver |asp-javascript|.
 
   completion ~
       Funciones nativas, constantes y símbolos de la página y sus
-      includes. Palabras clave desde dos letras de prefijo. Miembros
+      includes. Palabras clave desde dos letras de prefijo, sin las
+      reservadas de VBA que VBScript no admite (As, Integer, Optional,
+      TypeOf, Like...); los diagnósticos las siguen conociendo. Miembros
       intrínsecos y COM tras `Objeto.`; sin tipo conocido, los símbolos
       del proyecto, sin nativos ni palabras clave. ProgIDs dentro de
       `CreateObject("` o `Server.CreateObject("`, filtrados sin
@@ -378,7 +386,10 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       como disparadores y `,` como redisparador.
       Detecta la llamada abierta en la línea actual. Ignora comas en
       strings y paréntesis anidados. También reconoce `MiSub a, b` y
-      `Call MiSub a, b` al comienzo de una sentencia.
+      `Call MiSub a, b` al comienzo de una sentencia. En `Array`, que
+      acepta cualquier cantidad de argumentos, el parámetro activo se
+      queda en el último. Si una Function del usuario sombrea a una
+      nativa, su firma va primero y la nativa queda como segunda.
       En JS reconoce llamadas multilínea dentro de la región, con
       parámetros del usuario y del catálogo DOM. Ver |asp-javascript|.
 
@@ -396,7 +407,9 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       versiones como ADODB.Recordset.6.0 y MSXML2.DOMDocument.6.0.
 
       Catálogo parcial: ADO, FileSystemObject y sus tipos derivados,
-      Dictionary, MSXML, CDO y RegExp. No inspecciona COM instalado.
+      Dictionary, MSXML (con parseError y los atributos de los nodos),
+      CDO y RegExp, con los miembros más usados en ASP, como la
+      paginación de un Recordset. No inspecciona COM instalado.
       No infiere `Set x = funcionDelUsuario()`, ProgIDs calculados,
       alias ni cadenas de varios retornos. No analiza flujo de control
       ni cambios de tipo posteriores. signatureHelp no sigue llamadas
@@ -421,8 +434,8 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
                     la página o en alguno de sus includes.
       unknown_call  Llamadas a algo que no está declarado ni es nativo:
                     `Nombre(args)`, `Call Nombre`, `Nombre a, b` como
-                    sentencia y `New Clase`. También solo con
-                    `Option Explicit`.
+                    sentencia y `New Clase`. Sin `Option Explicit`, solo
+                    `Call Nombre` y `New Clase` (ver abajo).
       missing_page  Literales de páginas y recursos cuyo destino no
                     existe en disco.
 
@@ -445,9 +458,16 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
       lo trae. Tampoco se revisan si algún include no resuelve.
 
       Sin `Option Explicit`, VBScript declara una variable al asignarla
-      (`x(0)` puede ser un arreglo creado así), y el archivo suele ser
-      una librería que llama a lo que declaran los demás includes de la
-      página que la incluye. Por eso esas dos familias lo necesitan.
+      (`x(0)` puede ser un arreglo creado así). Por eso undeclared lo
+      necesita, y sin él unknown_call solo revisa `Call Nombre` y
+      `New Clase`, que no pueden ser una variable. No cuenta
+      `Call obj.Metodo` ni un nombre asignado con Set
+      (`Set fp = GetRef("F")`). Tampoco revisa un archivo que otro del
+      sitio incluye: una librería llama a lo que declaran los demás
+      includes de la página, invisibles desde ella. Para saberlo usa el
+      índice de includes de las referencias de sitio (ver references),
+      que en frío recorre el sitio una vez, y solo si hay algo que
+      reportar. Sin raíz del sitio no se revisa.
 
       missing_page usa la detección y la raíz virtual de la navegación de
       páginas (ver definition). No marca literales con `<%` o `%>`, los
@@ -469,8 +489,12 @@ El servidor in-process `asp-ls` se adjunta al abrir un .asp y ofrece:
 
       Se actualizan al abrir la página, al guardarla y 500 ms después de
       la última edición (|TextChanged| e |InsertLeave|). Guardar un .asp,
-      .inc, .htm, .html, .js o .css vuelve a revisar las demás páginas
-      abiertas. undeclared y unknown_call usan el buffer con sus cambios
+      .inc, .htm, .html, .js o .css vuelve a revisar las páginas abiertas
+      que lo incluyen, directa o transitivamente, y las que tienen un
+      include o un enlace sin resolver (el archivo guardado puede ser el
+      que faltaba); las demás no dependen de él. Con 30 páginas abiertas
+      de ~326 KB y 20 includes, elegirlas tarda ~8 ms.
+      undeclared y unknown_call usan el buffer con sus cambios
       sin guardar, pero leen los includes desde disco: un include recién
       creado o editado cuenta cuando se guarda. Configuración en
       |asp-setup|.
@@ -673,28 +697,39 @@ también dentro de los atributos de evento `on*` y de las URLs
   - hover muestra la primera línea de la declaración o la firma sin el
     cuerpo. Las funciones de .js e includes indican `Archivo:`. Incluye
     funciones declaradas en otro <script>, variables locales, clases y
-    métodos en su declaración.
+    métodos en su declaración. Un parámetro se muestra como
+    `(parámetro) alfa = 1`, con su default o su `...`.
   - completion ofrece los bindings visibles del scope más cercano,
     después los globales de la página, sus .js e includes. El prefijo
-    distingue mayúsculas. Las palabras clave aparecen desde dos letras.
-    También funciona en on*, URLs javascript: y regiones vacías.
+    distingue mayúsculas. Las palabras clave, todas las de JavaScript,
+    aparecen desde dos letras. También funciona en on*, URLs
+    javascript: y regiones vacías. Dentro de un on* ofrece además el
+    parámetro implícito `event`.
   - signatureHelp usa los parámetros del árbol, con default, rest y
     desestructuración. Detecta llamadas abiertas, incluidas las anidadas
     y multilínea, dentro de la región JS. Ignora comas en strings,
-    templates, comentarios, regex, paréntesis, arrays y objetos.
-  - Catálogo parcial DOM y ECMAScript: 102 entradas, con 84 miembros y
-    18 globales, sin contar alias de window. Incluye document, window,
-    console, Math, JSON, localStorage, location, navigator, history,
-    Array y funciones como parseInt. Ofrece firmas y documentación en
-    español en las tres ayudas. Los bindings del usuario lo sombrean.
-    Reconoce rutas explícitas como window.location.reload y
-    document.location.href. Un obj. desconocido no ofrece miembros.
+    templates, comentarios, regex, paréntesis, arrays y objetos. Dentro
+    del cuerpo de un callback (`f(function () { | })`) no muestra la
+    firma de f: el árbol distingue esa llave de la de un objeto literal
+    y, en código a medio escribir, decide el texto anterior a la llave.
+  - Catálogo parcial DOM y ECMAScript: 166 entradas, con 131 miembros y
+    35 globales, sin contar alias de window. Incluye document, window,
+    console, Math, JSON, localStorage, sessionStorage, location,
+    navigator, history, los constructores Array, Object, Date, String,
+    Number, Boolean, RegExp, Error y Promise con sus miembros estáticos
+    y funciones como parseInt, fetch, eval o escape. Ofrece firmas y
+    documentación en español en las tres ayudas. Los bindings del
+    usuario lo sombrean. Reconoce rutas explícitas como
+    window.location.reload y document.location.href. Un obj.
+    desconocido no ofrece miembros, salvo una variable declarada como
+    `var xhr = new XMLHttpRequest()`, que ofrece los de la instancia
+    (open, send, readyState...). Solo se mira esa declaración.
   - El handler decide la capa según las regiones ya indexadas: no mezcla
     sugerencias JS y VBScript ni responde dentro de strings o comentarios
-    JS. Completion y signatureHelp tratan todo template, incluida su
-    interpolación ${...}, como texto opaco. Las firmas de externos se
-    guardan junto a sus bindings; en caliente no hay lecturas de contenido
-    ni nuevos parseos.
+    JS. De un template solo es texto lo literal: dentro de `${...}` hay
+    completion y signatureHelp, también en un template sin cerrar. Las
+    firmas de externos se guardan junto a sus bindings; en caliente no
+    hay lecturas de contenido ni nuevos parseos.
 
 Límites:
 
@@ -705,7 +740,8 @@ Límites:
   - `let`/`const` se tratan como `var` (scope de función, no de
     bloque).
   - Las propiedades del usuario no se resuelven (`obj.metodo`, `this.x`,
-    jQuery `$`...): no hay resolución por tipos, alias ni retornos.
+    jQuery `$`...): no hay resolución por tipos, alias ni retornos, salvo
+    la instancia de `new XMLHttpRequest()` del catálogo.
     Los métodos tienen hover en su declaración. El catálogo DOM es
     parcial; no sigue nombres o ids del HTML como document.f o
     document.forms.f, tampoco elementos de formularios por nombre.
@@ -714,9 +750,10 @@ Límites:
     o desestructurados y los nombres desestructurados de `var`, `let` y
     `const` (`const { a } = o`) sí. Los defaults ven los parámetros y los
     alcances externos, sin las declaraciones del cuerpo de su función.
-  - Manejadores: no se modela el parámetro implícito `event` ni la
-    cadena de scopes del elemento y su formulario (`onclick="submit()"`
-    no resuelve a `form.submit`). No se decodifican las entidades HTML
+  - Manejadores: el parámetro implícito `event` solo aparece en
+    completion, sin definición ni hover. No se modela la cadena de
+    scopes del elemento y su formulario (`onclick="submit()"` no
+    resuelve a `form.submit`). No se decodifican las entidades HTML
     (`&quot;`) ni los `%xx` de una URL `javascript:`: el JS queda con
     un error de sintaxis donde aparecen y el resto resuelve igual. Un
     manejador con `language="vbscript"` (IE) se lee igual como JS. No
@@ -838,54 +875,90 @@ El plugin (Lua, gramática aspclassic, queries) es MIT. El directorio
 ==============================================================================
 8. Cambios                                                       *asp-cambios*
 
-Sin publicar ~
+0.6.0 → 0.7.0 ~
 
-  - Plegado por tree-sitter (|asp-folds|): bloques <% %> multilínea y
-    los bloques de VBScript, incluido un <% If %> que envuelve HTML.
-    El ftplugin fija 'foldexpr'; 'foldmethod' lo elige el usuario.
-  - Indentación (|asp-indent|): VBScript por el árbol, HTML por
-    HtmlIndent() y el HTML que envuelve un <% If %> o <% For %> un nivel
-    más. `setup({ folds = false, indent = false })` las apaga.
-  - Gramática vbscript: un If de una línea seguido de un If de bloque ya
-    no se parsea como un solo If de bloque que toma el End If ajeno.
-  - :checkhealth asp informa si el plegado y la indentación están
-    activos en la página y si HtmlIndent() está disponible.
-  - Hover, completion y signatureHelp de JavaScript de cliente en
-    <script>, on* y URLs javascript:. Bindings con scope, firmas de .js
-    e includes y catálogo DOM parcial de 102 entradas. Ver
-    |asp-javascript|.
-  - Renombrar símbolos (|asp-rename|): prepareRename y rename para
-    VBScript y JavaScript, con el alcance de references y validación del
-    nombre nuevo. Las variables Private de clase incluyen sus usos
-    Me.x; los miembros públicos se renombran a mano. Rechaza el rename que
-    dejaría el programa roto: un nombre nuevo que ya existe en cualquier
-    alcance, un miembro de clase homónimo en algún archivo a cambiar o
-    un `<%= %>` fundido que usa el nombre.
-  - JavaScript: los parámetros con default, rest o desestructurados y
-    los nombres desestructurados de var, let y const son declaraciones
-    de su scope.
-  - La navegación JavaScript lee los .js y los includes sin BOM y
-    convirtiendo latin1, como VBScript: las columnas coinciden con las
-    del buffer aunque haya acentos antes del nombre.
-  - Hover, completion y signatureHelp de funciones y constantes nativas
-    de VBScript y miembros COM, con inferencia por Set/CreateObject y
-    New RegExp. Catálogo parcial y un nivel de retorno COM.
-  - Hover y firmas de procedimientos de includes transitivos, con
-    parámetros extraídos del árbol y nombre del archivo de origen.
-  - Completion de ProgIDs dentro de CreateObject y de palabras clave
-    desde dos letras de prefijo. Ver |asp-signatures| y |asp-com-help|.
-  - Diagnósticos de VBScript (|asp-diagnostics|): errores de sintaxis,
-    variables sin declarar bajo Option Explicit, llamadas a Subs o
-    Functions inexistentes y enlaces a páginas inexistentes, con
-    severidad configurable por familia (|asp-setup| diagnostics).
-  - Los diagnósticos se actualizan también 500 ms después de cada
-    edición, y guardar un archivo revisa las demás páginas abiertas.
+Referencias de sitio:
   - references de un símbolo VBScript de página con alcance de sitio:
     las páginas que incluyen el archivo, directa o transitivamente, y
     sus demás includes, sin los locales homónimos.
   - El aviso INFO de las consultas que recorren el sitio sale solo si la
     consulta lee 2.000 archivos o tarda un segundo, no en cada consulta
     de un sitio grande.
+
+Diagnósticos (|asp-diagnostics|):
+  - Diagnósticos de VBScript: errores de sintaxis, variables sin
+    declarar bajo Option Explicit, llamadas a Subs o Functions
+    inexistentes y enlaces a páginas inexistentes, con severidad
+    configurable por familia (|asp-setup| diagnostics).
+  - Sin Option Explicit se revisan igual `Call X` y `New X`, salvo en
+    un archivo que otro del sitio incluye.
+  - Se actualizan también 500 ms después de cada edición. Guardar un
+    archivo revisa solo las páginas abiertas que lo incluyen o que
+    tienen un include o un enlace sin resolver.
+
+Ayuda de VBScript y COM (|asp-signatures|, |asp-com-help|):
+  - Hover, completion y signatureHelp de funciones y constantes nativas
+    de VBScript y miembros COM, con inferencia por Set/CreateObject y
+    New RegExp. Catálogo parcial y un nivel de retorno COM.
+  - Hover y firmas de procedimientos de includes transitivos, con
+    parámetros extraídos del árbol y nombre del archivo de origen.
+  - Completion de ProgIDs dentro de CreateObject y de palabras clave
+    desde dos letras de prefijo, sin las de VBA que VBScript no admite.
+  - El catálogo COM suma los miembros frecuentes en ASP: paginación y
+    búsqueda de Recordset, rutas y carpetas de FileSystemObject,
+    parseError y atributos de MSXML, ReplyTo y CreateMHTMLBody de CDO,
+    LineSeparator y CopyTo de Stream y setOption de ServerXMLHTTP.
+  - Una Function que crea un objeto COM muestra `Retorno:` en hover,
+    también sobre su declaración. Una Sub o Function del usuario
+    homónima de una nativa la sombrea en hover y signatureHelp.
+  - signatureHelp deja el parámetro activo de Array en el último.
+
+Renombrar (|asp-rename|):
+  - prepareRename y rename para VBScript y JavaScript, con el alcance de
+    references y validación del nombre nuevo. Las variables Private de
+    clase incluyen sus usos Me.x; los miembros públicos se renombran a
+    mano. Rechaza el rename que dejaría el programa roto: un nombre
+    nuevo que ya existe en cualquier alcance, un miembro de clase
+    homónimo en algún archivo a cambiar o un `<%= %>` fundido que usa el
+    nombre.
+  - JavaScript: los parámetros con default, rest o desestructurados y
+    los nombres desestructurados de var, let y const son declaraciones
+    de su scope.
+  - La navegación JavaScript lee los .js y los includes sin BOM y
+    convirtiendo latin1, como VBScript: las columnas coinciden con las
+    del buffer aunque haya acentos antes del nombre.
+
+Ayuda de JavaScript (|asp-javascript|):
+  - Hover, completion y signatureHelp de JavaScript de cliente en
+    <script>, on* y URLs javascript:. Bindings con scope, firmas de .js
+    e includes y catálogo DOM y ECMAScript de 166 entradas, con los
+    constructores globales, fetch, sessionStorage y las instancias de
+    `new XMLHttpRequest()`.
+  - Hover de un parámetro con su default o su rest. Completion con
+    todas las palabras clave y el parámetro `event` dentro de los on*.
+  - signatureHelp no responde dentro del cuerpo de un callback, y
+    completion y signatureHelp funcionan dentro de `${...}`.
+
+Plegado e indentación (|asp-folds|):
+  - Plegado por tree-sitter: bloques <% %> multilínea y los bloques de
+    VBScript, incluido un <% If %> que envuelve HTML. El ftplugin fija
+    'foldexpr'; 'foldmethod' lo elige el usuario.
+  - Indentación: VBScript por el árbol, HTML por HtmlIndent() y el HTML
+    que envuelve un <% If %> o <% For %> un nivel más.
+    `setup({ folds = false, indent = false })` las apaga.
+  - Gramática vbscript: un scanner externo distingue el If de una línea
+    del If de bloque, así que el primero ya no se traga el End If ajeno.
+
+Resaltado semántico y pulido:
+  - Resaltado semántico: (pendiente de completar al mergear el cambio
+    7a, feat/semantic-grammar).
+  - Deudas de gramática: (pendiente de completar al mergear el cambio
+    7a, feat/semantic-grammar).
+  - :checkhealth asp comprueba el scanner del parser vbscript, que las
+    queries compilen y si hay varias copias del parser, e informa la
+    versión y los métodos de asp-ls y la severidad de cada familia de
+    diagnósticos, además del plegado y la indentación.
+  - Demos regeneradas, con dos nuevas: diagnósticos y rename.
 
 0.5.3 → 0.6.0 ~
 

@@ -23,6 +23,16 @@ describe('asp-ls', function()
     assert.is_true(client.server_capabilities.documentHighlightProvider)
   end)
 
+  it('anuncia la versión de la última entrada del changelog', function()
+    local client = vim.lsp.get_clients({ bufnr = 0, name = 'asp-ls' })[1]
+    assert.are.equal('0.7.0', client.server_info.version)
+    local f = assert(io.open('doc/asp.txt', 'r'))
+    local text = f:read('*a')
+    f:close()
+    local newest = text:match('%*asp%-cambios%*.-\n[%d.]+ → ([%d.]+) ~')
+    assert.are.equal(client.server_info.version, newest)
+  end)
+
   local function request(method, params)
     local resp = vim.lsp.buf_request_sync(0, method, params, 3000)
     for _, r in pairs(resp or {}) do
