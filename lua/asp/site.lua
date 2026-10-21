@@ -30,29 +30,12 @@ local function current(index, files, entries)
   return true
 end
 
----Índice de includes del sitio bajo `root`: `includes[archivo]` son los
----archivos que incluye y `includers[archivo]` los que lo incluyen, todos
----con su ruta real. Solo cuenta destinos que existen. El barrido de
----asp.pages lee únicamente las fuentes nuevas o cambiadas y el índice se
----rearma solo si alguna fuente cambió, apareció o desapareció.
----@param root string raíz de asp.pages.scan_root_for
----@return table { includes, includers, sources, count }
-function M.index(root)
-  local files, entries = require('asp.pages').sweep(root)
-  local key = vim.uv.fs_realpath(root) or root
-  local index = indexes[key]
-  if current(index, files, entries) then return index end
-
-  -- Las rutas de `files` ya son reales (el barrido parte de la raíz real y
-  -- no sigue symlinks); los destinos se llevan a su ruta real para que una
-  -- raíz virtual por symlink o un nombre con otras mayúsculas en un
-  -- filesystem que no las distingue apunten al mismo archivo.
-  index = { includes = {}, includers = {}, sources = {}, count = #files }
-  local memo = {}
-  for _, file in ipairs(files) do
-    index.sources[file] = entries[file]
-    for _, ref in ipairs(entries[file]) do
-      local target = ref.include and realpath(ref.target_abs, memo)
+-- Rearma las aristas con los destinos ya resueltos en `memo`.
+local function link(index, memo)
+  index.includes, index.includers, index.resolved = {}, {}, memo
+  for _, file in ipairs(index.files) do
+    for _, candidate in ipairs(index.targets[file] or {}) do
+      local target = memo[candidate]
       if target then
         index.includes[file] = index.includes[file] or {}
         table.insert(index.includes[file], target)
@@ -61,7 +44,57 @@ function M.index(root)
       end
     end
   end
-  indexes[key] = index
+end
+
+---Índice de includes del sitio bajo `root`: `includes[archivo]` son los
+---archivos que incluye y `includers[archivo]` los que lo incluyen, todos
+---con su ruta real. Solo cuenta destinos que existen. El barrido de
+---asp.pages lee únicamente las fuentes nuevas o cambiadas y las directivas
+---se reagrupan solo si alguna fuente cambió, apareció o desapareció.
+---
+---Como en asp.includes, las directivas se guardan sin resolver: un
+---destino puede aparecer, desaparecer o cambiar de ruta real sin que
+---cambie ninguna fuente, por ejemplo un include fuera de la raíz del
+---barrido. Por eso cada llamada vuelve a resolver los destinos, una vez
+---por ruta distinta y sin leer archivos, y rearma las aristas solo si
+---alguno cambió.
+---@param root string raíz de asp.pages.scan_root_for
+---@return table { includes, includers, sources, count }
+function M.index(root)
+  local files, entries = require('asp.pages').sweep(root)
+  local key = vim.uv.fs_realpath(root) or root
+  local index = indexes[key]
+  if not current(index, files, entries) then
+    -- `targets[archivo]` son los destinos normalizados de sus directivas
+    -- y `candidates`, cada destino distinto una sola vez.
+    index = { files = files, sources = {}, targets = {}, candidates = {}, count = #files }
+    local seen = {}
+    for _, file in ipairs(files) do
+      index.sources[file] = entries[file]
+      for _, ref in ipairs(entries[file]) do
+        if ref.include then
+          index.targets[file] = index.targets[file] or {}
+          table.insert(index.targets[file], ref.target_abs)
+          if not seen[ref.target_abs] then
+            seen[ref.target_abs] = true
+            table.insert(index.candidates, ref.target_abs)
+          end
+        end
+      end
+    end
+    indexes[key] = index
+  end
+
+  -- Las rutas de `files` ya son reales (el barrido parte de la raíz real y
+  -- no sigue symlinks); los destinos se llevan a su ruta real para que una
+  -- raíz virtual por symlink o un nombre con otras mayúsculas en un
+  -- filesystem que no las distingue apunten al mismo archivo.
+  local memo, stale = {}, index.resolved == nil
+  for _, candidate in ipairs(index.candidates) do
+    realpath(candidate, memo)
+    if not stale and memo[candidate] ~= index.resolved[candidate] then stale = true end
+  end
+  if stale then link(index, memo) end
   return index
 end
 
@@ -73,10 +106,24 @@ end
 ---Hacia arriba solo se conocen incluidores dentro de la raíz del barrido.
 ---Hacia abajo, un include fuera de esa raíz no está en el índice y se
 ---recorre con asp.includes.graph.
+---
+---`edits` reemplaza los includes de disco de algunos archivos (por ruta
+---real) por los de su buffer sin guardar, en los dos sentidos: un include
+---borrado en el buffer no vuelve a sumarse por el índice y uno agregado
+---cuenta aunque no se haya guardado.
 ---@param index table de M.index
 ---@param starts string[] rutas reales
+---@param edits? table<string, string[]> ruta real → destinos reales
 ---@return string[] rutas reales, ordenadas
-function M.closure(index, starts)
+function M.closure(index, starts, edits)
+  edits = edits or {}
+  local added = {}
+  for file, targets in pairs(edits) do
+    for _, target in ipairs(targets) do
+      added[target] = added[target] or {}
+      table.insert(added[target], file)
+    end
+  end
   local seen, list = {}, {}
   local function add(path)
     if not seen[path] then
@@ -87,14 +134,19 @@ function M.closure(index, starts)
   for _, start in ipairs(starts) do add(start) end
   local i = 1
   while list[i] do
-    for _, includer in ipairs(index.includers[list[i]] or {}) do add(includer) end
+    for _, includer in ipairs(index.includers[list[i]] or {}) do
+      if not edits[includer] then add(includer) end
+    end
+    for _, includer in ipairs(added[list[i]] or {}) do add(includer) end
     i = i + 1
   end
   local memo = {}
   i = 1
   while list[i] do
     local path = list[i]
-    if index.sources[path] then
+    if edits[path] then
+      for _, target in ipairs(edits[path]) do add(target) end
+    elseif index.sources[path] then
       for _, target in ipairs(index.includes[path] or {}) do add(target) end
     else
       for _, target in ipairs(require('asp.includes').graph(path).order) do

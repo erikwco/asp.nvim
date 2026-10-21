@@ -491,6 +491,9 @@ end
 ---no se declara en el buffer, también el include que lo declara según el
 ---orden de M.definition. Así las referencias son las mismas desde la
 ---librería que desde cualquier página que la usa.
+---
+---Los includes del propio archivo son los del buffer, con lo que tenga sin
+---guardar, igual que `graph`: el índice del sitio los conoce por el disco.
 ---@param bufnr integer
 ---@param binding table|nil
 ---@param wanted string
@@ -509,9 +512,13 @@ local function site_files(bufnr, binding, wanted, graph)
     local e = page_declaration_in(graph, wanted)
     if e then table.insert(starts, vim.uv.fs_realpath(e.file) or e.file) end
   end
+  local targets = {}
+  for _, item in ipairs(require('asp.includes').includes_of(nil, bufnr)) do
+    if item.resolved then table.insert(targets, vim.uv.fs_realpath(item.resolved) or item.resolved) end
+  end
   local site = require('asp.site')
   local index = site.index(root)
-  return site.closure(index, starts), self, index.count
+  return site.closure(index, starts, { [self] = targets }), self, index.count
 end
 
 ---Todas las ocurrencias del identificador bajo `position`.

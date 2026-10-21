@@ -285,6 +285,48 @@ describe('asp.symbols references en un sitio temporal', function()
     } }, notices)
   end)
 
+  it('usa los includes del buffer sin guardar, no los del disco', function()
+    write('web.config', {})
+    write('Old.inc', { '<% Dim Hit : Hit = 1 %>' })
+    write('New.inc', { '<% Dim Hit : Hit = 3 %>' })
+    write('B.asp', { '<!--#include file="New.inc" -->', '<% Hit = 4 %>' })
+    vim.cmd.edit(write('A.asp', { '<!--#include file="Old.inc" -->', '<% Hit = 2 %>' }))
+    local pos = pos_of('Hit')
+    local function query() return short(symbols.references(0, pos), temp) end
+    assert.are.same({ 'A.asp:1:3', 'Old.inc:0:7', 'Old.inc:0:13' }, query())
+
+    -- Sin guardar, el buffer deja de incluir Old.inc: el sitio sigue
+    -- teniendo esa arista en disco, pero no vale para este archivo.
+    vim.api.nvim_buf_set_lines(0, 0, 1, false, { '<!-- sin include -->' })
+    assert.are.same({}, require('asp.includes').buffer_graph(0).order)
+    assert.are.same({ 'A.asp:1:3' }, query())
+
+    -- Y pasa a incluir New.inc: entra su declaración y B.asp, que también
+    -- lo incluye.
+    vim.api.nvim_buf_set_lines(0, 0, 1, false, { '<!--#include file="New.inc" -->' })
+    assert.are.same({ 'A.asp:1:3', 'New.inc:0:7', 'New.inc:0:13', 'B.asp:1:3' }, query())
+  end)
+
+  it('nota un include fuera de la raíz que aparece o desaparece sin cambiar las páginas', function()
+    write('sitio/web.config', {})
+    vim.cmd.edit(write('sitio/A.asp', { '<!--#include file="../comun/L.inc" -->', '<% Hit = 1 %>' }))
+    write('sitio/B.asp', { '<!--#include file="../comun/L.inc" -->', '<% Hit = 2 %>' })
+    local pos = pos_of('Hit')
+    local function query() return short(symbols.references(0, pos), temp) end
+    assert.are.same({ 'sitio/A.asp:1:3' }, query())
+    assert.are.same({ 'sitio/A.asp', 'sitio/B.asp' }, read_files())
+
+    -- B.asp no cambió: entra porque su include ahora resuelve, y recién
+    -- entonces hace falta parsearla.
+    write('comun/L.inc', { '<% Dim Hit %>' })
+    assert.are.same({ 'sitio/A.asp:1:3', 'comun/L.inc:0:7', 'sitio/B.asp:1:3' }, query())
+    assert.are.same({ 'comun/L.inc', 'sitio/B.asp' }, read_files())
+
+    vim.fn.delete(temp .. '/comun/L.inc')
+    assert.are.same({ 'sitio/A.asp:1:3' }, query())
+    assert.are.same({}, read_files())
+  end)
+
   it('sin raíz de sitio se queda en el buffer y su grafo', function()
     local lib = write('lib.inc', LIB)
     page('a.asp')
