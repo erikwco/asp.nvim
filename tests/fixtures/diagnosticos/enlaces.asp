@@ -19,5 +19,10 @@ Response.Redirect "falta.asp?id=" & id
 <script>
 location.href = 'otra/' + id + '.asp';
 </script>
+<script language="javascript">
+<!--
+location.href = 'falta_js.asp';
+//-->
+</script>
 </body>
 </html>

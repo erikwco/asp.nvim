@@ -239,8 +239,10 @@ describe('diagnósticos de VBScript', function()
 
   describe('páginas inexistentes', function()
     it('marca enlaces y recursos que no existen en disco', function()
+      -- falta_js.asp está en un <script><!-- ... //--></script>: ese
+      -- comentario HTML no comenta el JavaScript.
       local ds = of(diags_at(DIAG .. '/enlaces.asp'), 'missing_page')
-      assert.are.same({ 'js/falta.js', 'no_existe.asp' }, texts(ds))
+      assert.are.same({ 'js/falta.js', 'no_existe.asp', 'falta_js.asp' }, texts(ds))
       assert.are.equal(vim.diagnostic.severity.WARN, ds[1].severity)
     end)
 
@@ -253,7 +255,7 @@ describe('diagnósticos de VBScript', function()
         'falta.asp?id=', 'http://ejemplo.com/remota.asp', 'viejo.asp', 'viejo2.asp', '.asp' }) do
         assert.is_false(vim.tbl_contains(reported, path), path)
       end
-      assert.are.equal(2, #reported)
+      assert.are.equal(3, #reported)
     end)
   end)
 

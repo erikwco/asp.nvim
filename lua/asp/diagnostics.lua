@@ -45,8 +45,10 @@ function M.config()
   opts = opts or {}
   for key in pairs(opts) do
     if DEFAULTS[key] == nil then
+      local known = vim.tbl_keys(DEFAULTS)
+      table.sort(known)
       warn_once('key:' .. tostring(key), ('diagnostics.%s no es una familia conocida (%s)'):format(
-        tostring(key), table.concat(vim.tbl_keys(DEFAULTS), ', ')))
+        tostring(key), table.concat(known, ', ')))
     end
   end
   local severity = vim.diagnostic.severity
@@ -394,17 +396,31 @@ local function vbscript_family(ctx, undeclared, unknown_call)
 end
 
 -- Comentarios HTML (no las directivas `<!--#...`), en bytes 1-indexados.
+-- Un `<!--` dentro de un <script> no comenta su JavaScript: es el viejo
+-- `<script><!-- ... //--></script>` para navegadores sin JS.
 local function html_comments(content)
+  local lower = content:lower()
   local spans, init = {}, 1
+  local script = lower:find('<script[%s>]')
   while true do
     local s = content:find('<!--', init, true)
     if not s then break end
-    local _, e = content:find('-->', s + 4, true)
-    if content:sub(s + 4, s + 4) ~= '#' then
-      table.insert(spans, { s, e or #content })
+    -- El próximo <script> se busca de nuevo solo cuando quedó atrás: cada
+    -- búsqueda avanza desde `init` y el recorrido sigue siendo lineal.
+    if script and script < init then script = lower:find('<script[%s>]', init) end
+    if script and script < s then
+      -- Hay un <script> antes: el `<!--` es suyo si está antes del cierre.
+      local close = lower:find('</script', script, true)
+      if not close then break end
+      init = close
+    else
+      local _, e = content:find('-->', s + 4, true)
+      if content:sub(s + 4, s + 4) ~= '#' then
+        table.insert(spans, { s, e or #content })
+      end
+      if not e then break end
+      init = e + 1
     end
-    if not e then break end
-    init = e + 1
   end
   return spans
 end
@@ -482,6 +498,10 @@ function M.refresh(bufnr)
     for key, default in pairs(DEFAULTS) do cfg[key] = vim.diagnostic.severity[default] end
   end
   M.last_errors = {}
+  if not next(vim.tbl_filter(function(sev) return sev end, cfg)) then
+    pcall(vim.diagnostic.reset, M.ns, bufnr)
+    return
+  end
   local diags = {}
   local ok_ctx, ctx = pcall(context, bufnr)
   if not ok_ctx then
