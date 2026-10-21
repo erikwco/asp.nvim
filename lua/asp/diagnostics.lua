@@ -161,14 +161,37 @@ local function diag(family, severity, lnum, col, end_lnum, end_col, message)
   }
 end
 
+---La directiva include del buffer por la que entra `file` al grafo: los
+---archivos de cada directiva de primer nivel ocupan un tramo contiguo del
+---orden DFS de buffer_graph.
+local function directive_for(bufnr, order, file)
+  local tops = {}
+  for _, item in ipairs(require('asp.includes').includes_of(nil, bufnr)) do
+    if item.resolved and not tops[item.resolved] then tops[item.resolved] = item end
+  end
+  local current
+  for _, f in ipairs(order) do
+    current = tops[f] or current
+    if f == file then return current end
+  end
+end
+
 ---Familia includes: directivas que no resuelven y ciclos del grafo.
 local function includes_family(ctx, severity)
   local g = graph_of(ctx)
   if not g then return {} end
   local out = {}
+  local path = vim.fs.normalize(vim.api.nvim_buf_get_name(ctx.bufnr))
   for _, u in ipairs(g.unresolved) do
-    table.insert(out, diag('includes', severity, u.lnum, u.col, u.lnum, u.end_col,
-      ('include %s="%s" no resuelve a ningún archivo'):format(u.kind, u.text)))
+    local at, where = u, ''
+    if u.from ~= path then
+      at = directive_for(ctx.bufnr, g.order, u.from)
+      where = (' en %s:%d'):format(vim.fs.basename(u.from), u.lnum + 1)
+    end
+    if at then
+      table.insert(out, diag('includes', severity, at.lnum, at.col, at.lnum, at.end_col,
+        ('include %s="%s"%s no resuelve a ningún archivo'):format(u.kind, u.text, where)))
+    end
   end
   for _, c in ipairs(g.cycles) do
     table.insert(out, diag('includes', severity, 0, 0, 0, 0,
@@ -219,21 +242,6 @@ local function starts_statement(lines, use)
   -- Al principio de la línea, salvo que la anterior continúe con ` _`.
   local prev = use.lnum > 0 and lines[use.lnum] or ''
   return not (prev:find('%s_%s*$') or prev:find('^_%s*$'))
-end
-
----La directiva include del buffer por la que entra `file` al grafo: los
----archivos de cada directiva de primer nivel ocupan un tramo contiguo del
----orden DFS de buffer_graph.
-local function directive_for(bufnr, order, file)
-  local tops = {}
-  for _, item in ipairs(require('asp.includes').includes_of(nil, bufnr)) do
-    if item.resolved and not tops[item.resolved] then tops[item.resolved] = item end
-  end
-  local current
-  for _, f in ipairs(order) do
-    current = tops[f] or current
-    if f == file then return current end
-  end
 end
 
 ---Familias undeclared y unknown_call: usos de identificadores VBScript

@@ -351,6 +351,31 @@ describe('diagnósticos de VBScript', function()
   end)
 
   describe('refresco', function()
+    it('ubica un include transitivo roto en la directiva de la página actual', function()
+      local leaf = {}
+      for _ = 1, 100 do leaf[#leaf + 1] = '' end
+      leaf[#leaf + 1] = '<!--#include file="falta.inc" -->'
+      in_temp({
+        ['p.asp'] = {
+          '<!--#include file="inc/sano.inc" -->',
+          '<!--#include file="inc/base.inc" -->',
+          '<% Dim x : x = (1 + %>',
+        },
+        ['inc/sano.inc'] = { '<% Dim sano %>' },
+        ['inc/base.inc'] = { '<!--#include file="hoja.inc" -->' },
+        ['inc/hoja.inc'] = leaf,
+      }, function(dir)
+        local ds = diags_at(dir .. '/p.asp')
+        local inc = of(ds, 'includes')
+        assert.are.equal(1, #inc)
+        assert.are.equal(1, inc[1].lnum)
+        assert.are.equal(1, inc[1].end_lnum)
+        assert.are.equal('<!--#include file="inc/base.inc" -->', text_of(inc[1]))
+        assert.is_truthy(inc[1].message:find('hoja.inc:101', 1, true))
+        assert.are.equal(1, #of(ds, 'syntax'))
+      end)
+    end)
+
     it('TextChanged programa un refresh y al cerrar el buffer no queda ningún timer', function()
       vim.cmd.edit(DIAG .. '/explicit.asp')
       local buf = vim.api.nvim_get_current_buf()
