@@ -780,12 +780,10 @@ local function file_data(path, kind)
   end
   if hit[kind] == nil then
     local ok, data = pcall(function()
-      local f = assert(io.open(path, 'rb'))
-      local content = f:read('*a')
-      f:close()
-      -- Neovim no muestra el BOM en el buffer: sin quitarlo, las columnas
-      -- de la primera línea quedarían corridas tres bytes.
-      return build_file((content:gsub('^\239\187\191', '')), kind)
+      -- Las columnas del buffer que abriría Neovim: sin el BOM, que no
+      -- muestra, y en UTF-8 aunque el archivo sea latin1 (asp.pages.read).
+      -- Si no, una línea con acentos antes de un nombre lo corre de lugar.
+      return build_file(assert(require('asp.pages').read(path)), kind)
     end)
     hit[kind] = ok and data or false
   end
