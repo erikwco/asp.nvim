@@ -141,6 +141,38 @@ de esos includes. `C-]` abre la declaración en el archivo correspondiente
 y `vim.lsp.buf.references()` reúne sus usos, incluidos los manejadores de
 esas páginas. Ver `:help asp-javascript`.
 
+Hover muestra la primera línea de la declaración o la firma de la función,
+sin su cuerpo. Si viene de un `.js` o include, indica `Archivo:`.
+Completion ofrece los bindings del scope más cercano, luego los globales
+de la página y de sus externos, con prefijo sensible a mayúsculas. Las
+palabras clave aparecen desde dos letras. Funciona también en `on*` y en
+URLs `javascript:`.
+
+`vim.lsp.buf.signature_help()` muestra los parámetros del árbol, incluidos
+defaults, rest y patrones desestructurados. Detecta llamadas abiertas
+dentro de la región JS, incluso en varias líneas y con llamadas anidadas.
+Al contar argumentos ignora comas dentro de strings, templates, comentarios,
+expresiones regulares, paréntesis, arrays y objetos.
+
+El catálogo parcial DOM y ECMAScript tiene 102 entradas (84 miembros y 18
+globales, sin contar alias de `window`). Aporta firmas y documentación en
+español para `document`, `window`, `console`, `Math`, `JSON`, `localStorage`,
+`location`, `navigator`, `history`, `Array` y funciones como `parseInt`.
+Las tres ayudas usan ese catálogo. Los bindings del usuario lo sombrean.
+Se reconocen rutas explícitas como `window.location.reload` y
+`document.location.href`. Un `obj.` desconocido devuelve completion vacía.
+No hay inferencia de tipos, alias, retornos ni miembros dinámicos de
+formularios (`document.f`, `document.forms.f`, nombres o ids del HTML).
+Los métodos del usuario tienen hover en su declaración, sin resolver
+llamadas como `vista.pintar()`.
+
+El handler elige VBScript o JS por las regiones ya indexadas. No mezcla
+sus sugerencias ni ofrece ayuda dentro de strings o comentarios JS.
+Completion y signatureHelp tratan todo template, incluida `${...}`, como
+texto opaco. La ayuda reutiliza las cachés del buffer y de los externos;
+las consultas en caliente no leen contenido de disco ni vuelven a parsear.
+La medición reproducible está en [tests/bench/js_help.md](tests/bench/js_help.md).
+
 Se ignoran `<script runat="server">`, los `type` que no son JavaScript,
 como `text/template`, y `<script language="VBScript">`. Un `<%= %>` dentro
 del JS se trata como un valor opaco.
@@ -619,8 +651,9 @@ Una página cambiada se relee sola.
   ni la variable de `for (const x of xs)`. Los parámetros con default,
   rest o desestructurados y los nombres desestructurados de `var`, `let`
   y `const` sí. Los defaults ven los parámetros y los alcances externos,
-  sin las declaraciones del cuerpo de su función. Sin hover ni completion
-  para JS.
+  sin las declaraciones del cuerpo de su función. Hover, completion y
+  signatureHelp cubren bindings y el catálogo DOM parcial; no infieren
+  miembros de objetos del usuario ni formularios por nombre o id.
 - JavaScript en manejadores `on*`: no se modela el parámetro implícito
   `event` ni la cadena de scopes del elemento y su formulario
   (`onclick="submit()"` no resuelve a `form.submit`). No se decodifican
