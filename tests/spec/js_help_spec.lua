@@ -60,6 +60,19 @@ describe('asp.js ayuda de cliente', function()
     assert.are.equal('```javascript\nlet total = 5\n```', help.hover(0, pos('return total', 7)).contents.value)
   end)
 
+  it('hover de un parámetro indica que lo es, con su default o su rest', function()
+    local function hover(text, shift) return help.hover(0, pos(text, shift)).contents.value end
+    assert.are.equal('```javascript\n(parámetro) primero\n```', hover('return primero', 7))
+    assert.are.equal('```javascript\n(parámetro) segundo = 2\n```', hover('segundo = 2'))
+    assert.are.equal('```javascript\n(parámetro) ...resto\n```', hover('resto)'))
+    assert.are.equal("```javascript\n(parámetro) color = 'azul'\n```", hover('return color', 7))
+    query('function patrones({ a, b } = {}, c = {\n  d: 1 }) { return a + c; }')
+    assert.are.equal('```javascript\n(parámetro) a\n```', hover('return a', 7))
+    assert.are.equal('```javascript\n(parámetro) c = { d: 1 }\n```', hover('a + c', 4))
+    local entry = items(pos('return a', #'return a')).a
+    assert.are.equal('(parámetro) a', entry.detail)
+  end)
+
   it('hover de la declaración de un método y una clase', function()
     assert.are.equal("```javascript\npintar(color = 'azul')\n```", help.hover(0, pos('pintar(')).contents.value)
     assert.are.equal('```javascript\nclass Vista\n```', help.hover(0, pos('class Vista', 6)).contents.value)
