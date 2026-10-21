@@ -7,6 +7,9 @@ local M = { globals = {}, count = 0 }
 -- https://tc39.es/ecma262/multipage/global-object.html
 -- https://console.spec.whatwg.org/
 -- https://drafts.csswg.org/cssom-view/
+-- https://fetch.spec.whatwg.org/
+-- https://xhr.spec.whatwg.org/
+-- https://html.spec.whatwg.org/multipage/webstorage.html
 local groups = {
   document = {
     { 'getElementById(id)', 'Busca un elemento por su id; devuelve null si no existe.' },
@@ -80,6 +83,13 @@ local groups = {
     { 'clear()', 'Elimina todas las claves de este almacenamiento.' },
     { 'length', 'Cantidad de claves almacenadas.' },
   },
+  sessionStorage = {
+    { 'getItem(key)', 'Devuelve el valor almacenado en esta pestaña como texto, o null.' },
+    { 'setItem(key, value)', 'Guarda el valor como texto hasta cerrar la pestaña; puede fallar por cuota.' },
+    { 'removeItem(key)', 'Elimina la clave indicada.' },
+    { 'clear()', 'Elimina todas las claves de la sesión.' },
+    { 'length', 'Cantidad de claves almacenadas.' },
+  },
   location = {
     { 'href', 'URL completa; asignarla inicia una navegación.' },
     { 'hash', 'Fragmento con #, o cadena vacía.' },
@@ -107,9 +117,68 @@ local groups = {
     { 'replaceState(data, unused, url)', 'Modifica la entrada actual; url es opcional.' },
     { 'length', 'Cantidad de entradas del historial de sesión.' },
   },
+  Object = {
+    { 'keys(obj)', 'Array con los nombres de las propiedades enumerables propias.' },
+    { 'values(obj)', 'Array con los valores de las propiedades enumerables propias.' },
+    { 'entries(obj)', 'Array de pares [clave, valor] de las propiedades enumerables propias.' },
+    { 'assign(target, ...sources)', 'Copia las propiedades enumerables propias de sources en target y lo devuelve.' },
+    { 'freeze(obj)', 'Impide agregar, quitar o cambiar propiedades; no congela los objetos anidados.' },
+    { 'create(proto, propertiesObject)', 'Crea un objeto con proto como prototipo; propertiesObject es opcional.' },
+    { 'defineProperty(obj, prop, descriptor)', 'Define o modifica una propiedad con su descriptor.' },
+    { 'fromEntries(iterable)', 'Crea un objeto desde pares [clave, valor].' },
+    { 'getPrototypeOf(obj)', 'Prototipo de obj, o null.' },
+  },
+  Date = {
+    { 'now()', 'Milisegundos transcurridos desde el 1 de enero de 1970 UTC.' },
+    { 'parse(dateString)', 'Milisegundos desde 1970 de una fecha en texto, o NaN; solo el formato ISO es portable.' },
+    { 'UTC(year, monthIndex, day, hours, minutes, seconds, milliseconds)', 'Milisegundos desde 1970 de una fecha UTC; el mes va de 0 a 11 y todo salvo year es opcional.' },
+  },
+  String = {
+    { 'fromCharCode(...codes)', 'Cadena formada por las unidades UTF-16 indicadas.' },
+  },
+  Number = {
+    { 'isInteger(value)', 'Indica si value es un número entero, sin convertirlo.' },
+    { 'isNaN(value)', 'Indica si value es NaN, sin convertirlo como el isNaN global.' },
+    { 'isFinite(value)', 'Indica si value es un número finito, sin convertirlo.' },
+    { 'parseFloat(string)', 'Igual que el parseFloat global.' },
+    { 'parseInt(string, radix)', 'Igual que el parseInt global; conviene indicar radix.' },
+    { 'MAX_SAFE_INTEGER', 'Mayor entero representable con exactitud: 2^53 - 1.' },
+    { 'EPSILON', 'Diferencia entre 1 y el menor número mayor que 1.' },
+  },
+  Promise = {
+    { 'resolve(value)', 'Promesa cumplida con value, o value mismo si ya es una promesa.' },
+    { 'reject(reason)', 'Promesa rechazada con reason.' },
+    { 'all(iterable)', 'Se cumple con todos los valores, o se rechaza con el primer rechazo.' },
+    { 'allSettled(iterable)', 'Se cumple cuando todas terminan, con el estado y el valor o motivo de cada una.' },
+    { 'race(iterable)', 'Termina como la primera promesa que se cumple o se rechaza.' },
+    { 'any(iterable)', 'Se cumple con la primera que se cumple; se rechaza con AggregateError si fallan todas.' },
+  },
+  -- Miembros de las instancias: asp.js_help los ofrece para un binding
+  -- declarado como `var x = new XMLHttpRequest()`.
+  ['XMLHttpRequest.prototype'] = {
+    { 'open(method, url, async, user, password)', 'Inicializa la solicitud; async es true por defecto y los tres últimos son opcionales.' },
+    { 'send(body)', 'Envía la solicitud; body es opcional y se ignora en GET y HEAD.' },
+    { 'setRequestHeader(name, value)', 'Agrega una cabecera después de open y antes de send.' },
+    { 'getResponseHeader(name)', 'Valor de una cabecera de la respuesta, o null.' },
+    { 'getAllResponseHeaders()', 'Todas las cabeceras de la respuesta, una por línea con CRLF.' },
+    { 'abort()', 'Cancela la solicitud en curso.' },
+    { 'overrideMimeType(mime)', 'Fuerza el tipo MIME con que se interpreta la respuesta; antes de send.' },
+    { 'readyState', 'Estado: 0 UNSENT, 1 OPENED, 2 HEADERS_RECEIVED, 3 LOADING, 4 DONE.' },
+    { 'status', 'Código de estado HTTP; 0 antes de la respuesta o si falló la red.' },
+    { 'statusText', 'Texto del estado HTTP.' },
+    { 'responseText', 'Cuerpo de la respuesta como texto; requiere responseType vacío o "text".' },
+    { 'responseXML', 'Cuerpo de la respuesta como documento XML o HTML, o null.' },
+    { 'response', 'Cuerpo de la respuesta según responseType.' },
+    { 'responseType', 'Tipo de response: "", "text", "json", "blob", "arraybuffer" o "document".' },
+    { 'timeout', 'Milisegundos de espera antes de cancelar; 0 sin límite.' },
+    { 'withCredentials', 'Envía cookies y credenciales en solicitudes a otro origen.' },
+    { 'onreadystatechange', 'Manejador que se llama cada vez que cambia readyState.' },
+    { 'onload', 'Manejador que se llama al completar la solicitud, también con un estado de error HTTP.' },
+    { 'onerror', 'Manejador que se llama si falla la red.' },
+  },
   Array = {
     { 'isArray(value)', 'Indica si value es un array.' },
-    { 'from(items, mapFn, thisArg)', 'Crea un array desde un iterable; mapFn y thisArg son opcionales.' },
+    { 'from(items, mapFn, thisArg)', 'Crea un array desde un iterable o un objeto tipo array (arguments, colecciones del DOM); mapFn y thisArg son opcionales.' },
     { 'of(...items)', 'Crea un array con los argumentos como elementos.' },
   },
 }
@@ -121,6 +190,7 @@ local objects = {
   { 'Math', 'Funciones matemáticas y constantes.' },
   { 'JSON', 'Conversión entre valores JavaScript y texto JSON.' },
   { 'localStorage', 'Almacenamiento persistente por origen.' },
+  { 'sessionStorage', 'Almacenamiento por origen que dura mientras la pestaña está abierta.' },
   { 'location', 'URL de la página y navegación.' },
   { 'navigator', 'Información y capacidades del navegador.' },
   { 'history', 'Historial de sesión de la ventana.' },
@@ -132,9 +202,23 @@ local functions = {
   { 'isFinite(value)', 'Convierte a número e indica si es finito.' },
   { 'encodeURIComponent(component)', 'Codifica un componente de URL en UTF-8 con escapes porcentuales.' },
   { 'decodeURIComponent(component)', 'Decodifica un componente de URL; falla con escapes inválidos.' },
+  { 'encodeURI(uri)', 'Codifica una URL completa; conserva los caracteres reservados como / ? & y #.' },
+  { 'decodeURI(uri)', 'Decodifica una URL completa sin decodificar los escapes de caracteres reservados.' },
+  { 'escape(string)', 'Obsoleta: codifica con %XX y %uXXXX, como Escape de VBScript; para URLs usá encodeURIComponent.' },
+  { 'unescape(string)', 'Obsoleta: decodifica %XX y %uXXXX; para URLs usá decodeURIComponent.' },
+  { 'eval(x)', 'Evalúa una cadena como código JavaScript; cualquier otro valor lo devuelve tal cual.' },
+  { 'fetch(resource, options)', 'Inicia una solicitud HTTP y devuelve una promesa con la respuesta; options es opcional.' },
   { 'String(value)', 'Convierte un valor a cadena.' },
   { 'Number(value)', 'Convierte un valor a número.' },
+  { 'Boolean(value)', 'Convierte a booleano: false para 0, "", null, undefined y NaN.' },
+  { 'Object(value)', 'Convierte un valor en objeto; sin argumento crea un objeto vacío.' },
   { 'Array(...items)', 'Crea un array; un único argumento numérico indica su longitud.' },
+  { 'Date(year, monthIndex, day, hours, minutes, seconds, milliseconds)',
+    'Con new crea una fecha: sin argumentos, la actual; con un número, milisegundos desde 1970; con texto, lo interpreta; con año y mes (de 0 a 11), la hora local. Sin new devuelve la fecha actual como texto.' },
+  { 'RegExp(pattern, flags)', 'Crea una expresión regular; flags (g, i, m, s, u, y) es opcional.' },
+  { 'Error(message, options)', 'Crea un error con su mensaje; options es opcional y puede llevar cause.' },
+  { 'Promise(executor)', 'Con new crea una promesa; executor recibe las funciones resolve y reject.' },
+  { 'XMLHttpRequest()', 'Con new crea una solicitud HTTP; se configura con open y se envía con send.' },
 }
 
 local by_path, members = {}, {}

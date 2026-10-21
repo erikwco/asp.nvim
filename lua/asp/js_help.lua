@@ -6,13 +6,47 @@ local info = require('asp.js_info')
 
 local keywords = {
   'function', 'return', 'const', 'let', 'var', 'if', 'else', 'for', 'while',
-  'new', 'this', 'true', 'false', 'null', 'undefined', 'typeof', 'async', 'await',
+  'do', 'switch', 'case', 'default', 'break', 'continue', 'try', 'catch',
+  'finally', 'throw', 'new', 'this', 'true', 'false', 'null', 'undefined',
+  'typeof', 'instanceof', 'delete', 'void', 'in', 'of', 'class', 'extends',
+  'super', 'static', 'import', 'export', 'yield', 'async', 'await',
+  'debugger', 'with',
 }
 
+-- Parámetro implícito de los atributos on*: el navegador envuelve su valor
+-- en `function (event) { ... }`.
+local EVENT = {
+  name = 'event', kind = 6, detail = 'event',
+  doc = 'Evento que disparó el manejador: el parámetro implícito de los atributos on*.',
+}
+
+-- Constructores cuyas instancias tienen miembros en el catálogo.
+local INSTANCES = { XMLHttpRequest = 'XMLHttpRequest.prototype' }
+
+---Ruta del catálogo para `path`, o nil si un binding del usuario la
+---sombrea. Un binding declarado como `var x = new XMLHttpRequest()` toma
+---los miembros de su prototipo; solo se mira esa primera línea de la
+---declaración, sin seguir asignaciones posteriores. `object` indica que
+---`path` es el objeto cuyos miembros se piden, no un miembro.
+local function catalog_path(bufnr, position, path, object)
+  local root, rest = path:match('^([^.]+)(.*)$')
+  local binding = js.named(bufnr, position, root)
+  if not binding then return path end
+  if rest == '' and not object then return nil end
+  local class = (binding.detail or ''):match('^[^=]*=%s*new%s+([%w_$]+)%f[^%w_$]')
+  return INSTANCES[class] and INSTANCES[class] .. rest or nil
+end
+
 local function catalog(bufnr, position, path)
-  local root = path:match('^[^.]+')
-  if js.named(bufnr, position, root) then return nil end
-  return dom.lookup(path)
+  path = catalog_path(bufnr, position, path)
+  return path and dom.lookup(path) or nil
+end
+
+---¿La región es el valor de un atributo on*? Las demás son <script> o
+---URLs `javascript:`, precedidas por `>` o por el prefijo.
+local function in_handler(ctx)
+  local before = ctx.source:sub(math.max(1, ctx.range[3] - 64), ctx.range[3]):lower()
+  return before:match('%f[%w]on%a+%s*=%s*["\']?$') ~= nil
 end
 
 local function hover(bufnr, position)
@@ -58,11 +92,13 @@ local function complete(bufnr, position)
   end
   if before:match('%.%s*$') then
     local path = context.path((before:gsub('%.%s*$', '')))
-    if not path or js.named(bufnr, position, path:match('^[^.]+')) then return {} end
+    path = path and catalog_path(bufnr, position, path, true)
+    if not path then return {} end
     for _, entry in ipairs(dom.members(path) or {}) do add(entry) end
     return out
   end
   for _, entry in ipairs(js.visible(bufnr, position) or {}) do add(entry) end
+  if in_handler(ctx) then add(EVENT) end
   for _, entry in ipairs(dom.globals) do add(entry) end
   if #prefix >= 2 then
     for _, word in ipairs(keywords) do add({ name = word, kind = 14, detail = word }) end

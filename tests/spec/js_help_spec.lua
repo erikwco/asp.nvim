@@ -206,6 +206,66 @@ describe('asp.js ayuda de cliente', function()
     assert.is_nil(help.signature(0, pos('getElementById(', #'getElementById(')))
   end)
 
+  it('completion ofrece event sólo dentro de los manejadores on*', function()
+    local p = pos('onclick="buscarGlobal')
+    vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { '<button onclick="buscarGlobal(ev)">Buscar</button>' })
+    local entry = items(pos('(ev)', 3)).event
+    assert.are.equal(6, entry.kind)
+    assert.is_truthy(entry.documentation.value:find('parámetro implícito', 1, true))
+    assert.is_nil(items(query('ev')).event)
+    assert.is_nil(items(pos('javascript:buscarGlobal', #'javascript:')).event)
+  end)
+
+  it('completion ofrece todas las palabras clave de JavaScript', function()
+    local p = query('fi')
+    for _, word in ipairs({ 'switch', 'case', 'break', 'continue', 'default', 'do', 'try', 'catch',
+      'finally', 'throw', 'instanceof', 'delete', 'in', 'of', 'class', 'extends', 'super', 'static',
+      'import', 'export', 'yield' }) do
+      vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { word })
+      local entry = items({ line = p.line, character = #word })[word]
+      assert.are.equal(14, entry and entry.kind, word)
+    end
+  end)
+
+  it('completion, hover y firmas de los globales de ECMAScript, Storage y fetch', function()
+    local p = query('Dat')
+    assert.are.equal(3, items(p).Date.kind)
+    for object, member in pairs({ Object = 'keys', Date = 'now', Number = 'isInteger', Promise = 'all',
+      sessionStorage = 'getItem', String = 'fromCharCode' }) do
+      vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { object .. '.' })
+      assert.is_not_nil(items({ line = p.line, character = #object + 1 })[member], object .. '.' .. member)
+    end
+    for _, name in ipairs({ 'escape', 'unescape', 'eval', 'fetch', 'Boolean', 'RegExp', 'Error' }) do
+      vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { name .. '(' })
+      assert.is_not_nil(help.signature(0, { line = p.line, character = #name + 1 }), name)
+    end
+    vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { 'fetch(url, ' })
+    local result = help.signature(0, { line = p.line, character = #'fetch(url, ' })
+    assert.are.same({ 'resource', 'options' }, labels(result))
+    assert.are.equal(1, result.activeParameter)
+    vim.api.nvim_buf_set_lines(0, p.line, p.line + 1, false, { 'Array.from(x);' })
+    local value = help.hover(0, { line = p.line, character = #'Array.f' }).contents.value
+    assert.is_truthy(value:find('objeto tipo array', 1, true))
+  end)
+
+  it('un binding new XMLHttpRequest() ofrece los miembros de su instancia', function()
+    query('var xhr = new XMLHttpRequest();\nvar otro = {};\nxhr.open(\'GET\', url, ')
+    local row = pos('xhr.open(').line
+    local result = help.signature(0, { line = row, character = #"xhr.open('GET', url, " })
+    assert.are.same({ 'method', 'url', 'async', 'user', 'password' }, labels(result))
+    assert.are.equal(2, result.activeParameter)
+    assert.is_truthy(help.hover(0, { line = row, character = 5 }).contents.value:find('async es true', 1, true))
+    vim.api.nvim_buf_set_lines(0, row, row + 1, false, { 'xhr.' })
+    local entries = items({ line = row, character = 4 })
+    assert.are.equal(2, entries.send.kind)
+    assert.are.equal(10, entries.readyState.kind)
+    assert.are.equal(10, entries.onreadystatechange.kind)
+    vim.api.nvim_buf_set_lines(0, row, row + 1, false, { 'otro.' })
+    assert.are.same({}, help.complete(0, { line = row, character = 5 }))
+    vim.api.nvim_buf_set_lines(0, row, row + 1, false, { 'XMLHttpRequest.' })
+    assert.is_nil(items({ line = row, character = #'XMLHttpRequest.' }).send)
+  end)
+
   it('keywords sólo desde dos letras', function()
     local p = query('f')
     assert.is_nil(items(p)['function'])
@@ -458,12 +518,13 @@ describe('asp.js ayuda de cliente', function()
 end)
 
 describe('catálogo DOM parcial', function()
-  it('tiene entre 80 y 120 entradas documentadas y offsets válidos', function()
+  it('tiene entre 150 y 200 entradas documentadas y offsets válidos', function()
     local dom = require('asp.dom')
-    assert.is_true(dom.count >= 80 and dom.count <= 120, tostring(dom.count))
+    assert.is_true(dom.count >= 150 and dom.count <= 200, tostring(dom.count))
     local all = vim.list_extend({}, dom.globals)
     for _, object in ipairs({ 'document', 'window', 'console', 'Math', 'JSON', 'localStorage',
-      'location', 'navigator', 'history', 'Array' }) do
+      'sessionStorage', 'location', 'navigator', 'history', 'Array', 'Object', 'Date', 'String',
+      'Number', 'Promise', 'XMLHttpRequest.prototype' }) do
       vim.list_extend(all, dom.members(object))
     end
     for _, e in ipairs(all) do
