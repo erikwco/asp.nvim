@@ -1,3 +1,12 @@
+-- Texto de cada parámetro según sus offsets [inicio, fin) en el label.
+local function param_labels(result)
+  local signature = result.signatures[1]
+  return vim.tbl_map(function(param)
+    assert.are.equal('table', type(param.label))
+    return signature.label:sub(param.label[1] + 1, param.label[2])
+  end, signature.parameters)
+end
+
 describe('catálogos de ayuda VBScript y COM', function()
   local native = require('asp.vbscript_builtins')
   local com = require('asp.com')
@@ -198,7 +207,7 @@ describe('ayuda nativa y COM', function()
     local result = signature.help(0, query('x = Mid(s, '))
     assert.are.equal(1, result.activeParameter)
     assert.are.equal('Mid(string, start[, length])', result.signatures[1].label)
-    assert.are.equal('start', result.signatures[1].parameters[2].label)
+    assert.are.equal('start', param_labels(result)[2])
   end)
 
   it('ofrece la firma de Response.Write', function()
@@ -211,7 +220,7 @@ describe('ayuda nativa y COM', function()
     local result = signature.help(0, query('rs.Open('))
     assert.are.equal(0, result.activeParameter)
     assert.is_truthy(result.signatures[1].label:find('ADODB.Recordset.Open(', 1, true))
-    assert.are.equal('Source', result.signatures[1].parameters[1].label)
+    assert.are.equal('Source', param_labels(result)[1])
   end)
 
   it('ofrece parámetros de Sub sin paréntesis, con y sin Call', function()
@@ -219,15 +228,27 @@ describe('ayuda nativa y COM', function()
       local result = signature.help(0, query(text))
       assert.are.equal(1, result.activeParameter)
       assert.are.equal('Sub MiSub(ByVal a, ByRef b)', result.signatures[1].label)
-      assert.are.same({ 'a', 'b' }, vim.tbl_map(function(p) return p.label end, result.signatures[1].parameters))
+      assert.are.same({ 'a', 'b' }, param_labels(result))
     end
+  end)
+
+  it('resalta el parámetro y no la misma letra dentro de ByVal', function()
+    local result = signature.help(0, query('MiSub '))
+    local label = result.signatures[1].label
+    assert.are.equal('Sub MiSub(ByVal ', label:sub(1, result.signatures[1].parameters[1].label[1]))
+    -- Lo mismo que dibuja Neovim: 0.10 devuelve {inicio, fin} en la línea
+    -- de la firma; 0.11+ un Range4 sobre las líneas del markdown.
+    local lines, hl = vim.lsp.util.convert_signature_help_to_markdown_lines(result, 'vbscript', { '(', ',' })
+    local row, s, e = 2, hl[1], hl[2]
+    if #hl == 4 then row, s, e = hl[1] + 1, hl[2], hl[4] end
+    assert.are.equal('ByVal a', lines[row]:sub(s - 5, e))
   end)
 
   it('ofrece los parámetros de una Function de un include transitivo', function()
     local result = signature.help(0, query('x = FuncionIncluida(1, '))
     assert.are.equal(1, result.activeParameter)
     assert.are.equal('Function FuncionIncluida(ByVal primero, segundo)', result.signatures[1].label)
-    assert.are.equal('segundo', result.signatures[1].parameters[2].label)
+    assert.are.equal('segundo', param_labels(result)[2])
     assert.is_truthy(result.signatures[1].documentation.value:find('funciones.inc', 1, true))
   end)
 
@@ -472,7 +493,7 @@ describe('alcance y cachés de ayuda', function()
       'Sub Usar()', 'x = Dato(', 'End Sub', 'End Class' })
     local result = signature.help(0, { line = 6, character = 9 })
     assert.are.equal('Property Get Dato(Optional indice)', result.signatures[1].label)
-    assert.are.equal('indice', result.signatures[1].parameters[1].label)
+    assert.are.equal('indice', param_labels(result)[1])
   end)
 
   it('no confunde declaraciones con llamadas activas', function()

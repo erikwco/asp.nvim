@@ -27,8 +27,16 @@ function M.help(bufnr, position)
   if not info or not info.signature or not info.signature:find('(', 1, true) then return nil end
   local params = info.params or signature_info.parameters(info.signature)
   local parameters = {}
+  -- Offsets [inicio, fin) en bytes del label, como el positionEncoding
+  -- utf-8 del servidor. Con el nombre suelto, el cliente resalta su primera
+  -- aparición tras el paréntesis, como la `a` de `ByVal` en `(ByVal a)`.
+  local from = (info.signature:find('(', 1, true) or 0) + 1
   for _, param in ipairs(params) do
-    parameters[#parameters + 1] = { label = param.name, documentation = param.doc }
+    local name = vim.pesc(param.name)
+    local s, e = info.signature:find('%f[%w_]' .. name .. '%f[^%w_]', from)
+    local label = param.name
+    if s then label, from = { s - 1, e }, e + 1 end
+    parameters[#parameters + 1] = { label = label, documentation = param.doc }
   end
   local doc = info.doc or ''
   if info.returns then doc = doc .. '\n\nRetorno: ' .. info.returns .. '.' end
