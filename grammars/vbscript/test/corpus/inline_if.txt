@@ -359,3 +359,545 @@ z = 2
     (expression
       (primary_expression
         (number_literal)))))
+
+==================
+end if en la misma linea cierra el if de una linea
+==================
+If a Then b = 1 Else c = 2 : End If
+z = 3
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal))))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal))))
+    (inline_end_if))
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal)))))
+
+==================
+end if de una linea tras varias sentencias
+==================
+if a then b = 1:c = 2  else d = 3 : end if
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal))))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal))))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal))))
+    (inline_end_if)))
+
+==================
+end if de una linea sin dos puntos
+==================
+If a Then b = 1 Else c = 2 End If
+z = 3
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal))))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal))))
+    (inline_end_if))
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal)))))
+
+==================
+end if de una linea sin else
+==================
+If a Then b = 1 : End If
+If c Then d = 2 End If
+z = 3
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal))))
+    (inline_end_if))
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal))))
+    (inline_end_if))
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal)))))
+
+==================
+end if de una linea dentro de un if de bloque
+==================
+If a Then
+  If x Then b = 1 Else c = 2 : End If
+Else
+  If y Then b = 1 : c = 3 Else d = 4 : End If
+End If
+z = 1
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (block
+      (if_statement
+        (expression
+          (primary_expression
+            (identifier)))
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (number_literal))))
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (number_literal))))
+        (inline_end_if)))
+    (else_clause
+      (block
+        (if_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (let_statement
+            (expression
+              (primary_expression
+                (identifier)))
+            (expression
+              (primary_expression
+                (number_literal))))
+          (let_statement
+            (expression
+              (primary_expression
+                (identifier)))
+            (expression
+              (primary_expression
+                (number_literal))))
+          (let_statement
+            (expression
+              (primary_expression
+                (identifier)))
+            (expression
+              (primary_expression
+                (number_literal))))
+          (inline_end_if)))))
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal)))))
+
+==================
+end if en la linea siguiente es del if de bloque
+==================
+If a Then
+  If b Then x = 1 Else x = 2
+End If
+z = 3
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (block
+      (if_statement
+        (expression
+          (primary_expression
+            (identifier)))
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (number_literal))))
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (number_literal)))))))
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal)))))
+
+==================
+end if de una linea sin distinguir mayusculas y con tabs
+==================
+IF a THEN b = 1 ELSE c = 2 :	END	IF
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal))))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal))))
+    (inline_end_if)))
+
+==================
+end if de una linea tras una continuacion
+==================
+If a Then b = 1 _
+  Else c = 2 _
+  End If
+z = 3
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal))))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal))))
+    (inline_end_if))
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal)))))
+
+==================
+identificadores que empiezan como end no cierran el if
+==================
+If a Then b = 1 : EndIf = 2 : en = 3 : e = 4
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal))))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal))))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal))))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal))))))
+
+==================
+llamada sin parentesis en un if de una linea
+==================
+If b Then Response.Write "x"
+z = 1
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (member_expression
+        (primary_expression
+          (identifier))
+        (identifier)))
+    (expression
+      (primary_expression
+        (string_literal))))
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal)))))
+
+==================
+llamada sin parentesis con else en un if de una linea
+==================
+If a Then
+  If b Then Response.Write "x" Else Response.Write "y"
+End If
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (block
+      (if_statement
+        (expression
+          (primary_expression
+            (identifier)))
+        (expression
+          (member_expression
+            (primary_expression
+              (identifier))
+            (identifier)))
+        (expression
+          (primary_expression
+            (string_literal)))
+        (expression
+          (member_expression
+            (primary_expression
+              (identifier))
+            (identifier)))
+        (expression
+          (primary_expression
+            (string_literal)))))))
+
+==================
+llamada sin parentesis antes del end if de una linea
+==================
+If a Then
+  If b Then Response.Write "x" : End If
+End If
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (block
+      (if_statement
+        (expression
+          (primary_expression
+            (identifier)))
+        (expression
+          (member_expression
+            (primary_expression
+              (identifier))
+            (identifier)))
+        (expression
+          (primary_expression
+            (string_literal)))
+        (inline_end_if)))))
+
+==================
+comentario tras un if de una linea
+==================
+If a Then
+  If b Then x = 1 ' nota
+Else
+  x = 2
+End If
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (block
+      (if_statement
+        (expression
+          (primary_expression
+            (identifier)))
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (number_literal))))))
+    (comment)
+    (else_clause
+      (block
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (number_literal))))))))
+
+==================
+sentencia tras el end if de una linea
+==================
+If a Then b = 1 : End If : z = 2
+If c Then If d Then x = 1 End If : y = 2
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal))))
+    (inline_end_if))
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal))))
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (if_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (let_statement
+        (expression
+          (primary_expression
+            (identifier)))
+        (expression
+          (primary_expression
+            (number_literal))))
+      (inline_end_if))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal))))))

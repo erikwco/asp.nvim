@@ -86,4 +86,32 @@ describe('If de bloque en la inyección combinada', function()
       '<% End If %>',
     }))
   end)
+
+  it('el End If de la misma línea cierra el If de una línea', function()
+    assert.are.same({ { 1, 5, true }, { 2, 2, false }, { 4, 4, false } }, ifs({
+      '<%',
+      'If a Then',
+      '  If b Then x = 1 : y = 2 Else y = 3 : End If',
+      'Else',
+      '  If c Then x = 2 End If',
+      'End If',
+      '%>',
+    }))
+  end)
+
+  it('el End If y el Else de otro bloque son del If de bloque', function()
+    assert.are.same({ { 0, 2, true }, { 1, 1, false } }, ifs({
+      '<% If a Then %>',
+      '<% If b Then x = 1 %>',
+      '<% End If %>',
+    }))
+    vim.cmd('bwipeout!')
+    assert.are.same({ { 0, 4, true }, { 1, 1, false } }, ifs({
+      '<% If a Then %>',
+      '<% If b Then x = 1 %>',
+      '<% Else %>',
+      '<p>z</p>',
+      '<% End If %>',
+    }))
+  end)
 end)

@@ -173,6 +173,22 @@ describe('diagnósticos de VBScript', function()
       end)
     end)
 
+    it('un If de una línea cerrado con End If en esa línea no es un error', function()
+      in_temp({
+        ['p.asp'] = {
+          '<%',
+          'if instr(1,res,"(OK)") > 0 then',
+          '  if trim(r)="" then r = "ok":t = "txt"  else t = "xml" : end if',
+          'else',
+          '  if instr(1,r,"ERROR")> 0 then t = "txt": r = res else t = "xml" : end if',
+          'end if',
+          '%>',
+        },
+      }, function(dir)
+        assert.are.same({}, of(diags_at(dir .. '/p.asp'), 'syntax'))
+      end)
+    end)
+
     it('dos <%= %> pegados se revisan cada uno', function()
       in_temp({
         ['p.asp'] = { '<% Option Explicit : Dim a %>', '<p><%=a%></p><p><%=b%></p>' },

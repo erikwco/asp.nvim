@@ -88,3 +88,87 @@ palabras pegadas a los delimitadores
           (primary_expression
             (identifier))
           (identifier))))))
+
+==================
+end if de una linea dentro de su bloque
+==================
+<% If a Then b = 1 : End If %><% z = 2 %>
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (let_statement
+      (expression
+        (primary_expression
+          (identifier)))
+      (expression
+        (primary_expression
+          (number_literal))))
+    (inline_end_if))
+  (let_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (expression
+      (primary_expression
+        (number_literal)))))
+
+==================
+end if de otro bloque es del if de bloque
+==================
+<% If a Then %><% If b Then x = 1 %><% End If %>
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (block
+      (if_statement
+        (expression
+          (primary_expression
+            (identifier)))
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (number_literal))))))))
+
+==================
+else de otro bloque es del if de bloque
+==================
+<% If a Then %><% If b Then x = 1 %><% Else %><% y = 2 %><% End If %>
+---
+
+(source_file
+  (if_statement
+    (expression
+      (primary_expression
+        (identifier)))
+    (block
+      (if_statement
+        (expression
+          (primary_expression
+            (identifier)))
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (number_literal))))))
+    (else_clause
+      (block
+        (let_statement
+          (expression
+            (primary_expression
+              (identifier)))
+          (expression
+            (primary_expression
+              (number_literal))))))))
