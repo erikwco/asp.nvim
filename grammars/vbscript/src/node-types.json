@@ -555,6 +555,10 @@
           "named": true
         },
         {
+          "type": "inline_end_if",
+          "named": true
+        },
+        {
           "type": "label_statement",
           "named": true
         },
@@ -596,6 +600,11 @@
         }
       ]
     }
+  },
+  {
+    "type": "inline_end_if",
+    "named": true,
+    "fields": {}
   },
   {
     "type": "label_statement",

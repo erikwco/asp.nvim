@@ -14,7 +14,8 @@
   (with_statement)
 ] @fold
 
-; Sólo el If de bloque: el de una línea no tiene End If. En la inyección
-; combinada, un <% If %> ... <% End If %> pliega también el HTML de en medio.
+; Sólo el If de bloque: el End If de uno de una línea va en inline_end_if.
+; En la inyección combinada, un <% If %> ... <% End If %> pliega también el
+; HTML de en medio.
 (if_statement
   "End") @fold
