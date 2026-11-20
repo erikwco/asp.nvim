@@ -25,7 +25,7 @@
   (#set! indent.immediate 1)
   (#set! indent.start_at_same_line 1))
 
-; Sólo el If de bloque: el de una línea no tiene End If.
+; Sólo el If de bloque: el End If de uno de una línea va en inline_end_if.
 (if_statement
   "End") @indent.begin
 

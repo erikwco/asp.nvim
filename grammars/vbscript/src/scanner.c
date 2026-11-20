@@ -12,6 +12,16 @@
 // - INLINE_ELSE (ancho cero) va antes del `Else` de un If de una línea,
 //   que tiene que estar en esa misma línea. INLINE_COLON es un `:` de
 //   esa línea seguido de otra sentencia: también es del If.
+// - INLINE_END (ancho cero) va antes del `End If` que cierra un If de una
+//   línea en esa misma línea (`If a Then b = 1 Else c = 2 : End If`). El
+//   `:` anterior es un extra. En otra línea, el `End If` es del If de
+//   bloque que lo contiene.
+// - INLINE_EOL (ancho cero) cierra el If de una línea donde termina su
+//   línea, igual que BLOCK_THEN: fin de línea, comentario o fin del bloque
+//   `<% %>`. Sin él, el `Else` o el `End If` que siguen a un `<%` se leían
+//   en la misma línea: el `<%` es un extra y el escaneo siguiente empieza
+//   después, sin ver el límite. También acota las sentencias yuxtapuestas
+//   del If (`Response.Write "x"`) a su línea.
 // - ARGS_OPEN es el `(` de la lista de parámetros de Sub, Function y
 //   Property, en la línea del nombre. Sin él, el procedimiento no tiene
 //   paréntesis y el `(` es el de la primera sentencia del cuerpo.
@@ -35,6 +45,8 @@ enum TokenType {
   BLOCK_THEN,
   INLINE_ELSE,
   INLINE_COLON,
+  INLINE_END,
+  INLINE_EOL,
   ARGS_OPEN,
   MEMBER_DOT,
   WITH_DOT,
@@ -69,19 +81,33 @@ static bool is_word_char(int32_t c) {
 
 static int32_t lower(int32_t c) { return (c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c; }
 
-// Consume `word` (en minúsculas) sin distinguir mayúsculas. Devuelve true
-// si la palabra está completa y no sigue otro carácter de identificador.
-// La palabra empieza en la posición actual, que puede ser el inicio de un
-// rango; un inicio de rango más adelante la corta.
-static bool match_word(TSLexer *lexer, const char *word) {
-  for (const char *p = word; *p; p++) {
-    if (lexer->eof(lexer) || (p != word && lexer->is_at_included_range_start(lexer))
-        || lower(lexer->lookahead) != *p) {
-      return false;
-    }
+// Consume `rest` (en minúsculas), el resto de una palabra ya empezada, sin
+// distinguir mayúsculas. Devuelve true si la palabra está completa y no
+// sigue otro carácter de identificador. Un inicio de rango la corta.
+static bool match_rest(TSLexer *lexer, const char *rest) {
+  for (const char *p = rest; *p; p++) {
+    if (at_boundary(lexer) || lower(lexer->lookahead) != *p) return false;
     lexer->advance(lexer, false);
   }
   return at_boundary(lexer) || !is_word_char(lexer->lookahead);
+}
+
+// Como match_rest, para una palabra que empieza en la posición actual,
+// que puede ser el inicio de un rango.
+static bool match_word(TSLexer *lexer, const char *word) {
+  if (lexer->eof(lexer) || lower(lexer->lookahead) != word[0]) return false;
+  lexer->advance(lexer, false);
+  return match_rest(lexer, word + 1);
+}
+
+// Tras la `e` inicial: el resto de `End If`, las dos palabras en la misma
+// línea y en el mismo rango.
+static bool match_end_if_rest(TSLexer *lexer) {
+  if (!match_rest(lexer, "nd")) return false;
+  while (!at_boundary(lexer) && (lexer->lookahead == ' ' || lexer->lookahead == '\t')) {
+    lexer->advance(lexer, false);
+  }
+  return !at_boundary(lexer) && match_word(lexer, "if");
 }
 
 // Resto de un comentario: hasta el fin de línea, el `%>` del bloque o el
@@ -121,7 +147,7 @@ bool tree_sitter_vbscript_external_scanner_scan(void *payload, TSLexer *lexer,
       lexer->advance(lexer, true);
     } else if (c == ':' && !newline && !recovering && valid_symbols[INLINE_COLON]) {
       // Un `:` al final de la línea o del bloque, o antes de un
-      // comentario, es un extra.
+      // comentario o del `End If` del If de una línea, es un extra.
       lexer->advance(lexer, false);
       lexer->mark_end(lexer);
       while (!at_boundary(lexer) && (lexer->lookahead == ' ' || lexer->lookahead == '\t')) {
@@ -135,6 +161,9 @@ bool tree_sitter_vbscript_external_scanner_scan(void *payload, TSLexer *lexer,
         if (!at_boundary(lexer) && lexer->lookahead == '>') return false;
       } else if ((next == 'r' || next == 'R') && match_word(lexer, "rem")) {
         return false;
+      } else if (next == 'e' || next == 'E') {
+        lexer->advance(lexer, false);
+        if (match_end_if_rest(lexer)) return false;
       }
       lexer->result_symbol = INLINE_COLON;
       return true;
@@ -193,9 +222,15 @@ bool tree_sitter_vbscript_external_scanner_scan(void *payload, TSLexer *lexer,
     if (!rem) code = true;
   }
 
-  if (!recovering && valid_symbols[BLOCK_THEN]
-      && (eof || newline || c == '\'' || rem)) {
+  bool line_end = eof || newline || c == '\'' || rem;
+
+  if (!recovering && valid_symbols[BLOCK_THEN] && line_end) {
     lexer->result_symbol = BLOCK_THEN;
+    return true;
+  }
+
+  if (!recovering && valid_symbols[INLINE_EOL] && line_end) {
+    lexer->result_symbol = INLINE_EOL;
     return true;
   }
 
@@ -209,10 +244,20 @@ bool tree_sitter_vbscript_external_scanner_scan(void *payload, TSLexer *lexer,
 
   if (eof) return false;
 
-  if (!recovering && valid_symbols[INLINE_ELSE] && !newline && (c == 'e' || c == 'E')) {
-    if (!match_word(lexer, "else")) return false;
-    lexer->result_symbol = INLINE_ELSE;
-    return true;
+  // `Else` y `End If` empiezan igual y la palabra sólo se lee una vez.
+  if (!recovering && !newline && (c == 'e' || c == 'E')
+      && (valid_symbols[INLINE_ELSE] || valid_symbols[INLINE_END])) {
+    lexer->advance(lexer, false);
+    int32_t second = at_boundary(lexer) ? 0 : lower(lexer->lookahead);
+    if (second == 'l' && valid_symbols[INLINE_ELSE] && match_rest(lexer, "lse")) {
+      lexer->result_symbol = INLINE_ELSE;
+      return true;
+    }
+    if (second == 'n' && valid_symbols[INLINE_END] && match_end_if_rest(lexer)) {
+      lexer->result_symbol = INLINE_END;
+      return true;
+    }
+    return false;
   }
 
   if (c == '.') {

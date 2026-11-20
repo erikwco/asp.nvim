@@ -95,6 +95,26 @@ describe('indentación', function()
     assert.are.same(want, lines())
   end)
 
+  it('un If de una línea cerrado con End If no abre ni cierra niveles', function()
+    local want = {
+      '<%',
+      'If a Then',
+      '    If b Then x = 1 : y = 2 Else y = 3 : End If',
+      'Else',
+      '    If c Then',
+      '        x = 2',
+      '    Else',
+      '        If d Then y = 1 Else y = 2 : End If',
+      '    End If',
+      'End If',
+      'z = 1',
+      '%>',
+    }
+    page(vim.tbl_map(vim.trim, want))
+    vim.cmd('silent normal! gg=G')
+    assert.are.same(want, lines())
+  end)
+
   it('conserva el contenido de pre, incluso entre bloques ASP', function()
     local expected = {
       '<% If x Then %>',

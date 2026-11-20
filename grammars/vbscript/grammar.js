@@ -21,14 +21,15 @@ module.exports = grammar({
   extras: $ => [/\s/, $.comment, $._line_continuation, ':', $._block_delimiter],
 
   // src/scanner.c decide lo que depende de los fines de línea, que son
-  // extras: el Then de un If de bloque (_block_then), el Else y los `:` de
-  // uno de una línea (_inline_else, _inline_colon), el `(` de los
-  // parámetros en la línea del nombre (_args_open), el `.` de un acceso o
-  // el inicial de un With (_member_dot, _with_dot) y los comentarios, que
-  // terminan también en el `%>` del bloque.
+  // extras: el Then de un If de bloque (_block_then), el Else, los `:`,
+  // el End If y el fin de la línea de uno de una línea (_inline_else,
+  // _inline_colon, _inline_end, _inline_eol), el `(` de los parámetros en
+  // la línea del nombre (_args_open), el `.` de un acceso o el inicial de
+  // un With (_member_dot, _with_dot) y los comentarios, que terminan
+  // también en el `%>` del bloque.
   externals: $ => [
-    $._block_then, $._inline_else, $._inline_colon, $._args_open,
-    $._member_dot, $._with_dot, $.comment, $._error_sentinel,
+    $._block_then, $._inline_else, $._inline_colon, $._inline_end, $._inline_eol,
+    $._args_open, $._member_dot, $._with_dot, $.comment, $._error_sentinel,
   ],
 
   conflicts: $ => [
@@ -149,11 +150,21 @@ module.exports = grammar({
       ci('If'), $.expression, ci('Then'),
       $._inline_statements,
       optional(seq($._inline_else, ci('Else'), $._inline_statements)),
+      optional($.inline_end_if),
+      // El If termina con su línea: lo que sigue no es suyo.
+      optional($._inline_eol),
     )),
 
-    // `If a Then b = 1 : c = 2 Else d = 3`: todo lo de la línea es del If.
+    // `If a Then b = 1 Else c = 2 : End If`: el End If de esa línea cierra
+    // el If de una línea. Va en su propio nodo: un `End` hijo directo de
+    // if_statement es el de un If de bloque (sangría y plegado).
+    inline_end_if: $ => seq($._inline_end, ci('End'), ci('If')),
+
+    // `If a Then b = 1 : c = 2 Else d = 3`: todo lo de la línea es del If,
+    // también el argumento de una llamada sin paréntesis, que es otra
+    // expresión yuxtapuesta (`If a Then Response.Write "x" : End If`).
     _inline_statements: $ => prec.right(seq(
-      $._statement, repeat(seq(alias($._inline_colon, ':'), $._statement)),
+      $._statement, repeat(seq(optional(alias($._inline_colon, ':')), $._statement)),
     )),
 
     elseif_clause: $ => seq(ci('ElseIf'), $.expression, ci('Then'), optional($.block)),
